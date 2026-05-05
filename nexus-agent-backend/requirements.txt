@@ -1,0 +1,31 @@
+fastapi==0.115.12
+uvicorn==0.30.6
+pydantic==2.10.6
+pydantic-settings==2.6.1
+eval_type_backport==0.2.2
+httpx==0.28.1
+redis==5.2.1
+openai>=1.58.1,<2.0.0
+structlog==24.4.0
+python-dotenv==1.0.1
+pytest==8.3.4
+pytest-asyncio==0.24.0
+
+# ----- RAG (Sprint 1: Module A memory RAG) -----
+langchain==0.3.7
+langchain-core==0.3.21
+langchain-openai==0.2.8
+langchain-community==0.3.7
+langchain-chroma==0.1.4
+langchain-text-splitters==0.3.2
+chromadb==0.5.20
+
+# ----- LangGraph (Sprint 3: Module C alternate engine) -----
+langgraph==0.2.45
+
+# ----- Document loaders (Sprint 2: Module B knowledge base) -----
+pypdf==5.1.0
+unstructured==0.16.5
+python-docx==1.1.2
+docx2txt==0.9
+markdown==3.7

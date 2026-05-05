@@ -1,0 +1,92 @@
+# ============================================================
+# Nexus Chat App 端部署配置
+# 用于手机 App 通过公网 IP 访问后端服务
+# 使用方法: docker-compose -f docker-compose-app.yml up -d --build
+# ============================================================
+
+version: '3.8'
+
+services:
+  # ==================== MySQL 数据库 ====================
+  mysql:
+    image: mysql:8.0
+    container_name: nexus-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: nexus_chat
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ==================== Redis 缓存 ====================
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Spring Boot 后端 ====================
+  backend:
+    build:
+      context: ./nexus-chat-backend
+      dockerfile: Dockerfile
+    container_name: nexus-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=nexus_chat
+      - DB_USER=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Shanghai
+    volumes:
+      - uploads_data:/app/uploads
+      - ./apk:/app/apk:ro
+    ports:
+      - "8080:8080"
+    networks:
+      - nexus-network
+
+networks:
+  nexus-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    name: nexus-mysql-data
+  redis_data:
+    name: nexus-redis-data
+  uploads_data:
+    name: nexus-uploads-data

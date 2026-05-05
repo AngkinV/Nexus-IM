@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # ==================== MySQL 数据库 ====================
+  mysql:
+    image: mysql:8.0
+    container_name: nexus-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: nexus_chat
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ==================== Redis 缓存 ====================
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== Spring Boot 后端 ====================
+  backend:
+    build:
+      context: ./nexus-chat-backend
+      dockerfile: Dockerfile
+    container_name: nexus-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=nexus_chat
+      - DB_USER=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - COMPANION_API_KEY_SECRET=${COMPANION_API_KEY_SECRET}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TZ=Asia/Shanghai
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - nexus-network
+
+  # ==================== Vue 前端 + Nginx ====================
+  frontend:
+    build:
+      context: ./nexus-chat-frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=/api
+        - VITE_WS_URL=https://chat.angkin.cn/ws
+    container_name: nexus-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - uploads_data:/app/uploads:ro
+    ports:
+      - "80:80"
+    networks:
+      - nexus-network
+
+  # ==================== Cloudflare Tunnel ====================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nexus-tunnel
+    restart: unless-stopped
+    # 使用 --protocol http2 强制使用 HTTP/2 而非 QUIC（代理通常不支持 QUIC）
+    command: tunnel --no-autoupdate --protocol http2 run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+      - HTTPS_PROXY=http://host.docker.internal:7897
+      - HTTP_PROXY=http://host.docker.internal:7897
+      - NO_PROXY=frontend,backend,mysql,localhost
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - nexus-network
+    depends_on:
+      - frontend
+
+ 
+
+networks:
+  nexus-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    name: nexus-mysql-data
+  redis_data:
+    name: nexus-redis-data
+  uploads_data:
+    name: nexus-uploads-data
+ 

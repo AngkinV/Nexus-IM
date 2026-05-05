@@ -1,0 +1,52 @@
+{
+  "motions" : [ {
+    "key" : "idle",
+    "file" : "idle.fbx",
+    "label" : "跳跃",
+    "labelEn" : "跳跃",
+    "uploaded" : null
+  }, {
+    "key" : "walk",
+    "file" : "walk.fbx",
+    "label" : "走路",
+    "labelEn" : "Walk",
+    "uploaded" : null
+  }, {
+    "key" : "think",
+    "file" : "think.fbx",
+    "label" : "思考",
+    "labelEn" : "Think",
+    "uploaded" : null
+  }, {
+    "key" : "peering",
+    "file" : "peering.fbx",
+    "label" : "抚摸",
+    "labelEn" : "抚摸",
+    "uploaded" : true
+  }, {
+    "key" : "hurricane_kick_1_",
+    "file" : "Hurricane_Kick_1_.fbx",
+    "label" : "旋风螺旋",
+    "labelEn" : "旋风螺旋",
+    "uploaded" : true
+  }, {
+    "key" : "wave_hip_hop_dance",
+    "file" : "Wave_Hip_Hop_Dance.fbx",
+    "label" : "Wave_Hip_Hop_Dance",
+    "labelEn" : "Wave_Hip_Hop_Dance",
+    "uploaded" : true
+  }, {
+    "key" : "jazz_dancing",
+    "file" : "Jazz_Dancing.fbx",
+    "label" : "Jazz_Dancing",
+    "labelEn" : "Jazz_Dancing",
+    "uploaded" : true
+  }, {
+    "key" : "breakdance_freezes",
+    "file" : "Breakdance_Freezes.fbx",
+    "label" : "霹雳舞",
+    "labelEn" : "霹雳舞",
+    "uploaded" : true
+  } ],
+  "default" : "walk"
+}

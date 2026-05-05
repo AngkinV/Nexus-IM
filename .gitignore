@@ -1,0 +1,69 @@
+# ============================================
+# Nexus Chat 项目 Git 忽略文件
+# ============================================
+
+# ==================== 环境文件 ====================
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ==================== IDE ====================
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# ==================== macOS ====================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ==================== 日志 ====================
+logs/
+*.log
+npm-debug.log*
+
+# ==================== 后端 (Spring Boot) ====================
+nexus-chat-backend/target/
+nexus-chat-backend/.mvn/
+nexus-chat-backend/mvnw
+nexus-chat-backend/mvnw.cmd
+*.jar
+*.war
+
+# ==================== Flutter App ====================
+nexus-chat-app/build/
+nexus-chat-app/.dart_tool/
+nexus-chat-app/.flutter-plugins
+nexus-chat-app/.flutter-plugins-dependencies
+nexus-chat-app/.packages
+nexus-chat-app/.pub-cache/
+nexus-chat-app/.pub/
+nexus-chat-app/pubspec.lock
+
+# ==================== 前端 (Vue) ====================
+nexus-chat-frontend/node_modules/
+nexus-chat-frontend/dist/
+nexus-chat-frontend/dist-electron/
+nexus-chat-frontend/.nuxt/
+nexus-chat-frontend/.output/
+
+# ==================== 临时文件 ====================
+*.zip
+*.tar.gz
+*.rar
+tmp/
+temp/
+
+# ==================== Docker ====================
+# 保留 docker-compose 文件，忽略数据卷
+mysql_data/
+redis_data/
+uploads_data/
+node_modules
+
+# 忽略整个虚拟环境目录
+nexus-agent-backend/.venv/
