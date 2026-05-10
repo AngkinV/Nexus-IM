@@ -15,6 +15,11 @@
 ![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?style=for-the-badge&logo=vuedotjs&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=for-the-badge&logo=electron&logoColor=white)
 ![Flutter](https://img.shields.io/badge/Flutter-Mobile-02569B?style=for-the-badge&logo=flutter&logoColor=white)
+
+![Python](https://img.shields.io/badge/Python-Agent-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Agent%20Service-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![LangChain](https://img.shields.io/badge/LangChain-RAG-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector%20Store-FF6F00?style=for-the-badge)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![Nginx](https://img.shields.io/badge/Nginx-Reverse%20Proxy-009639?style=for-the-badge&logo=nginx&logoColor=white)
 
@@ -22,18 +27,20 @@
 
 ## 1. 项目整体定位
 
-这不是一个单一前端项目，而是一个完整的即时通讯产品工作区，分为三层:
+这不是一个单一前端项目，而是一个完整的"即时通讯 + AI Agent"产品工作区，分为四个模块:
 
 | 目录 | 角色 | 主要技术 |
 |---|---|---|
-| `nexus-chat-backend` | 核心服务端，提供鉴权、消息、群组、联系人、社区、AI 陪伴、文件、同步、版本更新等能力 | Spring Boot 3.2, Java 17, MySQL, Redis, STOMP WebSocket |
+| `nexus-chat-backend` | 核心服务端 (Java 网关)，提供鉴权、消息、群组、联系人、社区、AI 陪伴、文件、同步、版本更新、Agent/知识库网关等能力 | Spring Boot 3.2, Java 17, MySQL, Redis, STOMP WebSocket |
+| `nexus-agent-backend` | Python Agent 服务，负责 LLM 调用、工具编排、短期/长期记忆、RAG、知识库向量化与检索 | Python 3.10+, FastAPI, LangChain, LangGraph, ChromaDB, Redis, OpenAI / Anthropic / Gemini / OpenAI-compatible |
 | `nexus-chat-frontend` | Web + Electron 桌面端主界面，功能最完整 | Vue 3, Pinia, Vite, Element Plus, Electron, Dexie, Three.js |
 | `nexus-chat-app` | Flutter 移动端客户端，偏移动场景体验 | Flutter, Dio, STOMP, Hive, SecureStorage, 本地通知 |
 
 可以把它理解成:
 
-- `backend` 是唯一的业务中台和数据源。
-- `frontend` 是桌面/Web 主客户端，承担最丰富的交互能力。
+- `chat-backend` 是唯一的业务中台和数据源，同时也是 Agent 模块对客户端暴露的网关。
+- `agent-backend` 是独立部署的 Python Agent 服务，只对内网/`chat-backend` 开放，通过 HMAC 签名互信。
+- `frontend` 是桌面/Web 主客户端，承担最丰富的交互能力，已深度接入 Agent 与知识库。
 - `app` 是面向手机的独立客户端，复用后端接口，但 UI 和实现方式完全独立。
 
 ## 2. 根目录协作关系
@@ -55,6 +62,10 @@
   - 暴露 `/uploads`
 - `.env.example`
   - 定义 MySQL、JWT、CORS、邮件、Companion 密钥等运行参数
+- `nexus-agent-backend`
+  - 当前不在根目录的 docker-compose 里，独立运行 (默认 `:8100`)
+  - 由 `nexus-chat-backend` 通过 HMAC 内网调用，无需对客户端直连
+  - 详见 `agent开发文档/`
 
 ### 2.2 整体通信关系
 
@@ -69,6 +80,11 @@ flowchart LR
     B --> E[MySQL]
     B --> F[Redis]
     B <-->|models / motions assets| G[frontend/public]
+    B -->|HMAC + X-Model-* headers| H[Python Agent Backend]
+    H -->|内部 /internal/agent 工具回调| B
+    H --> I[ChromaDB / Vector Store]
+    H --> F
+    H -->|LLM API| J[(OpenAI / Anthropic / Gemini / OpenAI-compatible)]
 ```
 
 关键点:
@@ -77,6 +93,8 @@ flowchart LR
 - Flutter 走 `/ws-native`，直接使用原生 WebSocket STOMP。
 - 后端除数据库外，还把 Redis 用在在线状态、未读数、离线消息、消息序号、跨实例转发。
 - Companion 3D 资产在本地开发模式下和 `nexus-chat-frontend/public/models`、`public/motions` 直接耦合。
+- Agent 调用链是单向闭环: `客户端 → Java 网关 → Python Agent → 反向调用 Java 内部 /internal/agent 工具`。Java 永远不直接调 LLM，Python 也不直接面对客户端。
+- Agent 端走 BYOK 模式: 客户端在网关存放 provider/key (加密)，请求时由 Java 通过 `X-Model-*` 头转发到 Python，Python 不持久化用户密钥。
 
 ## 3. `nexus-chat-backend` 详解
 
@@ -90,6 +108,8 @@ flowchart LR
 - App 更新检查
 - AI 陪伴角色、记忆、状态、模型绑定
 - 3D 模型和动作资源管理
+- Agent 会话、长期记忆审计、模型 Provider 凭据
+- 知识库 (Knowledge Base) 文档管理与 Python Agent 网关
 
 ### 3.2 技术栈与规模
 
@@ -103,11 +123,11 @@ flowchart LR
 
 当前源码规模大致为:
 
-- `148` 个 Java 源文件
-- `13` 个 Controller
-- `20` 个 Service
-- `30` 个 Entity/Model
-- `30` 个 Repository
+- `183` 个 Java 源文件
+- `18` 个 Controller (含 `controller/agent/` 子包下的 4 个 Agent/KB 控制器)
+- `24` 个 Service
+- `37` 个 Entity/Model
+- `37` 个 Repository
 
 ### 3.3 目录结构
 
@@ -233,6 +253,27 @@ flowchart LR
   - 上传/重命名/删除动作文件
   - 读取模型库和动作库
 
+#### Agent 网关 (`controller/agent/`)
+
+这是和 `nexus-agent-backend` 配套的 Java 侧网关层，独立于 Companion 模块。
+
+- `AgentController`  (`/api/agent/*`)
+  - 会话管理: 创建/列出/删除会话、拉历史消息
+  - 实时对话: `POST /sessions/{id}/chat` 与 `POST /sessions/{id}/chat/stream` (SSE)
+  - 长期记忆: 删除会话记忆、删除单条记忆、整体重置
+  - 业务原子操作: `chats/{chatId}/summarize`、`todo-extract`、`reply-suggest`、`reply-publish`
+- `AgentProvidersController`  (`/api/agent/providers`)
+  - 用户的 LLM Provider/Key 管理
+  - 设为默认、连通性测试
+- `KnowledgeBaseController`  (`/api/agent/knowledge`)
+  - 知识库 CRUD
+  - 文档上传/列表/删除/状态查询
+  - 触发 Python Agent 端的向量化入库
+- `InternalAgentController`  (`/internal/agent/*`)
+  - 仅供 Python Agent 反向调用，HMAC 鉴权
+  - 暴露 `recent-messages / chat-profile / user-profile / by-username / messages / me/chats` 等工具接口
+  - `/messages/publish` 让 Agent 代发消息
+
 ### 3.5 实时通信架构
 
 这是后端最关键的一层。
@@ -340,6 +381,16 @@ Companion 相关表包括:
 - `model_credentials`
 - `companion_model_bindings`
 
+Agent / 知识库相关表包括:
+
+- `agent_session`
+- `agent_session_summary`
+- `agent_long_memory`
+- `agent_memory_embedding`
+- `agent_memory_audit`
+- `knowledge_base`
+- `knowledge_document`
+
 ### 3.7 文件与定时任务
 
 后端不只是保存元数据，文件生命周期也有管理逻辑。
@@ -412,11 +463,200 @@ Companion 资产路径有两种模式:
 - `application.properties` 和 `application-prod.properties` 中存在硬编码敏感配置，不适合继续保留在仓库里。
 - 多个 profile 都在使用 `spring.jpa.hibernate.ddl-auto=update`，上线环境存在 schema 漂移风险。
 - 自动化测试基本缺失，`src/test` 下没有有效测试代码。
-- WebSocket、Redis、同步、Companion 都已经进入“可运行复杂系统”阶段，但回归保障不足。
+- WebSocket、Redis、同步、Companion 都已经进入"可运行复杂系统"阶段，但回归保障不足。
 
-## 4. `nexus-chat-frontend` 详解
+## 4. `nexus-agent-backend` 详解
 
 ### 4.1 项目定位
+
+`nexus-agent-backend` 是 Nexus 的 Agent 中台，独立于 Java 网关运行的 Python 服务。
+
+它承担:
+
+- LLM 调用 (OpenAI / Anthropic / Gemini / OpenAI-compatible 多家)
+- 工具编排 (ReAct + 反向回调 Java 内部接口)
+- 短期记忆 (Redis) + 长期记忆 (RAG)
+- 知识库文档入库与向量检索 (ChromaDB)
+- 流式输出 (SSE)
+- 双引擎: 手写 ReAct 与 LangGraph StateGraph 可热切换
+
+它不直接对外，所有客户端流量先到 Java 网关 `/api/agent/*`，再经 HMAC 内部调用进入 Python。
+
+### 4.2 技术栈与规模
+
+- Python 3.10+
+- FastAPI 0.115 + uvicorn
+- pydantic v2 / pydantic-settings
+- httpx (异步)
+- redis (短期记忆 / 限流)
+- openai SDK (兼容 DeepSeek / Moonshot / Groq / DashScope 等)
+- LangChain 0.3 + LangChain Community / Chroma / OpenAI / TextSplitters
+- LangGraph 0.2 (备选编排引擎)
+- ChromaDB 0.5 (本地持久化向量库)
+- structlog (结构化日志)
+- pypdf / unstructured / python-docx / docx2txt / markdown (Module B 文档加载器)
+- pytest + pytest-asyncio
+
+源码规模大致为:
+
+- `46` 个 Python 文件 (`app/` + `tests/` + `main.py`)
+- `16` 个测试文件 (RAG / 工具 / 路由 / 编排器 / mock 全覆盖)
+- 2 套编排引擎 (`orchestrator.py` 手写 + `orchestrator_langgraph.py`)
+- 4 个 LLM Client 适配 (`openai_like` / `anthropic_client` / `gemini_client` + `factory`)
+- 6 个 Embedding Provider 预设 (OpenAI / DashScope / Zhipu / SiliconFlow / Ollama / NewAPI)
+
+### 4.3 目录结构
+
+```
+nexus-agent-backend/
+├── main.py                  # uvicorn 启动入口
+├── requirements.txt
+├── pytest.ini
+├── README.md
+├── data/
+│   └── chroma/              # ChromaDB 持久化
+├── app/
+│   ├── __init__.py          # FastAPI app 工厂
+│   ├── config.py            # 环境变量 + Embedding Provider 预设
+│   ├── routes.py            # /v1/agent/* 与 /v1/knowledge/* 路由
+│   ├── schemas.py           # Pydantic 请求/响应模型
+│   ├── security.py          # HMAC 签名校验依赖
+│   ├── memory.py            # Redis 短期记忆
+│   ├── prompts.py           # 系统/业务 prompt + 注入清洗
+│   ├── tools.py             # Tool Schema + 反向调用 Java 的执行器
+│   ├── langchain_tools.py   # LangChain 适配的工具封装
+│   ├── orchestrator.py      # 手写 ReAct 编排
+│   ├── orchestrator_langgraph.py  # LangGraph StateGraph 编排
+│   ├── mock.py              # 无 OpenAI Key 时的确定性回复
+│   ├── sse.py               # SSE 帧封装
+│   ├── llm/                 # LLM Client 抽象与多家实现
+│   ├── rag/                 # 向量库、Embedding、记忆 RAG、知识库 RAG
+│   └── knowledge/           # 文档加载、切片、入库、QA
+└── tests/                   # pytest 测试集
+```
+
+### 4.4 对外接口
+
+所有路由都依赖 `verify_internal_signature` HMAC 校验，仅供 Java 内部调用。
+
+#### Agent 调用
+
+- `GET  /v1/agent/health`
+  - 健康检查，返回当前 provider / model / engine
+- `POST /v1/agent/invoke`
+  - 同步调用，一次返回最终结果 (含 token usage)
+- `POST /v1/agent/invoke/stream`
+  - SSE 流式输出，事件类型: `meta / tool_call / tool_result / delta / usage / done / error`
+
+#### 知识库 (Module B)
+
+- `POST /v1/knowledge/ingest`
+  - 同步入库: 加载 → 切分 → 向量化 → 写 ChromaDB
+  - 失败返回 502 + 短原因，匹配 Java 侧 `agent_knowledge_document.error_message` 字段
+- `POST /v1/knowledge/delete`
+  - 删除 KB 全量 (docId=null) 或单文档
+- `POST /v1/knowledge/query`
+  - Top-K 相似度检索，永远返回 200，空结果交给 Java 渲染"我不知道"
+
+### 4.5 编排器与工具
+
+#### 双引擎可切换
+
+通过 `ENGINE` 环境变量切换:
+
+- `handcrafted` (默认): `orchestrator.py` 手写 ReAct loop
+- `langgraph`: `orchestrator_langgraph.py` 基于 LangGraph StateGraph
+
+两套引擎产出同样的 `Event` 序列，所以 SSE 线格式与引擎无关。
+
+#### 工具 (反向调用 Java)
+
+`TOOL_SCHEMAS` 当前注册了 7 个工具，全部由 `ToolExecutor` 通过 HMAC + Bearer 调到 `nexus-chat-backend` 的 `/internal/agent/*`:
+
+- `get_recent_messages`
+- `get_chat_profile`
+- `get_user_profile`
+- `get_message_by_id`
+- `find_user_by_username`
+- `list_my_chats`
+- `find_direct_chat_with_user`
+
+特定操作 (如 `CHAT_SUMMARY`, `TODO_EXTRACT`) 强制要求至少调用 `get_recent_messages`，避免幻觉。
+
+### 4.6 记忆与 RAG
+
+#### 短期记忆 (Redis)
+
+- 默认 7 天 TTL
+- 单会话保留最近 20 轮
+- 上下文预算: `context_max_tokens = 12000`，最近 6 轮强制保留
+
+#### 长期记忆 (Module A: memory RAG)
+
+- 写入门槛: `memory_write_confidence_threshold = 0.75`
+- 检索 Top-K = 3
+- 入向量库后异步写出，主线程不阻塞 (`_pending_rag_writes` 强引用防 GC)
+
+#### 知识库 (Module B: knowledge RAG)
+
+- 默认切片 512 / overlap 64
+- Top-K = 4
+- 文档加载支持 PDF / DOCX / TXT / MD
+- 入库失败上报 Java，状态写到 `knowledge_document` 表
+
+### 4.7 Provider 与 BYOK 设计
+
+Agent 端走 BYOK (Bring Your Own Key):
+
+- 客户端在 Java `AgentProvidersController` 录入 provider/key (Java 加密落库)
+- Java 调 Python 时通过 `X-Model-*` 头转发，Python 不持久化用户 Key
+- 没有 Key 时回退到 `app.mock.mock_answer` 的确定性输出，本地开发不烧钱
+
+Embedding 走独立 Provider 通道 (因为很多便宜的 chat 厂商不出 embedding):
+
+- `EMBEDDING_PROVIDER` 一行切换 OpenAI / DashScope / Zhipu / SiliconFlow / Ollama / NewAPI
+- `EMBEDDING_*` 显式变量永远优先于预设
+
+### 4.8 配置与运行
+
+环境变量 (节选，完整列表见 `agent开发文档/Agent 设计说明.md` §15):
+
+- `SERVICE_PORT` (默认 8100)
+- `INTERNAL_SIGNING_SECRET` / `JAVA_INTERNAL_TOKEN` / `JAVA_INTERNAL_BASE_URL` (与 Java 双向互信)
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `MODEL_NAME` (本地兜底用)
+- `REDIS_URL` (默认 `redis://localhost:6379/2`)
+- `CHROMA_PERSIST_DIR` (默认 `./data/chroma`)
+- `EMBEDDING_PROVIDER` + `EMBEDDING_*` 或各 Provider 预设变量
+- `ENGINE` (`handcrafted` | `langgraph`)
+- `MEMORY_RAG_ENABLED` / `KNOWLEDGE_RAG_ENABLED` 等开关
+
+启动:
+
+```bash
+cd nexus-agent-backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python main.py        # 默认 :8100
+# 或: uvicorn app:app --port 8100
+```
+
+测试:
+
+```bash
+pytest tests/
+```
+
+### 4.9 当前观察
+
+- Agent 端工程化程度高: 双编排引擎、SSE、HMAC、BYOK、Embedding 多供应商预设、RAG 双模块都已具备。
+- 仓库未提供 `Dockerfile`，目前仅以 `python main.py` 形式部署，未纳入根目录 `docker-compose`。
+- 测试覆盖比 Java/前端都好 (16 个测试文件，覆盖 RAG / 路由 / 编排 / mock)。
+- LangGraph 引擎是备选项，生产路径仍是手写 ReAct。
+- 设计文档完整放在仓库根 `agent开发文档/`，工程实现与文档一一对应。
+
+## 5. `nexus-chat-frontend` 详解
+
+### 5.1 项目定位
 
 `nexus-chat-frontend` 是当前功能最完整、体验最丰富的客户端实现。
 
