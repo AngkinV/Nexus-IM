@@ -102,9 +102,9 @@ public class AgentGatewayService {
     }
 
     /**
-     * Lightweight one-shot invocation that wraps a synthetic SessionChatRequest.
-     * Used by Mode B endpoints (summarize / todo-extract / reply-suggest) which do not
-     * require a persistent agent session and just want a single round-trip to the model.
+     * 轻量级一次性调用，封装了一个合成的 SessionChatRequest。
+     * 供模式 B 的端点（摘要 / 待办提取 / 回复建议）使用，这些端点无需持久的代理会话，
+     * 仅需与模型进行一次往返通信。
      */
     public Map<String, Object> invokeOneShot(Long actorUserId,
                                              String username,
@@ -166,6 +166,16 @@ public class AgentGatewayService {
      *
      * The replay cache is bypassed in this path; if Last-Event-ID resume is needed later, a
      * pass-through SSE parser can be reintroduced as a thin layer.
+     *
+     * 将 Python SSE 流直接传输到给定的输出流。
+     *
+     * 设计为由 {@link org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody} 调用，
+     * 以便 Spring/Tomcat 能正确处理分块传输的终止。我们有意避免在此处使用
+     * SseEmitter + CompletableFuture.runAsync 的组合 —— 这种组合会导致浏览器出现
+     * net::ERR_INCOMPLETE_CHUNKED_ENCODING 错误，因为响应有时会在没有正确的终止块的情况下关闭。
+     *
+     * 该路径绕过了重放缓存；如果以后需要基于 Last-Event-ID 的恢复，
+     * 可以重新引入一个透传 SSE 解析器作为薄层。
      */
     public void streamPythonRaw(Long actorUserId,
                                 String username,
