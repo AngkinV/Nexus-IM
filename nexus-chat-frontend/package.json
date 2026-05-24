@@ -39,7 +39,7 @@
   },
   "build": {
     "appId": "com.nexus.chat",
-    "productName": "Nexus Chat",
+    "productName": "Nexus",
     "directories": {
       "output": "dist-electron"
     },
