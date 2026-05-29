@@ -145,6 +145,13 @@ class WebSocketService {
                 case 'MESSAGE_DELIVERY_FAILED':
                     this.handleMessageDeliveryFailed(data)
                     break
+                case 'MESSAGE_EDITED':
+                case 'MESSAGE_RECALLED':
+                    this.handleMessageUpdated(data)
+                    break
+                case 'MESSAGE_REACTION_UPDATED':
+                    this.handleMessageReactionUpdated(data)
+                    break
                 case 'TYPING':
                     this.handleTypingIndicator(data)
                     break
@@ -224,7 +231,19 @@ class WebSocketService {
             isRead: payload.isRead,
             isSelf: isSelf,
             sequenceNumber: payload.sequenceNumber,
-            clientMsgId: payload.clientMsgId
+            clientMsgId: payload.clientMsgId,
+            isEdited: payload.isEdited,
+            editedAt: payload.editedAt,
+            editCount: payload.editCount || 0,
+            canEdit: payload.canEdit,
+            canRecall: payload.canRecall,
+            isRecalled: payload.isRecalled,
+            recalledAt: payload.recalledAt,
+            replyToMessageId: payload.replyToMessageId,
+            replyToMessage: payload.replyToMessage,
+            reactions: payload.reactions || [],
+            deliveredCount: payload.deliveredCount || 0,
+            readCount: payload.readCount || 0
         }
 
         // If the user previously hid this chat, a new inbound message
@@ -335,6 +354,36 @@ class WebSocketService {
         } else {
             messageStore.markLastMessageFailed(chatId)
         }
+    }
+
+    handleMessageUpdated(data) {
+        const payload = data.payload
+        if (!payload?.chatId || !payload?.id) return
+        const messageStore = useMessageStore()
+        const userStore = useUserStore()
+        messageStore.updateMessage(payload.chatId, payload.id, {
+            content: payload.content,
+            type: payload.messageType?.toUpperCase() || 'TEXT',
+            fileUrl: payload.fileUrl,
+            isEdited: payload.isEdited,
+            editedAt: payload.editedAt,
+            editCount: payload.editCount || 0,
+            canEdit: payload.canEdit,
+            canRecall: payload.canRecall,
+            isRecalled: payload.isRecalled,
+            recalledAt: payload.recalledAt,
+            reactions: payload.reactions || [],
+            replyToMessageId: payload.replyToMessageId,
+            replyToMessage: payload.replyToMessage,
+            isSelf: payload.senderId === userStore.currentUser?.id
+        })
+    }
+
+    handleMessageReactionUpdated(data) {
+        const { chatId, messageId, reactions } = data.payload || {}
+        if (!chatId || !messageId) return
+        const messageStore = useMessageStore()
+        messageStore.updateReactions(chatId, messageId, reactions || [])
     }
 
     /**
@@ -667,7 +716,7 @@ class WebSocketService {
      * Send a message with clientMsgId for deduplication and ACK tracking.
      * Returns a Promise that resolves when the server ACKs the message.
      */
-    sendMessage(chatId, senderId, content, messageType = 'text', fileUrl = null) {
+    sendMessage(chatId, senderId, content, messageType = 'text', fileUrl = null, replyToMessageId = null) {
         const clientMsgId = generateClientMsgId()
 
         if (!this.connected) {
@@ -683,6 +732,7 @@ class WebSocketService {
                 content,
                 messageType,
                 fileUrl,
+                replyToMessageId,
                 clientMsgId
             })
         })

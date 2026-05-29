@@ -56,6 +56,10 @@ export const userAPI = {
     updateProfile: (id, data) =>
         apiClient.put(`/users/${id}/profile`, data),
 
+    //上传base64头像
+    uploadAvatar: (id, base64Image) =>
+        apiClient.post(`/users/${id}/avatar/base64`, { avatar: base64Image }),
+
     updateOnlineStatus: (id, isOnline) =>
         apiClient.put(`/users/${id}/status`, null, { params: { isOnline } }),
 
@@ -107,11 +111,29 @@ export const chatAPI = {
 
 // Message API
 export const messageAPI = {
-    sendMessage: (chatId, senderId, content, messageType = 'text', fileUrl = null) =>
-        apiClient.post('/messages', { chatId, senderId, content, messageType, fileUrl }),
+    sendMessage: (chatId, senderId, content, messageType = 'text', fileUrl = null, replyToMessageId = null) =>
+        apiClient.post('/messages', { chatId, senderId, content, messageType, fileUrl, replyToMessageId }),
 
     getChatMessages: (chatId, userId, page = 0, size = 50) =>
         apiClient.get(`/messages/chat/${chatId}`, { params: { userId, page, size } }),
+
+    searchMessages: (chatId, query, page = 0, size = 30) =>
+        apiClient.get(`/messages/chat/${chatId}/search`, { params: { query, page, size } }),
+
+    editMessage: (messageId, content) =>
+        apiClient.patch(`/messages/${messageId}`, { content }),
+
+    recallMessage: (messageId) =>
+        apiClient.post(`/messages/${messageId}/recall`),
+
+    toggleReaction: (messageId, emoji) =>
+        apiClient.post(`/messages/${messageId}/reactions`, { emoji }),
+
+    getEditHistory: (messageId) =>
+        apiClient.get(`/messages/${messageId}/edits`),
+
+    markDelivered: (messageId) =>
+        apiClient.post(`/messages/${messageId}/delivered`),
 
     markMessageAsRead: (messageId, userId) =>
         apiClient.put(`/messages/${messageId}/read`, null, { params: { userId } }),

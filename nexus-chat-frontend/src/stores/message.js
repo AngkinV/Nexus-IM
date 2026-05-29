@@ -70,6 +70,60 @@ export const useMessageStore = defineStore('message', () => {
         }
     }
 
+    function updateMessage(chatId, messageId, updates) {
+        if (!messages.value[chatId] || !messageId) return false
+        const msg = messages.value[chatId].find(m => m.id === messageId)
+        if (!msg) return false
+        Object.assign(msg, updates)
+        offlineStore.saveMessage({ ...msg, chatId }).catch(() => {})
+        return true
+    }
+
+    function applyServerMessage(chatId, serverMessage) {
+        if (!serverMessage) return false
+        return updateMessage(chatId, serverMessage.id, normalizeServerMessage(serverMessage))
+    }
+
+    function updateReactions(chatId, messageId, reactions) {
+        return updateMessage(chatId, messageId, { reactions: reactions || [] })
+    }
+
+    function normalizeServerMessage(payload) {
+        return {
+            id: payload.id,
+            chatId: payload.chatId,
+            senderId: payload.senderId,
+            senderName: payload.senderNickname,
+            senderAvatar: payload.senderAvatar,
+            content: payload.content,
+            type: payload.messageType?.toUpperCase() || 'TEXT',
+            fileUrl: payload.fileUrl,
+            fileId: payload.fileId,
+            fileName: payload.fileName,
+            fileSize: payload.fileSize,
+            mimeType: payload.mimeType,
+            downloadUrl: payload.downloadUrl,
+            previewUrl: payload.previewUrl,
+            timestamp: payload.createdAt,
+            createdAt: payload.createdAt,
+            isRead: payload.isRead,
+            isEdited: payload.isEdited,
+            editedAt: payload.editedAt,
+            editCount: payload.editCount || 0,
+            canEdit: payload.canEdit,
+            canRecall: payload.canRecall,
+            isRecalled: payload.isRecalled,
+            recalledAt: payload.recalledAt,
+            replyToMessageId: payload.replyToMessageId,
+            replyToMessage: payload.replyToMessage,
+            reactions: payload.reactions || [],
+            deliveredCount: payload.deliveredCount || 0,
+            readCount: payload.readCount || 0,
+            clientMsgId: payload.clientMsgId,
+            sequenceNumber: payload.sequenceNumber
+        }
+    }
+
     // Replace temporary message with real message from server (legacy content-based match)
     function replaceTemporaryMessage(chatId, senderId, realMessage) {
         if (!messages.value[chatId]) return false
@@ -209,6 +263,10 @@ export const useMessageStore = defineStore('message', () => {
         addMessage,
         replaceByClientMsgId,
         updateMessageByClientMsgId,
+        updateMessage,
+        applyServerMessage,
+        updateReactions,
+        normalizeServerMessage,
         replaceTemporaryMessage,
         prependMessages,
         markMessageAsRead,

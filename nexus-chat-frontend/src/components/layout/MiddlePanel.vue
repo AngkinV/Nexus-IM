@@ -49,12 +49,23 @@
 
       <!-- Message List -->
       <div class="messages-container">
-        <MessageList :messages="currentMessages" />
+        <MessageList
+          :messages="currentMessages"
+          @reply="handleReply"
+          @edit="handleEditMessage"
+          @recall="handleRecallMessage"
+          @react="handleReactMessage"
+          @view-edit-history="handleViewEditHistory"
+        />
       </div>
 
       <!-- Input Area -->
       <div class="input-area">
-        <MessageInput @send="handleSendMessage" />
+        <MessageInput
+          :reply-to="replyToMessage"
+          @send="handleSendMessage"
+          @cancel-reply="replyToMessage = null"
+        />
       </div>
     </template>
 
@@ -96,7 +107,7 @@
 </template>
 
 <script setup>
-import { inject, watch, computed } from 'vue'
+import { inject, watch, computed, ref, h } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
 import { useUserStore } from '@/stores/user'
@@ -107,15 +118,18 @@ import { Phone, MoreFilled, ChatLineSquare, Lock, VideoCamera, User, ArrowLeft }
 import MessageList from '@/components/chat/MessageList.vue'
 import MessageInput from '@/components/chat/MessageInput.vue'
 import AgentChatView from '@/components/agent/AgentChatView.vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 
 const chatStore = useChatStore()
 const messageStore = useMessageStore()
 const userStore = useUserStore()
 const callStore = useCallStore()
+const { t } = useI18n()
 const toggleRightPanel = inject('toggleRightPanel')
 const isMobile = inject('isMobile', { value: false })
 const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+const replyToMessage = ref(null)
 
 // Detect virtual AI assistant chat — its messages flow through HTTP/SSE, not WebSocket.
 const isAiAssistant = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
@@ -209,7 +223,21 @@ watch(() => chatStore.activeChat, async (newChat, oldChat) => {
         timestamp: m.createdAt,
         createdAt: m.createdAt,
         isRead: m.isRead,
-        isSelf: m.senderId === userStore.currentUser?.id
+        isSelf: m.senderId === userStore.currentUser?.id,
+            isEdited: m.isEdited,
+            editedAt: m.editedAt,
+            editCount: m.editCount || 0,
+            canEdit: m.canEdit,
+            canRecall: m.canRecall,
+            isRecalled: m.isRecalled,
+        recalledAt: m.recalledAt,
+        replyToMessageId: m.replyToMessageId,
+        replyToMessage: m.replyToMessage,
+        reactions: m.reactions || [],
+        deliveredCount: m.deliveredCount || 0,
+        readCount: m.readCount || 0,
+        clientMsgId: m.clientMsgId,
+        sequenceNumber: m.sequenceNumber
       }))
       messageStore.setMessages(newChat.id, transformedMessages)
     } catch (error) {
@@ -230,6 +258,15 @@ const handleSendMessage = (data, type = 'TEXT') => {
   const messageType = isFileMessage ? data.type : type
   const fileUrl = isFileMessage ? data.fileUrl : null
 
+  const sendResult = websocket.sendMessage(
+    chatId,
+    user.id,
+    content,
+    messageType.toLowerCase(),
+    fileUrl,
+    replyToMessage.value?.id || null
+  )
+
   // Create optimistic message (show immediately)
   const optimisticMessage = {
     id: `temp-${Date.now()}`,
@@ -249,20 +286,142 @@ const handleSendMessage = (data, type = 'TEXT') => {
     timestamp: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     isRead: false,
-    isSelf: true
+    isSelf: true,
+    replyToMessageId: replyToMessage.value?.id || null,
+    replyToMessage: replyToMessage.value || null,
+    reactions: [],
+    clientMsgId: sendResult.clientMsgId
   }
 
   // Add message to store immediately
   messageStore.addMessage(chatId, optimisticMessage)
+  replyToMessage.value = null
+}
 
-  // Send message via WebSocket
-  websocket.sendMessage(
-    chatId,
-    user.id,
-    content,
-    messageType.toLowerCase(),
-    fileUrl
-  )
+const handleReply = (msg) => {
+  if (!msg || msg.isRecalled) return
+  replyToMessage.value = msg
+}
+
+const handleEditMessage = async (msg) => {
+  if (!msg || msg.isRecalled) return
+  try {
+    if (msg.canEdit === false) {
+      ElMessage.warning(t('chat.editExpired'))
+      return
+    }
+    const { value } = await ElMessageBox.prompt(t('chat.editMessage'), t('chat.edit'), {
+      inputValue: msg.content,
+      inputType: 'textarea',
+      confirmButtonText: t('chat.save'),
+      cancelButtonText: t('chat.cancel')
+    })
+    const next = (value || '').trim()
+    if (!next || next === msg.content) return
+    const response = await messageAPI.editMessage(msg.id, next)
+    messageStore.applyServerMessage(msg.chatId, {
+      ...response.data,
+      senderNickname: msg.senderName,
+      senderAvatar: msg.senderAvatar
+    })
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    const key = error?.response?.data?.messageKey
+    if (key === 'error.message.edit.too_many') {
+      ElMessage.warning(t('chat.editTooMany'))
+    } else if (key === 'error.message.edit.expired') {
+      ElMessage.warning(t('chat.editExpired'))
+    } else {
+      console.error('Failed to edit message:', error)
+      ElMessage.error(t('chat.editFailed'))
+    }
+  }
+}
+
+const handleRecallMessage = async (msg) => {
+  if (!msg || msg.isRecalled) return
+  try {
+    if (msg.canRecall === false) {
+      ElMessage.warning(t('chat.recallExpired'))
+      return
+    }
+    await ElMessageBox.confirm(t('chat.confirmRecallMessage'), t('chat.recallMessage'), {
+      confirmButtonText: t('chat.recall'),
+      cancelButtonText: t('chat.cancel'),
+      type: 'warning'
+    })
+    const response = await messageAPI.recallMessage(msg.id)
+    messageStore.applyServerMessage(msg.chatId, {
+      ...response.data,
+      senderNickname: msg.senderName,
+      senderAvatar: msg.senderAvatar
+    })
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    const key = error?.response?.data?.messageKey
+    if (key === 'error.message.recall.expired') {
+      ElMessage.warning(t('chat.recallExpired'))
+    } else {
+      console.error('Failed to recall message:', error)
+      ElMessage.error(t('chat.recallFailed'))
+    }
+  }
+}
+
+const formatHistoryTime = (iso) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isFinite(d.getTime()) ? d.toLocaleString() : ''
+}
+
+const handleViewEditHistory = async (msg) => {
+  if (!msg || !msg.id) return
+  try {
+    const response = await messageAPI.getEditHistory(msg.id)
+    const history = response.data || []
+    if (!history.length) {
+      ElMessage.info(t('chat.editHistoryEmpty'))
+      return
+    }
+    const items = history.map((item, idx) => h('div', {
+      key: item.id,
+      style: {
+        padding: '10px 0',
+        borderBottom: idx === history.length - 1 ? 'none' : '1px solid rgba(148, 163, 184, 0.25)'
+      }
+    }, [
+      h('div', {
+        style: { fontSize: '12px', color: '#94a3b8', marginBottom: '6px', fontWeight: '600' }
+      }, `#${idx + 1} · ${formatHistoryTime(item.editedAt)}`),
+      h('div', {
+        style: { fontSize: '13px', color: '#ef4444', marginBottom: '4px', wordBreak: 'break-word' }
+      }, `− ${item.previousContent || ''}`),
+      h('div', {
+        style: { fontSize: '13px', color: '#10b981', wordBreak: 'break-word' }
+      }, `+ ${item.newContent || ''}`)
+    ]))
+    ElMessageBox.alert(
+      h('div', { style: { maxHeight: '320px', overflowY: 'auto' } }, items),
+      t('chat.editHistory'),
+      {
+        confirmButtonText: t('common.ok')
+      }
+    )
+  } catch (error) {
+    console.error('Failed to load edit history:', error)
+    ElMessage.error(t('chat.editHistoryFailed'))
+  }
+}
+
+const handleReactMessage = async (msg, emoji) => {
+  if (!msg || !emoji) return
+  try {
+    const response = await messageAPI.toggleReaction(msg.id, emoji)
+    messageStore.updateReactions(msg.chatId, msg.id, response.data || [])
+  } catch (error) {
+    console.error('Failed to update reaction:', error)
+    ElMessage.error(t('chat.reactionFailed'))
+  }
 }
 </script>
 

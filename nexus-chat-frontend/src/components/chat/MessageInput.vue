@@ -1,7 +1,14 @@
 <template>
   <div class="input-container">
+    <div v-if="replyTo" class="replying-bar">
+      <div>
+        <span class="replying-label">{{ $t('chat.replyingTo', { name: replyTo.senderName || $t('chat.unknownUser') }) }}</span>
+        <span class="replying-text">{{ replyTo.content }}</span>
+      </div>
+      <button class="replying-close" @click="$emit('cancelReply')" :title="$t('chat.cancelReply')">×</button>
+    </div>
     <div class="input-wrapper">
-      <button class="input-btn attach-btn" @click="triggerUpload" title="Attach file">
+      <button class="input-btn attach-btn" @click="triggerUpload" :title="$t('chat.attachFile')">
         <el-icon :size="24"><Plus /></el-icon>
       </button>
 
@@ -10,7 +17,7 @@
           v-model="content"
           type="textarea"
           :autosize="{ minRows: 1, maxRows: 4 }"
-          placeholder="Type a message..."
+          :placeholder="$t('chat.typeMessage')"
           resize="none"
           class="custom-textarea"
           @keydown.enter.prevent="handleEnter"
@@ -18,17 +25,17 @@
       </div>
 
       <div class="input-actions">
-        <button class="input-btn emoji-btn" title="Emoji">
+        <button class="input-btn emoji-btn" :title="$t('chat.emoji')">
           <el-icon :size="22"><Sunny /></el-icon>
         </button>
-        <button v-if="!content.trim()" class="input-btn mic-btn" title="Voice message">
+        <button v-if="!content.trim()" class="input-btn mic-btn" :title="$t('chat.voiceMessage')">
           <el-icon :size="22"><Microphone /></el-icon>
         </button>
         <button
           v-else
           class="send-btn"
           @click="sendMessage"
-          title="Send message"
+          :title="$t('chat.sendMessage')"
         >
           <el-icon :size="22"><Promotion /></el-icon>
         </button>
@@ -36,7 +43,7 @@
     </div>
 
     <div class="input-hint">
-      <span>Press <strong>Enter</strong> to send</span>
+      <span>{{ $t('chat.enterToSend') }} <strong>{{ $t('chat.enterKey') }}</strong> {{ $t('chat.toSend') }}</span>
     </div>
 
     <FileUpload
@@ -52,7 +59,13 @@ import { ref } from 'vue'
 import { Plus, Sunny, Microphone, Promotion } from '@element-plus/icons-vue'
 import FileUpload from '@/components/common/FileUpload.vue'
 
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'cancelReply'])
+defineProps({
+  replyTo: {
+    type: Object,
+    default: null
+  }
+})
 const content = ref('')
 const fileUploadRef = ref(null)
 
@@ -106,6 +119,47 @@ const handleUploadError = (error) => {
 <style scoped>
 .input-container {
   padding: 8px 0;
+}
+
+.replying-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--tg-primary);
+  background: rgba(6, 182, 212, 0.08);
+  border-radius: 8px;
+}
+
+.replying-label,
+.replying-text {
+  display: block;
+  max-width: 520px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replying-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tg-primary);
+}
+
+.replying-text {
+  font-size: 12px;
+  color: var(--tg-text-secondary);
+}
+
+.replying-close {
+  border: none;
+  background: transparent;
+  color: var(--tg-text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .input-wrapper {

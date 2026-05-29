@@ -161,7 +161,7 @@ import { Camera, Check, Search, Lock, Close, User } from '@element-plus/icons-vu
 import { useChatStore } from '@/stores/chat'
 import { useContactStore } from '@/stores/contact'
 import { useUserStore } from '@/stores/user'
-import { chatAPI, fileAPI } from '@/services/api'
+import { chatAPI, fileAPI, resolveFileUrl } from '@/services/api'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 
@@ -309,12 +309,16 @@ const createGroup = async () => {
 
     const newGroup = response.data
 
-    // Transform to frontend format and add to store
+    // Transform to frontend format and add to store. The backend returns the
+    // relative file URL (e.g. "/uploads/.../x.png"); resolve it to the full
+    // backend host or the creator will see a broken avatar while other
+    // members (who receive the URL via the WebSocket handler that already
+    // resolves) see it correctly.
     const groupForStore = {
       id: newGroup.id,
       name: newGroup.name,
       description: newGroup.description,
-      avatar: newGroup.avatar || '',
+      avatar: resolveFileUrl(newGroup.avatar || ''),
       lastMessage: t('group.created'),
       lastMessageTime: newGroup.createdAt,
       unreadCount: 0,

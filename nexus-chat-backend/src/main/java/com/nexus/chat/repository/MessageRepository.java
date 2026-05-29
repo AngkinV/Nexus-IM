@@ -64,4 +64,12 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
             @Param("chatId") Long chatId,
             @Param("fromSeq") Long fromSeq);
 
+    @Query("SELECT m FROM Message m WHERE m.chatId = :chatId " +
+            "AND (m.isRecalled = false OR m.isRecalled IS NULL) " +
+            "AND LOWER(m.content) LIKE LOWER(CONCAT('%', :query, '%')) " +
+            "ORDER BY m.createdAt DESC")
+    Page<Message> searchInChat(@Param("chatId") Long chatId,
+                               @Param("query") String query,
+                               Pageable pageable);
+
 }

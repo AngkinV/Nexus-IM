@@ -133,7 +133,8 @@ onMounted(async () => {
           syncService.performDeltaSync({
             chatStore,
             messageStore,
-            contactStore
+            contactStore,
+            userStore
           })
         ])
       } catch (error) {

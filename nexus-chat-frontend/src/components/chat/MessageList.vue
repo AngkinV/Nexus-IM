@@ -20,8 +20,19 @@
         <div class="message-bubble" :class="msg.isSelf ? 'bubble-out' : 'bubble-in'">
           <div v-if="!msg.isSelf" class="sender-name">{{ msg.senderName }}</div>
 
+          <div v-if="msg.replyToMessage" class="reply-preview">
+            <span class="reply-author">{{ msg.replyToMessage.senderNickname || msg.replyToMessage.senderName || $t('chat.unknownUser') }}</span>
+            <span class="reply-text">{{ msg.replyToMessage.isRecalled ? $t('chat.messageRecalled') : msg.replyToMessage.content }}</span>
+          </div>
+
+          <div v-if="msg.isRecalled" class="message-recalled">
+            {{ msg.isSelf
+              ? $t('chat.messageRecalledByYou')
+              : $t('chat.messageRecalledBy', { name: msg.senderName || $t('chat.unknownUser') }) }}
+          </div>
+
           <!-- Text Message -->
-          <div v-if="msg.type === 'TEXT'" class="message-text">
+          <div v-else-if="msg.type === 'TEXT'" class="message-text">
             {{ msg.content }}
           </div>
 
@@ -37,7 +48,7 @@
               <template #error>
                 <div class="image-error">
                   <el-icon :size="32"><PictureFilled /></el-icon>
-                  <span>Failed to load</span>
+                  <span>{{ $t('chat.failedToLoad') }}</span>
                 </div>
               </template>
             </el-image>
@@ -53,7 +64,7 @@
             />
             <div class="file-name-row" v-if="msg.fileName">
               <span class="file-label">{{ msg.fileName }}</span>
-              <a :href="getDownloadSrc(msg)" download class="download-link" title="Download">
+              <a :href="getDownloadSrc(msg)" download class="download-link" :title="$t('chat.download')">
                 <el-icon><Download /></el-icon>
               </a>
             </div>
@@ -80,7 +91,7 @@
               :href="getDownloadSrc(msg)"
               download
               class="file-download-btn"
-              title="Download"
+              :title="$t('chat.download')"
               @click.stop
             >
               <el-icon :size="20"><Download /></el-icon>
@@ -88,8 +99,27 @@
           </div>
         </div>
 
+        <div v-if="msg.reactions?.length" class="reaction-row" :class="{ 'reaction-sent': msg.isSelf }">
+          <button
+            v-for="reaction in msg.reactions"
+            :key="reaction.emoji"
+            class="reaction-pill"
+            :class="{ active: reaction.reactedByMe }"
+            @click="$emit('react', msg, reaction.emoji)"
+          >
+            <span>{{ reaction.emoji }}</span>
+            <span>{{ reaction.count }}</span>
+          </button>
+        </div>
+
         <div class="message-meta" :class="{ 'meta-sent': msg.isSelf }">
           <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+          <button
+            v-if="msg.isEdited && !msg.isRecalled"
+            class="edited-label clickable"
+            :title="$t('chat.editHistory')"
+            @click="$emit('viewEditHistory', msg)"
+          >{{ $t('chat.editedCount', { count: msg.editCount || 1 }) }}</button>
           <!-- Failed indicator -->
           <span v-if="msg.isSelf && msg.failed" class="failed-status" :title="$t('chat.sendFailed')">
             <el-icon color="#ef4444" :size="16"><WarningFilled /></el-icon>
@@ -103,6 +133,10 @@
               <path d="M5 12l5 5L20 7" />
             </svg>
           </span>
+          <button class="inline-action" :title="$t('chat.reply')" @click="$emit('reply', msg)">{{ $t('chat.reply') }}</button>
+          <button class="inline-action" :title="$t('chat.react')" @click="$emit('react', msg, '👍')">👍</button>
+          <button v-if="canEditMessage(msg)" class="inline-action" :title="$t('chat.edit')" @click="$emit('edit', msg)">{{ $t('chat.edit') }}</button>
+          <button v-if="canRecallMessage(msg)" class="inline-action danger" :title="$t('chat.recall')" @click="$emit('recall', msg)">{{ $t('chat.recall') }}</button>
         </div>
       </div>
     </div>
@@ -111,7 +145,7 @@
 </template>
 
 <script setup>
-import { ref, onUpdated, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, onUpdated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { WarningFilled, Download, Document, PictureFilled } from '@element-plus/icons-vue'
 import { API_BASE_URL } from '@/services/runtimeConfig'
@@ -127,8 +161,47 @@ const props = defineProps({
   }
 })
 
+defineEmits(['reply', 'edit', 'recall', 'react', 'viewEditHistory'])
+
 const listRef = ref(null)
 const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+
+// Reactive clock for auto-expiring edit/recall buttons.
+// Backend windows: 15 min edit, 2 min recall. Tick at 15s precision is enough.
+const EDIT_WINDOW_MS = 15 * 60 * 1000
+const RECALL_WINDOW_MS = 2 * 60 * 1000
+const MAX_EDIT_COUNT = 3
+const now = ref(Date.now())
+let clockTimer = null
+onMounted(() => {
+  clockTimer = setInterval(() => { now.value = Date.now() }, 15000)
+})
+onBeforeUnmount(() => {
+  if (clockTimer) clearInterval(clockTimer)
+})
+
+const messageCreatedMs = (msg) => {
+  const raw = msg?.createdAt || msg?.timestamp
+  if (!raw) return 0
+  const t = new Date(raw).getTime()
+  return Number.isFinite(t) ? t : 0
+}
+
+const canEditMessage = (msg) => {
+  if (!msg || !msg.isSelf || msg.isRecalled) return false
+  if (msg.type !== 'TEXT') return false
+  if (msg.canEdit === false) return false
+  if ((msg.editCount || 0) >= MAX_EDIT_COUNT) return false
+  const created = messageCreatedMs(msg)
+  return created > 0 && (now.value - created) < EDIT_WINDOW_MS
+}
+
+const canRecallMessage = (msg) => {
+  if (!msg || !msg.isSelf || msg.isRecalled) return false
+  if (msg.canRecall === false) return false
+  const created = messageCreatedMs(msg)
+  return created > 0 && (now.value - created) < RECALL_WINDOW_MS
+}
 
 
 const scrollToBottom = () => {
@@ -315,6 +388,69 @@ const handleAvatarClick = (senderId) => {
   line-height: 1.5;
   color: var(--tg-text-primary);
   word-wrap: break-word;
+}
+
+.message-recalled {
+  font-size: 14px;
+  font-style: italic;
+  color: var(--tg-text-tertiary);
+}
+
+.reply-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-left: 3px solid rgba(6, 182, 212, 0.7);
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  max-width: 280px;
+}
+
+.reply-author {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tg-primary);
+}
+
+.reply-text {
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reaction-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.reaction-row.reaction-sent {
+  justify-content: flex-end;
+}
+
+.reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: var(--tg-surface);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 12px;
+  color: var(--tg-text-secondary);
+  cursor: pointer;
+}
+
+.reaction-pill.active {
+  border-color: var(--tg-primary);
+  color: var(--tg-primary);
+  background: rgba(6, 182, 212, 0.08);
 }
 
 /* Image message */
@@ -506,6 +642,43 @@ const handleAvatarClick = (senderId) => {
   color: var(--tg-text-tertiary);
   font-weight: 600;
   letter-spacing: 0.3px;
+}
+
+.edited-label {
+  font-size: 11px;
+  color: var(--tg-text-tertiary);
+}
+
+.edited-label.clickable {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  cursor: pointer;
+  font-weight: 600;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.edited-label.clickable:hover {
+  color: var(--tg-primary);
+}
+
+.inline-action {
+  border: none;
+  background: transparent;
+  color: var(--tg-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.inline-action:hover {
+  color: var(--tg-primary);
+}
+
+.inline-action.danger:hover {
+  color: #ef4444;
 }
 
 .read-status {

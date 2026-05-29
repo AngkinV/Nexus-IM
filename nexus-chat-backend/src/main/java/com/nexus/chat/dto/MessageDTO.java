@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -21,6 +22,18 @@ public class MessageDTO {
     private String fileUrl;
     private LocalDateTime createdAt;
     private Boolean isRead;
+    private Boolean isEdited;
+    private LocalDateTime editedAt;
+    private Integer editCount;
+    private Boolean canEdit;
+    private Boolean canRecall;
+    private Boolean isRecalled;
+    private LocalDateTime recalledAt;
+    private Long replyToMessageId;
+    private MessageDTO replyToMessage;
+    private List<MessageReactionDTO> reactions;
+    private Integer deliveredCount;
+    private Integer readCount;
 
     // Sequence + deduplication (Phase 3)
     private Long sequenceNumber;

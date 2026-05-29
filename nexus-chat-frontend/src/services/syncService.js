@@ -12,7 +12,7 @@ const syncService = {
    * Perform delta sync for all entity types.
    * Called after WebSocket connects and IndexedDB loads.
    *
-   * @param {Object} stores - { chatStore, messageStore, contactStore }
+   * @param {Object} stores - { chatStore, messageStore, contactStore, userStore }
    * @returns {Promise<Object>} - { messages, chats, contacts } counts of synced items
    */
   async performDeltaSync(stores) {
@@ -41,6 +41,7 @@ const syncService = {
       })
 
       const delta = response.data
+      const currentUserId = stores.userStore?.currentUser?.id ?? null
 
       // Merge messages
       if (delta.messages && delta.messages.length > 0) {
@@ -55,13 +56,15 @@ const syncService = {
         }
       }
 
-      // Merge chats
+      // Merge chats — mergeChats normalizes the server payload and
+      // persists the result to IndexedDB itself, so we don't pre-save
+      // the raw delta (that would clobber the normalized data we already
+      // wrote in fetchChats).
       if (delta.chats && delta.chats.length > 0) {
-        await offlineStore.saveChats(delta.chats)
         results.chats = delta.chats.length
 
         if (stores.chatStore) {
-          stores.chatStore.mergeChats(delta.chats)
+          stores.chatStore.mergeChats(delta.chats, currentUserId)
         }
       }
 
@@ -96,6 +99,13 @@ const syncService = {
    * @param {Function} sendFn - WebSocket send function
    */
   async flushPendingMessages(sendFn) {
+    // If IndexedDB is unavailable (private mode, quota, corruption) there is
+    // no offline outbox to flush — just return quietly instead of letting the
+    // failure bubble up to Main.vue.
+    if (typeof offlineStore.isAvailable === 'function' && !offlineStore.isAvailable()) {
+      return
+    }
+
     const pending = await offlineStore.getPendingMessages()
     if (pending.length === 0) return
 

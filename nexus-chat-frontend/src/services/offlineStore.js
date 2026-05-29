@@ -6,6 +6,65 @@
 import Dexie from 'dexie'
 import db from './db'
 
+// Errors that indicate IndexedDB itself is unusable (private mode, blocked
+// storage, corrupted DB, quota exhausted, etc). When we see one of these we
+// log once and then silently no-op every subsequent call so the app keeps
+// working in memory-only mode instead of spamming "DatabaseClosedError" into
+// the console and crashing flushes/syncs.
+const FATAL_DB_ERRORS = new Set([
+  'DatabaseClosedError',
+  'InvalidStateError',
+  'UnknownError',
+  'NotFoundError',
+  'QuotaExceededError',
+  'VersionError'
+])
+let dbDisabled = false
+let warnedOnce = false
+
+const isFatalDbError = (err) => {
+  if (!err) return false
+  if (FATAL_DB_ERRORS.has(err.name)) return true
+  const inner = err.inner
+  if (inner && FATAL_DB_ERRORS.has(inner.name)) return true
+  const message = String(err.message || '')
+  return message.includes('backing store') || message.includes('database is closed')
+}
+
+const safeRead = async (op, fallback) => {
+  if (dbDisabled) return fallback
+  try {
+    return await op()
+  } catch (err) {
+    if (isFatalDbError(err)) {
+      if (!warnedOnce) {
+        console.warn('[offlineStore] IndexedDB unavailable, falling back to memory-only mode:', err.message || err)
+        warnedOnce = true
+      }
+      dbDisabled = true
+      return fallback
+    }
+    throw err
+  }
+}
+
+const safeWrite = async (op) => {
+  if (dbDisabled) return
+  try {
+    await op()
+  } catch (err) {
+    if (isFatalDbError(err)) {
+      if (!warnedOnce) {
+        console.warn('[offlineStore] IndexedDB unavailable, falling back to memory-only mode:', err.message || err)
+        warnedOnce = true
+      }
+      dbDisabled = true
+      return
+    }
+    throw err
+  }
+}
+
 const offlineStore = {
 
   // ==================== Messages ====================
@@ -18,12 +77,12 @@ const offlineStore = {
    * @returns {Promise<Array>}
    */
   async getMessages(chatId, limit = 50, offset = 0) {
-    return db.messages
+    return safeRead(() => db.messages
       .where('[chatId+createdAt]')
       .between([chatId, Dexie.minKey], [chatId, Dexie.maxKey])
       .offset(offset)
       .limit(limit)
-      .toArray()
+      .toArray(), [])
   },
 
   /**
@@ -32,26 +91,27 @@ const offlineStore = {
    */
   async saveMessage(message) {
     if (!message || !message.chatId) return
-
-    // If message has a server id, check for existing
-    if (message.id) {
-      const existing = await db.messages.where('id').equals(message.id).first()
-      if (existing) {
-        await db.messages.update(existing.localId, message)
-        return
+    await safeWrite(async () => {
+      // If message has a server id, check for existing
+      if (message.id) {
+        const existing = await db.messages.where('id').equals(message.id).first()
+        if (existing) {
+          await db.messages.update(existing.localId, message)
+          return
+        }
       }
-    }
 
-    // If message has clientMsgId, check for optimistic duplicate
-    if (message.clientMsgId) {
-      const existing = await db.messages.where('clientMsgId').equals(message.clientMsgId).first()
-      if (existing) {
-        await db.messages.update(existing.localId, { ...existing, ...message })
-        return
+      // If message has clientMsgId, check for optimistic duplicate
+      if (message.clientMsgId) {
+        const existing = await db.messages.where('clientMsgId').equals(message.clientMsgId).first()
+        if (existing) {
+          await db.messages.update(existing.localId, { ...existing, ...message })
+          return
+        }
       }
-    }
 
-    await db.messages.add(message)
+      await db.messages.add(message)
+    })
   },
 
   /**
@@ -60,7 +120,7 @@ const offlineStore = {
    */
   async saveMessages(messages) {
     if (!messages || messages.length === 0) return
-    await db.messages.bulkPut(messages)
+    await safeWrite(() => db.messages.bulkPut(messages))
   },
 
   /**
@@ -69,12 +129,12 @@ const offlineStore = {
    * @returns {Promise<string|null>}
    */
   async getLatestMessageTime(chatId) {
-    const msg = await db.messages
+    const msgs = await safeRead(() => db.messages
       .where('chatId')
       .equals(chatId)
       .reverse()
-      .sortBy('createdAt')
-    return msg.length > 0 ? msg[0].createdAt : null
+      .sortBy('createdAt'), [])
+    return msgs.length > 0 ? msgs[0].createdAt : null
   },
 
   /**
@@ -82,7 +142,7 @@ const offlineStore = {
    * @param {number} chatId
    */
   async clearChatMessages(chatId) {
-    await db.messages.where('chatId').equals(chatId).delete()
+    await safeWrite(() => db.messages.where('chatId').equals(chatId).delete())
   },
 
   // ==================== Chats ====================
@@ -92,7 +152,7 @@ const offlineStore = {
    * @returns {Promise<Array>}
    */
   async getChats() {
-    return db.chats.orderBy('lastMessageAt').reverse().toArray()
+    return safeRead(() => db.chats.orderBy('lastMessageAt').reverse().toArray(), [])
   },
 
   /**
@@ -101,7 +161,7 @@ const offlineStore = {
    */
   async saveChat(chat) {
     if (!chat || !chat.id) return
-    await db.chats.put(chat)
+    await safeWrite(() => db.chats.put(chat))
   },
 
   /**
@@ -110,7 +170,7 @@ const offlineStore = {
    */
   async saveChats(chats) {
     if (!chats || chats.length === 0) return
-    await db.chats.bulkPut(chats)
+    await safeWrite(() => db.chats.bulkPut(chats))
   },
 
   /**
@@ -118,8 +178,10 @@ const offlineStore = {
    * @param {number} chatId
    */
   async deleteChat(chatId) {
-    await db.chats.delete(chatId)
-    await db.messages.where('chatId').equals(chatId).delete()
+    await safeWrite(async () => {
+      await db.chats.delete(chatId)
+      await db.messages.where('chatId').equals(chatId).delete()
+    })
   },
 
   // ==================== Contacts ====================
@@ -129,7 +191,7 @@ const offlineStore = {
    * @returns {Promise<Array>}
    */
   async getContacts() {
-    return db.contacts.toArray()
+    return safeRead(() => db.contacts.toArray(), [])
   },
 
   /**
@@ -138,7 +200,7 @@ const offlineStore = {
    */
   async saveContacts(contacts) {
     if (!contacts || contacts.length === 0) return
-    await db.contacts.bulkPut(contacts)
+    await safeWrite(() => db.contacts.bulkPut(contacts))
   },
 
   /**
@@ -146,7 +208,7 @@ const offlineStore = {
    * @param {number} contactId
    */
   async removeContact(contactId) {
-    await db.contacts.delete(contactId)
+    await safeWrite(() => db.contacts.delete(contactId))
   },
 
   /**
@@ -155,7 +217,7 @@ const offlineStore = {
    * @param {boolean} isOnline
    */
   async updateContactStatus(contactId, isOnline) {
-    await db.contacts.update(contactId, { isOnline })
+    await safeWrite(() => db.contacts.update(contactId, { isOnline }))
   },
 
   // ==================== Pending Messages (Offline Outbox) ====================
@@ -167,7 +229,7 @@ const offlineStore = {
   async queuePendingMessage(pendingMsg) {
     pendingMsg.status = 'pending'
     pendingMsg.createdAt = pendingMsg.createdAt || new Date().toISOString()
-    return db.pendingMessages.add(pendingMsg)
+    return safeRead(() => db.pendingMessages.add(pendingMsg), null)
   },
 
   /**
@@ -175,7 +237,7 @@ const offlineStore = {
    * @returns {Promise<Array>}
    */
   async getPendingMessages() {
-    return db.pendingMessages.where('status').equals('pending').toArray()
+    return safeRead(() => db.pendingMessages.where('status').equals('pending').toArray(), [])
   },
 
   /**
@@ -183,7 +245,7 @@ const offlineStore = {
    * @param {number} id - local pending message id
    */
   async markPendingAsSent(id) {
-    await db.pendingMessages.update(id, { status: 'sent' })
+    await safeWrite(() => db.pendingMessages.update(id, { status: 'sent' }))
   },
 
   /**
@@ -191,14 +253,14 @@ const offlineStore = {
    * @param {number} id
    */
   async removePendingMessage(id) {
-    await db.pendingMessages.delete(id)
+    await safeWrite(() => db.pendingMessages.delete(id))
   },
 
   /**
    * Remove all sent pending messages.
    */
   async clearSentPending() {
-    await db.pendingMessages.where('status').equals('sent').delete()
+    await safeWrite(() => db.pendingMessages.where('status').equals('sent').delete())
   },
 
   // ==================== Sync Metadata ====================
@@ -209,7 +271,7 @@ const offlineStore = {
    * @returns {Promise<string|null>}
    */
   async getLastSyncTime(type) {
-    const meta = await db.syncMeta.get(type)
+    const meta = await safeRead(() => db.syncMeta.get(type), null)
     return meta ? meta.timestamp : null
   },
 
@@ -219,7 +281,7 @@ const offlineStore = {
    * @param {string} timestamp - ISO string
    */
   async setLastSyncTime(type, timestamp) {
-    await db.syncMeta.put({ key: type, timestamp })
+    await safeWrite(() => db.syncMeta.put({ key: type, timestamp }))
   },
 
   // ==================== Utility ====================
@@ -228,11 +290,21 @@ const offlineStore = {
    * Clear all data (on logout).
    */
   async clearAll() {
-    await db.messages.clear()
-    await db.chats.clear()
-    await db.contacts.clear()
-    await db.syncMeta.clear()
-    await db.pendingMessages.clear()
+    await safeWrite(async () => {
+      await db.messages.clear()
+      await db.chats.clear()
+      await db.contacts.clear()
+      await db.syncMeta.clear()
+      await db.pendingMessages.clear()
+    })
+  },
+
+  /**
+   * Whether the local IndexedDB has been disabled (private mode, quota,
+   * corrupted store, etc). Callers can use this to skip cache-only work.
+   */
+  isAvailable() {
+    return !dbDisabled
   }
 }
 

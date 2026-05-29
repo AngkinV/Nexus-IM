@@ -1,6 +1,11 @@
 package com.nexus.chat.controller;
 
+import com.nexus.chat.config.MessageValidationInterceptor;
+import com.nexus.chat.dto.EditMessageRequest;
 import com.nexus.chat.dto.MessageDTO;
+import com.nexus.chat.dto.MessageEditHistoryDTO;
+import com.nexus.chat.dto.MessageReactionDTO;
+import com.nexus.chat.dto.ReactionRequest;
 import com.nexus.chat.dto.WebSocketMessage;
 import com.nexus.chat.model.ChatMember;
 import com.nexus.chat.model.Message;
@@ -12,6 +17,8 @@ import com.nexus.chat.service.RedisMessageRelay;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,12 +45,23 @@ public class MessageController {
             String messageTypeStr = (String) request.get("messageType");
             String fileUrl = (String) request.get("fileUrl");
             String clientMsgId = (String) request.get("clientMsgId");
+            Long replyToMessageId = request.get("replyToMessageId") == null
+                    ? null
+                    : Long.valueOf(request.get("replyToMessageId").toString());
+
+            if (content != null) {
+                MessageValidationInterceptor.validateTextContent(content);
+                content = MessageValidationInterceptor.sanitizeContent(content);
+            }
+            if (fileUrl != null) {
+                MessageValidationInterceptor.validateUrl(fileUrl);
+            }
 
             Message.MessageType messageType = messageTypeStr != null
-                    ? Message.MessageType.valueOf(messageTypeStr)
+                    ? Message.MessageType.valueOf(messageTypeStr.toLowerCase())
                     : Message.MessageType.text;
 
-            MessageDTO message = messageService.sendMessage(chatId, senderId, content, messageType, fileUrl, clientMsgId);
+            MessageDTO message = messageService.sendMessage(chatId, senderId, content, messageType, fileUrl, clientMsgId, replyToMessageId);
 
             // 发送 WebSocket 通知给所有聊天成员
             notifyMessageToMembers(chatId, senderId, message);
@@ -80,6 +98,10 @@ public class MessageController {
                 if (!member.getUserId().equals(senderId)) {
                     if (presenceService.isUserOnline(member.getUserId())) {
                         sendToUserChannel(member.getUserId(), wsMessage);
+                        messageService.markMessageDelivered(message.getId(), member.getUserId());
+                        sendToUserChannel(senderId, new WebSocketMessage(
+                                WebSocketMessage.MessageType.MESSAGE_DELIVERED,
+                                Map.of("messageId", message.getId(), "chatId", chatId, "userId", member.getUserId())));
                     } else {
                         redisCacheService.queueOfflineMessage(member.getUserId(), wsMessage);
                     }
@@ -99,6 +121,21 @@ public class MessageController {
         redisMessageRelay.sendToUser(userId, destination, payload);
     }
 
+    private void notifyMessageEventToMembers(Long chatId, WebSocketMessage wsMessage) {
+        List<ChatMember> members = chatMemberRepository.findByChatId(chatId);
+        for (ChatMember member : members) {
+            sendToUserChannel(member.getUserId(), wsMessage);
+        }
+    }
+
+    private Long requireAuthenticatedUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof Long userId)) {
+            throw new IllegalArgumentException("authenticated user required");
+        }
+        return userId;
+    }
+
     @GetMapping("/chat/{chatId}")
     public ResponseEntity<List<MessageDTO>> getChatMessages(
             @PathVariable Long chatId,
@@ -111,6 +148,68 @@ public class MessageController {
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    @GetMapping("/chat/{chatId}/search")
+    public ResponseEntity<List<MessageDTO>> searchMessages(
+            @PathVariable Long chatId,
+            @RequestParam String query,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size) {
+        Long userId = requireAuthenticatedUser();
+        return ResponseEntity.ok(messageService.searchMessages(chatId, userId, query, page, size));
+    }
+
+    @PatchMapping("/{messageId}")
+    public ResponseEntity<MessageDTO> editMessage(
+            @PathVariable Long messageId,
+            @RequestBody EditMessageRequest request) {
+        Long userId = requireAuthenticatedUser();
+        String content = request.getContent();
+        MessageValidationInterceptor.validateTextContent(content);
+        content = MessageValidationInterceptor.sanitizeContent(content);
+        MessageDTO message = messageService.editMessage(messageId, userId, content);
+        notifyMessageEventToMembers(message.getChatId(),
+                new WebSocketMessage(WebSocketMessage.MessageType.MESSAGE_EDITED, message));
+        return ResponseEntity.ok(message);
+    }
+
+    @PostMapping("/{messageId}/recall")
+    public ResponseEntity<MessageDTO> recallMessage(@PathVariable Long messageId) {
+        Long userId = requireAuthenticatedUser();
+        MessageDTO message = messageService.recallMessage(messageId, userId);
+        notifyMessageEventToMembers(message.getChatId(),
+                new WebSocketMessage(WebSocketMessage.MessageType.MESSAGE_RECALLED, message));
+        return ResponseEntity.ok(message);
+    }
+
+    @PostMapping("/{messageId}/reactions")
+    public ResponseEntity<List<MessageReactionDTO>> toggleReaction(
+            @PathVariable Long messageId,
+            @RequestBody ReactionRequest request) {
+        Long userId = requireAuthenticatedUser();
+        List<MessageReactionDTO> reactions = messageService.toggleReaction(messageId, userId, request.getEmoji());
+        MessageDTO message = messageService.getMessageForUser(messageId, userId);
+        notifyMessageEventToMembers(message.getChatId(),
+                new WebSocketMessage(WebSocketMessage.MessageType.MESSAGE_REACTION_UPDATED, Map.of(
+                        "messageId", messageId,
+                        "chatId", message.getChatId(),
+                        "reactions", reactions
+                )));
+        return ResponseEntity.ok(reactions);
+    }
+
+    @GetMapping("/{messageId}/edits")
+    public ResponseEntity<List<MessageEditHistoryDTO>> editHistory(@PathVariable Long messageId) {
+        Long userId = requireAuthenticatedUser();
+        return ResponseEntity.ok(messageService.getEditHistory(messageId, userId));
+    }
+
+    @PostMapping("/{messageId}/delivered")
+    public ResponseEntity<Void> markDelivered(@PathVariable Long messageId) {
+        Long userId = requireAuthenticatedUser();
+        messageService.markMessageDelivered(messageId, userId);
+        return ResponseEntity.ok().build();
     }
 
     @PutMapping("/{messageId}/read")

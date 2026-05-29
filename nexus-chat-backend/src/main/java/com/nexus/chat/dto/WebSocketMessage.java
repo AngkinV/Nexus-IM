@@ -51,6 +51,9 @@ public class WebSocketMessage {
         MESSAGE_ACK,              // Server confirmed receipt
         MESSAGE_DELIVERED,        // Delivered to recipient
         MESSAGE_DELIVERY_FAILED,  // Delivery failed
+        MESSAGE_EDITED,
+        MESSAGE_RECALLED,
+        MESSAGE_REACTION_UPDATED,
 
         // Sync (Phase 3/4)
         SYNC_REQUEST,             // Client requests missing messages

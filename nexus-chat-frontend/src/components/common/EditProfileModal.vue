@@ -327,7 +327,7 @@ const saveProfile = async () => {
       const currentAvatar = userStore.currentUser?.avatar
       if (form.value.avatar && form.value.avatar !== currentAvatar) {
         if (form.value.avatar.startsWith('data:image')) {
-          await userAPI.uploadAvatarBase64(userId, { avatar: form.value.avatar })
+          await userAPI.uploadAvatar(userId, form.value.avatar)
         }
       }
 
