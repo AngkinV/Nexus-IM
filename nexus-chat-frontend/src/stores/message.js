@@ -200,6 +200,16 @@ export const useMessageStore = defineStore('message', () => {
         }
     }
 
+    /**
+     * Remove a single message (used when resending a failed message).
+     */
+    function removeMessage(chatId, messageId) {
+        const chatMessages = messages.value[chatId]
+        if (!chatMessages) return
+        const idx = chatMessages.findIndex(m => m.id === messageId)
+        if (idx !== -1) chatMessages.splice(idx, 1)
+    }
+
     function addTypingUser(chatId, userId) {
         if (!typingUsers.value[chatId]) {
             typingUsers.value[chatId] = []
@@ -273,6 +283,7 @@ export const useMessageStore = defineStore('message', () => {
         markAllMessagesRead,
         markMessageDelivered,
         markMessageFailed,
+        removeMessage,
         markLastMessageFailed,
         clearMessages,
         loadFromCache,

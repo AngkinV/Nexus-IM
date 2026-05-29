@@ -8,7 +8,7 @@
         </div>
       </div>
       <h3 class="empty-title">{{ $t('group.noGroups') }}</h3>
-      <p class="empty-text">Join a group or create a new one to start chatting with friends</p>
+      <p class="empty-text">{{ $t('group.noGroupsDesc') }}</p>
     </div>
 
     <template v-else>

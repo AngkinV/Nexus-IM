@@ -4,6 +4,8 @@
     :title="currentStep === 1 ? $t('group.createGroup') : $t('group.addMembers')"
     width="360px"
     class="create-group-dialog"
+    append-to-body
+    align-center
     :before-close="handleClose"
     :close-on-click-modal="false"
   >
@@ -294,7 +296,8 @@ const createGroup = async () => {
         uploadedAvatarUrl = uploadResponse.data.fileUrl
       } catch (uploadError) {
         console.error('Group avatar upload failed:', uploadError)
-        // 头像上传失败不阻止创建群组
+        // 头像上传失败不阻止创建群组，但提示用户避免误以为已设置
+        ElMessage.warning(t('group.avatarUploadFailed'))
       }
     }
 

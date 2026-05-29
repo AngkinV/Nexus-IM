@@ -4,6 +4,7 @@ import { useMessageStore } from '@/stores/message'
 import { useChatStore } from '@/stores/chat'
 import { useContactStore } from '@/stores/contact'
 import { useUserStore } from '@/stores/user'
+import { useConnectionStore } from '@/stores/connection'
 import { resolveFileUrl } from '@/services/api'
 import { WS_URL } from '@/services/runtimeConfig'
 
@@ -66,6 +67,7 @@ class WebSocketService {
 
         this.currentUserId = userId
         this.onConnectCallback = onConnectCallback
+        useConnectionStore().markConnecting()
         const socket = new SockJS(WS_URL)
 
         // Get JWT token for authentication
@@ -84,6 +86,7 @@ class WebSocketService {
             onConnect: () => {
                 console.log('WebSocket connected')
                 this.connected = true
+                useConnectionStore().markConnected()
                 this.reconnectAttempts = 0
                 this.lastHeartbeatResponse = Date.now()
 
@@ -108,11 +111,13 @@ class WebSocketService {
             onStompError: (frame) => {
                 console.error('STOMP error:', frame)
                 this.connected = false
+                useConnectionStore().markConnecting()
             },
 
             onWebSocketClose: () => {
                 console.log('WebSocket closed')
                 this.connected = false
+                useConnectionStore().markConnecting()
                 this.stopHeartbeatMonitor()
                 this.stopServerHeartbeat()
                 this.attemptReconnect(userId)
@@ -649,7 +654,7 @@ class WebSocketService {
 
         if (data.type === 'CHAT_CREATED') {
             const chatData = data.payload
-            const isGroup = chatData.type === 'group'
+            const isGroup = String(chatData.type).toLowerCase() === 'group'
             const memberOnline = chatData.members?.find(m => m.id !== chatData.createdBy)?.isOnline || false
 
             const newChat = {
@@ -844,6 +849,7 @@ class WebSocketService {
             if (this.connected && (now - this.lastHeartbeatResponse > 60000)) {
                 console.warn('No heartbeat response for 60s, forcing reconnect...')
                 this.connected = false
+                useConnectionStore().markConnecting()
                 if (this.client) {
                     try { this.client.deactivate() } catch (e) { /* ignore */ }
                 }
@@ -884,6 +890,7 @@ class WebSocketService {
             this.connected = false
             this.currentUserId = null
         }
+        useConnectionStore().markDisconnected()
     }
 
     isConnected() {

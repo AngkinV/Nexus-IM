@@ -10,20 +10,20 @@
       <header class="chat-header">
         <div class="header-info" @click="toggleRightPanel">
           <!-- Mobile back button -->
-          <button v-if="isMobile" class="mobile-back-btn" @click.stop="handleMobileBack">
+          <button v-if="isMobile" class="mobile-back-btn" :aria-label="$t('common.back')" @click.stop="handleMobileBack">
             <el-icon :size="22"><ArrowLeft /></el-icon>
           </button>
           <div class="avatar-wrapper">
             <el-avatar :size="44" :src="chatStore.activeChat.avatar || defaultAvatar" class="chat-avatar" />
-            <span class="status-dot" :class="{ online: chatStore.activeChat.status === 'online' }"></span>
+            <span v-if="chatStore.activeChat.type !== 'GROUP'" class="status-dot" :class="{ online: chatStore.activeChat.status === 'online' }"></span>
           </div>
           <div class="chat-meta">
             <div class="name-row">
               <span class="chat-name">{{ chatStore.activeChat.name }}</span>
-              <span v-if="chatStore.activeChat.type !== 'group' && chatStore.activeChat.status === 'online'" class="online-badge">{{ $t('chat.online').toUpperCase() }}</span>
+              <span v-if="chatStore.activeChat.type !== 'GROUP' && chatStore.activeChat.status === 'online'" class="online-badge">{{ $t('chat.online').toUpperCase() }}</span>
             </div>
             <span class="chat-status">
-              <template v-if="chatStore.activeChat.type === 'group'">
+              <template v-if="chatStore.activeChat.type === 'GROUP'">
                 <el-icon class="member-icon"><User /></el-icon>
                 <span>{{ chatStore.activeChat.memberCount || 0 }} {{ $t('group.members') }}</span>
               </template>
@@ -34,14 +34,14 @@
           </div>
         </div>
         <div class="header-actions">
-          <button class="action-btn" :title="$t('chat.audioCall')" @click="startAudioCall" :disabled="!canCall">
+          <button class="action-btn" :title="$t('chat.audioCall')" :aria-label="$t('chat.audioCall')" @click="startAudioCall" :disabled="!canCall">
             <el-icon :size="22"><Phone /></el-icon>
           </button>
-          <button class="action-btn" :title="$t('chat.videoCall')" @click="startVideoCall" :disabled="!canCall">
+          <button class="action-btn" :title="$t('chat.videoCall')" :aria-label="$t('chat.videoCall')" @click="startVideoCall" :disabled="!canCall">
             <el-icon :size="22"><VideoCamera /></el-icon>
           </button>
           <div class="action-divider"></div>
-          <button class="action-btn" @click="toggleRightPanel" :title="$t('chat.moreInfo')">
+          <button class="action-btn" @click="toggleRightPanel" :title="$t('chat.moreInfo')" :aria-label="$t('chat.moreInfo')">
             <el-icon :size="22"><MoreFilled /></el-icon>
           </button>
         </div>
@@ -49,13 +49,31 @@
 
       <!-- Message List -->
       <div class="messages-container">
+        <!-- Loading (cold start) -->
+        <div v-if="isLoadingMessages && !currentMessages.length" class="msg-state">
+          <span class="msg-spinner"></span>
+        </div>
+        <!-- Load error -->
+        <div v-else-if="messageLoadError && !currentMessages.length" class="msg-state">
+          <el-icon :size="40" class="msg-state-icon msg-state-icon--error"><WarningFilled /></el-icon>
+          <p class="msg-state-text">{{ $t('chat.messagesLoadFailed') }}</p>
+          <button class="msg-retry" @click="retryLoadMessages">{{ $t('common.retry') }}</button>
+        </div>
+        <!-- Empty conversation -->
+        <div v-else-if="!currentMessages.length" class="msg-state">
+          <el-icon :size="46" class="msg-state-icon"><ChatDotRound /></el-icon>
+          <p class="msg-state-text">{{ $t('chat.noMessagesYet') }}</p>
+        </div>
+        <!-- Messages -->
         <MessageList
+          v-else
           :messages="currentMessages"
           @reply="handleReply"
           @edit="handleEditMessage"
           @recall="handleRecallMessage"
           @react="handleReactMessage"
           @view-edit-history="handleViewEditHistory"
+          @resend="handleResend"
         />
       </div>
 
@@ -114,7 +132,7 @@ import { useUserStore } from '@/stores/user'
 import { useCallStore } from '@/stores/call'
 import { messageAPI, resolveFileUrl } from '@/services/api'
 import websocket from '@/services/websocket'
-import { Phone, MoreFilled, ChatLineSquare, Lock, VideoCamera, User, ArrowLeft } from '@element-plus/icons-vue'
+import { Phone, MoreFilled, ChatLineSquare, Lock, VideoCamera, User, ArrowLeft, WarningFilled, ChatDotRound } from '@element-plus/icons-vue'
 import MessageList from '@/components/chat/MessageList.vue'
 import MessageInput from '@/components/chat/MessageInput.vue'
 import AgentChatView from '@/components/agent/AgentChatView.vue'
@@ -190,59 +208,75 @@ const currentMessages = computed(() => {
   return messageStore.getMessages(chatStore.activeChat.id)
 })
 
-// Watch activeChat changes to load messages and subscribe to chat room
-watch(() => chatStore.activeChat, async (newChat, oldChat) => {
-  if (!newChat) return
+const isLoadingMessages = ref(false)
+const messageLoadError = ref(false)
+
+// Load chat history for a conversation, tracking loading/error state so the
+// message area can show a spinner / retry instead of a silent blank.
+const loadMessages = async (chat) => {
+  if (!chat) return
   // Skip backend message fetch for the virtual AI assistant chat
-  if (newChat.id === 'ai-assistant' || newChat.type === 'AI') return
+  if (chat.id === 'ai-assistant' || chat.type === 'AI') return
+  isLoadingMessages.value = true
+  messageLoadError.value = false
+  try {
+    const response = await messageAPI.getChatMessages(
+      chat.id,
+      userStore.currentUser?.id,
+      0,
+      50
+    )
+    // Transform messages to match frontend format
+    const transformedMessages = (response.data || []).map(m => ({
+      id: m.id,
+      chatId: m.chatId,
+      senderId: m.senderId,
+      senderName: m.senderNickname,
+      senderAvatar: resolveFileUrl(m.senderAvatar),
+      content: m.content,
+      type: m.messageType?.toUpperCase() || 'TEXT',
+      fileUrl: m.fileUrl,
+      fileId: m.fileId,
+      fileName: m.fileName,
+      fileSize: m.fileSize,
+      mimeType: m.mimeType,
+      downloadUrl: m.downloadUrl,
+      previewUrl: m.previewUrl,
+      timestamp: m.createdAt,
+      createdAt: m.createdAt,
+      isRead: m.isRead,
+      isSelf: m.senderId === userStore.currentUser?.id,
+      isEdited: m.isEdited,
+      editedAt: m.editedAt,
+      editCount: m.editCount || 0,
+      canEdit: m.canEdit,
+      canRecall: m.canRecall,
+      isRecalled: m.isRecalled,
+      recalledAt: m.recalledAt,
+      replyToMessageId: m.replyToMessageId,
+      replyToMessage: m.replyToMessage,
+      reactions: m.reactions || [],
+      deliveredCount: m.deliveredCount || 0,
+      readCount: m.readCount || 0,
+      clientMsgId: m.clientMsgId,
+      sequenceNumber: m.sequenceNumber
+    }))
+    messageStore.setMessages(chat.id, transformedMessages)
+  } catch (error) {
+    console.error('Failed to load messages:', error)
+    messageLoadError.value = true
+  } finally {
+    isLoadingMessages.value = false
+  }
+}
+
+const retryLoadMessages = () => loadMessages(chatStore.activeChat)
+
+// Watch activeChat changes to load messages
+watch(() => chatStore.activeChat, (newChat, oldChat) => {
+  if (!newChat) return
   if (newChat.id !== oldChat?.id) {
-    // Load chat messages if not already loaded
-    try {
-      const response = await messageAPI.getChatMessages(
-        newChat.id,
-        userStore.currentUser?.id,
-        0,
-        50
-      )
-      // Transform messages to match frontend format
-      const transformedMessages = (response.data || []).map(m => ({
-        id: m.id,
-        chatId: m.chatId,
-        senderId: m.senderId,
-        senderName: m.senderNickname,
-        senderAvatar: resolveFileUrl(m.senderAvatar),
-        content: m.content,
-        type: m.messageType?.toUpperCase() || 'TEXT',
-        fileUrl: m.fileUrl,
-        fileId: m.fileId,
-        fileName: m.fileName,
-        fileSize: m.fileSize,
-        mimeType: m.mimeType,
-        downloadUrl: m.downloadUrl,
-        previewUrl: m.previewUrl,
-        timestamp: m.createdAt,
-        createdAt: m.createdAt,
-        isRead: m.isRead,
-        isSelf: m.senderId === userStore.currentUser?.id,
-            isEdited: m.isEdited,
-            editedAt: m.editedAt,
-            editCount: m.editCount || 0,
-            canEdit: m.canEdit,
-            canRecall: m.canRecall,
-            isRecalled: m.isRecalled,
-        recalledAt: m.recalledAt,
-        replyToMessageId: m.replyToMessageId,
-        replyToMessage: m.replyToMessage,
-        reactions: m.reactions || [],
-        deliveredCount: m.deliveredCount || 0,
-        readCount: m.readCount || 0,
-        clientMsgId: m.clientMsgId,
-        sequenceNumber: m.sequenceNumber
-      }))
-      messageStore.setMessages(newChat.id, transformedMessages)
-    } catch (error) {
-      console.error('Failed to load messages:', error)
-    }
+    loadMessages(newChat)
   }
 }, { immediate: true })
 
@@ -290,12 +324,44 @@ const handleSendMessage = (data, type = 'TEXT') => {
     replyToMessageId: replyToMessage.value?.id || null,
     replyToMessage: replyToMessage.value || null,
     reactions: [],
-    clientMsgId: sendResult.clientMsgId
+    clientMsgId: sendResult.clientMsgId,
+    status: 'sending'
   }
 
   // Add message to store immediately
   messageStore.addMessage(chatId, optimisticMessage)
+
+  // Consume the send promise so failures (not connected / ACK timeout) flip the
+  // bubble to a retryable "failed" state right away instead of hanging.
+  if (sendResult?.promise) {
+    sendResult.promise.catch(() => {
+      messageStore.markMessageFailed(chatId, sendResult.clientMsgId)
+    })
+  }
+
   replyToMessage.value = null
+}
+
+const handleResend = (msg) => {
+  if (!msg) return
+  const chatId = msg.chatId || chatStore.activeChat?.id
+  if (!chatId) return
+  // Drop the failed optimistic copy, then re-send the same payload fresh.
+  messageStore.removeMessage(chatId, msg.id)
+  if (msg.type === 'TEXT') {
+    handleSendMessage(msg.content, 'TEXT')
+  } else {
+    handleSendMessage({
+      content: msg.content,
+      type: msg.type,
+      fileUrl: msg.fileUrl || msg.downloadUrl,
+      fileId: msg.fileId,
+      fileName: msg.fileName,
+      fileSize: msg.fileSize,
+      mimeType: msg.mimeType,
+      previewUrl: msg.previewUrl
+    }, msg.type)
+  }
 }
 
 const handleReply = (msg) => {
@@ -430,8 +496,12 @@ const handleReactMessage = async (msg, emoji) => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--tg-surface);
+  background: #f8fafc;
   position: relative;
+}
+
+[data-theme="dark"] .middle-panel {
+  background: #0F1115;
 }
 
 .chat-header {
@@ -440,19 +510,18 @@ const handleReactMessage = async (msg, emoji) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(226, 232, 240, 0.5);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
   z-index: 10;
   position: sticky;
   top: 0;
-  box-shadow: var(--tg-shadow-sm);
 }
 
 [data-theme="dark"] .chat-header {
-  background: rgba(30, 41, 59, 0.9);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  background: rgba(24, 27, 33, 0.72);
+  border-bottom: 1px solid #232730;
 }
 
 .header-info {
@@ -520,8 +589,8 @@ const handleReactMessage = async (msg, emoji) => {
   font-weight: 700;
   padding: 2px 8px;
   border-radius: var(--tg-radius-full);
-  background: rgba(16, 185, 129, 0.15);
-  color: #10B981;
+  background: rgba(20, 184, 166, 0.15);
+  color: var(--tg-online);
   letter-spacing: 0.5px;
 }
 
@@ -580,18 +649,89 @@ const handleReactMessage = async (msg, emoji) => {
   flex: 1;
   overflow-y: auto;
   padding: 10px 0;
-  background-color: var(--tg-background-chat);
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
   position: relative;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.messages-container::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Message-area states (loading / error / empty conversation) */
+.msg-state {
+  height: 100%;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+}
+
+.msg-state-icon {
+  color: var(--tg-text-tertiary);
+  opacity: 0.6;
+}
+
+.msg-state-icon--error {
+  color: #ef4444;
+  opacity: 0.85;
+}
+
+.msg-state-text {
+  font-size: 13px;
+  color: var(--tg-text-secondary);
+  margin: 0;
+}
+
+.msg-retry {
+  margin-top: 4px;
+  padding: 7px 20px;
+  border: none;
+  border-radius: var(--tg-radius-sm);
+  background: var(--teal-700);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.msg-retry:hover {
+  background: #0c5e57;
+}
+
+.msg-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--tg-surface-hover);
+  border-top-color: var(--tg-primary);
+  border-radius: 50%;
+  animation: msg-spin 0.8s linear infinite;
+}
+
+@keyframes msg-spin {
+  to { transform: rotate(360deg); }
 }
 
 .messages-container::before {
   content: '';
   position: absolute;
   inset: 0;
-  opacity: 0.4;
+  opacity: 0.3;
   pointer-events: none;
   background-image: radial-gradient(#E2E8F0 2px, transparent 2px);
   background-size: 40px 40px;
+}
+
+[data-theme="dark"] .messages-container {
+  background: linear-gradient(180deg, #0f1115 0%, #14171c 100%);
 }
 
 [data-theme="dark"] .messages-container::before {

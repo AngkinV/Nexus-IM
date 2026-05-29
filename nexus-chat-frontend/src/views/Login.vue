@@ -13,7 +13,16 @@
 
       <div class="form-area">
         <!-- Avatar Upload (Register Mode Only) -->
-        <div v-if="!isLoginMode" class="avatar-upload" @click="triggerFileInput">
+        <div
+          v-if="!isLoginMode"
+          class="avatar-upload"
+          role="button"
+          tabindex="0"
+          :aria-label="$t('auth.addPhoto')"
+          @click="triggerFileInput"
+          @keydown.enter="triggerFileInput"
+          @keydown.space.prevent="triggerFileInput"
+        >
           <img v-if="avatarPreview" :src="avatarPreview" class="avatar-preview" />
           <div v-else class="avatar-placeholder">
             <el-icon :size="40"><Camera /></el-icon>
@@ -342,7 +351,8 @@ const handleRegister = async () => {
         uploadedAvatarUrl = uploadResponse.data.fileUrl
       } catch (uploadError) {
         console.error('Avatar upload failed:', uploadError)
-        // 头像上传失败不阻止注册，继续使用 null
+        // 头像上传失败不阻止注册，但提示用户可稍后设置
+        ElMessage.warning(t('auth.avatarUploadFailed'))
       }
     }
 
@@ -454,8 +464,8 @@ p {
 }
 
 .avatar-upload:hover {
-  border-color: #2481cc;
-  background: #eef6fc;
+  border-color: var(--tg-primary);
+  background: var(--teal-50);
 }
 
 .avatar-preview {
@@ -508,7 +518,7 @@ p {
 }
 
 .custom-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 2px #2481cc inset;
+  box-shadow: 0 0 0 2px var(--tg-primary) inset;
 }
 
 .login-btn {
@@ -517,17 +527,17 @@ p {
   border-radius: 12px;
   font-size: 16px;
   font-weight: 600;
-  background: #2481cc;
+  background: var(--teal-700);
   border: none;
   margin-bottom: 16px;
 }
 
 .login-btn:hover {
-  background: #1a6fb0;
+  background: #0c5e57;
 }
 
 .login-btn:disabled {
-  background: #a0cfff;
+  background: var(--teal-300);
 }
 
 .toggle-mode {
@@ -536,7 +546,7 @@ p {
 }
 
 .toggle-mode a {
-  color: #2481cc;
+  color: var(--teal-700);
   text-decoration: none;
   font-weight: 600;
   margin-left: 4px;

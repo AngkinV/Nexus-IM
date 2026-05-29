@@ -8,7 +8,7 @@
       <button class="replying-close" @click="$emit('cancelReply')" :title="$t('chat.cancelReply')">×</button>
     </div>
     <div class="input-wrapper">
-      <button class="input-btn attach-btn" @click="triggerUpload" :title="$t('chat.attachFile')">
+      <button class="input-btn attach-btn" @click="triggerUpload" :title="$t('chat.attachFile')" :aria-label="$t('chat.attachFile')">
         <el-icon :size="24"><Plus /></el-icon>
       </button>
 
@@ -25,10 +25,26 @@
       </div>
 
       <div class="input-actions">
-        <button class="input-btn emoji-btn" :title="$t('chat.emoji')">
-          <el-icon :size="22"><Sunny /></el-icon>
-        </button>
-        <button v-if="!content.trim()" class="input-btn mic-btn" :title="$t('chat.voiceMessage')">
+        <el-popover
+          placement="top-end"
+          trigger="click"
+          :width="320"
+          :show-arrow="false"
+          popper-class="emoji-popper"
+        >
+          <template #reference>
+            <button class="input-btn emoji-btn" :title="$t('chat.emoji')" :aria-label="$t('chat.emoji')" @click="pickerTheme = currentTheme()">
+              <el-icon :size="22"><Sunny /></el-icon>
+            </button>
+          </template>
+          <EmojiPicker
+            :native="true"
+            :theme="pickerTheme"
+            :disable-skin-tones="true"
+            @select="onEmoji"
+          />
+        </el-popover>
+        <button v-if="!content.trim()" class="input-btn mic-btn" :title="$t('chat.voiceMessage')" :aria-label="$t('chat.voiceMessage')" @click="showComingSoon">
           <el-icon :size="22"><Microphone /></el-icon>
         </button>
         <button
@@ -36,6 +52,7 @@
           class="send-btn"
           @click="sendMessage"
           :title="$t('chat.sendMessage')"
+          :aria-label="$t('chat.sendMessage')"
         >
           <el-icon :size="22"><Promotion /></el-icon>
         </button>
@@ -56,8 +73,15 @@
 
 <script setup>
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { Plus, Sunny, Microphone, Promotion } from '@element-plus/icons-vue'
 import FileUpload from '@/components/common/FileUpload.vue'
+import EmojiPicker from 'vue3-emoji-picker'
+import 'vue3-emoji-picker/css'
+
+const { t } = useI18n()
+const showComingSoon = () => ElMessage.info(t('common.comingSoon'))
 
 const emit = defineEmits(['send', 'cancelReply'])
 defineProps({
@@ -68,6 +92,16 @@ defineProps({
 })
 const content = ref('')
 const fileUploadRef = ref(null)
+
+// Emoji picker theme follows the app's light/dark setting.
+const pickerTheme = ref('light')
+const currentTheme = () => {
+  const attr = document.documentElement.getAttribute('data-theme') || document.body.getAttribute('data-theme')
+  return attr === 'dark' ? 'dark' : 'light'
+}
+const onEmoji = (e) => {
+  content.value += e.i
+}
 
 const handleEnter = (e) => {
   if (e.shiftKey) {
@@ -341,5 +375,26 @@ const handleUploadError = (error) => {
     width: 40px;
     height: 40px;
   }
+}
+</style>
+
+<style>
+/* Emoji picker popover (teleported to body, so it can't be scoped) */
+.emoji-popper.el-popper {
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-width: unset !important;
+}
+
+.emoji-popper .v3-emoji-picker {
+  width: 100% !important;
+  border-radius: 14px !important;
+  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.28) !important;
+}
+
+[data-theme="dark"] .emoji-popper .v3-emoji-picker {
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6) !important;
 }
 </style>

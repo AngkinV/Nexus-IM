@@ -13,7 +13,7 @@
       <div class="settings-list">
         <!-- Language Setting -->
         <div class="setting-item">
-          <div class="setting-icon" style="background: #00c853">
+          <div class="setting-icon" style="background: var(--teal-500)">
             <el-icon color="white"><Globe /></el-icon>
           </div>
           <span>{{ $t('settings.language') }}</span>
@@ -30,7 +30,7 @@
 
         <!-- Notifications -->
         <div class="setting-item">
-          <div class="setting-icon" style="background: #3390ec">
+          <div class="setting-icon" style="background: var(--cyan-500)">
             <el-icon color="white"><Bell /></el-icon>
           </div>
           <span>{{ $t('settings.notifications') }}</span>
@@ -39,7 +39,7 @@
 
         <!-- Privacy and Security -->
         <div class="setting-item" @click="showPrivacyDialog = true">
-          <div class="setting-icon" style="background: #8774e1">
+          <div class="setting-icon" style="background: var(--teal-600)">
             <el-icon color="white"><Lock /></el-icon>
           </div>
           <span>{{ $t('profile.privacySettings') }}</span>
@@ -48,7 +48,7 @@
 
         <!-- Check for Updates (only show in Electron) -->
         <div v-if="isElectron" class="setting-item" @click="checkForUpdates">
-          <div class="setting-icon" style="background: #007aff">
+          <div class="setting-icon" style="background: var(--cyan-600)">
             <el-icon color="white"><Refresh /></el-icon>
           </div>
           <span>{{ $t('settings.checkForUpdates') }}</span>
@@ -59,7 +59,7 @@
 
         <!-- Logout -->
         <div class="setting-item logout" @click="handleLogout">
-          <div class="setting-icon" style="background: #ff3b30">
+          <div class="setting-icon" style="background: #ef4444">
             <el-icon color="white"><SwitchButton /></el-icon>
           </div>
           <span>{{ $t('auth.logout') }}</span>

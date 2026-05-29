@@ -1,5 +1,38 @@
 <template>
   <div class="chat-list">
+    <!-- Loading skeleton (cold start only) -->
+    <div v-if="chatStore.isLoading && !chatStore.chats.length" class="chat-skeleton">
+      <div v-for="n in 7" :key="n" class="skeleton-item">
+        <div class="skeleton-avatar"></div>
+        <div class="skeleton-lines">
+          <div class="skeleton-line skeleton-line--short"></div>
+          <div class="skeleton-line skeleton-line--long"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Load error -->
+    <div v-else-if="chatStore.loadError && !chatStore.chats.length" class="chat-state">
+      <span class="material-icons-round state-icon state-icon--error">cloud_off</span>
+      <p class="state-title">{{ $t('chat.loadFailed') }}</p>
+      <button class="state-action" @click="chatStore.retryFetchChats()">{{ $t('common.retry') }}</button>
+    </div>
+
+    <!-- Empty: no conversations yet -->
+    <div v-else-if="!filteredChats.length && !searchQuery" class="chat-state">
+      <span class="material-icons-round state-icon">forum</span>
+      <p class="state-title">{{ $t('chat.noChats') }}</p>
+      <p class="state-desc">{{ $t('chat.noChatsDesc') }}</p>
+    </div>
+
+    <!-- Empty: search returned nothing -->
+    <div v-else-if="!filteredChats.length && searchQuery" class="chat-state">
+      <span class="material-icons-round state-icon">search_off</span>
+      <p class="state-title">{{ $t('chat.noSearchResults') }}</p>
+    </div>
+
+    <!-- Chat items -->
+    <template v-else>
     <div
       v-for="chat in filteredChats"
       :key="chat.id"
@@ -35,7 +68,6 @@
         @touchstart="onTouchStart($event, chat.id)"
         @touchmove="onTouchMove($event)"
         @touchend="onTouchEnd"
-        @mousedown="onMouseDown($event, chat.id)"
       >
         <!-- Avatar -->
         <div class="chat-avatar">
@@ -73,8 +105,30 @@
         <div v-if="chatStore.isChatPinned(chat.id)" class="pin-indicator">
           <span class="material-icons-round">push_pin</span>
         </div>
+
+        <!-- Desktop hover actions (touch devices use swipe) -->
+        <div class="chat-hover-actions">
+          <button
+            class="hover-action-btn pin"
+            :class="{ active: chatStore.isChatPinned(chat.id) }"
+            :aria-label="chatStore.isChatPinned(chat.id) ? $t('chat.unpin') : $t('chat.pin')"
+            :title="chatStore.isChatPinned(chat.id) ? $t('chat.unpin') : $t('chat.pin')"
+            @click.stop="handleTogglePin(chat)"
+          >
+            <span class="material-icons-round">push_pin</span>
+          </button>
+          <button
+            class="hover-action-btn danger"
+            :aria-label="$t('common.delete')"
+            :title="$t('common.delete')"
+            @click.stop="handleDelete(chat)"
+          >
+            <span class="material-icons-round">delete</span>
+          </button>
+        </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -169,21 +223,6 @@ const onTouchEnd = () => {
   }, 50)
 }
 
-const onMouseDown = (event, chatId) => {
-  if (event.button === 2) {
-    event.preventDefault()
-    if (swipedChatId.value === chatId) {
-      closeSwipe(chatId)
-    } else {
-      if (swipedChatId.value) {
-        closeSwipe(swipedChatId.value)
-      }
-      swipeOffset.value[chatId] = SWIPE_MAX
-      swipedChatId.value = chatId
-    }
-  }
-}
-
 const getCurrentSwipingChatId = (event) => {
   let target = event.target
   while (target && !target.classList?.contains('chat-item-wrapper')) {
@@ -265,6 +304,119 @@ const formatTime = (time) => {
   gap: 2px;
 }
 
+/* Empty / error states */
+.chat-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 56px 24px;
+  gap: 6px;
+}
+
+.state-icon {
+  font-size: 46px;
+  color: var(--tg-text-tertiary);
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+.state-icon--error {
+  color: #ef4444;
+  opacity: 0.85;
+}
+
+.state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tg-text-secondary);
+  margin: 0;
+}
+
+.state-desc {
+  font-size: 12px;
+  color: var(--tg-text-tertiary);
+  margin: 0;
+  max-width: 220px;
+  line-height: 1.5;
+}
+
+.state-action {
+  margin-top: 10px;
+  padding: 7px 20px;
+  border: none;
+  border-radius: var(--tg-radius-sm);
+  background: var(--teal-700);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.state-action:hover {
+  background: #0c5e57;
+}
+
+/* Loading skeleton */
+.chat-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.skeleton-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.skeleton-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.skeleton-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-line {
+  height: 10px;
+  border-radius: 6px;
+}
+
+.skeleton-line--short { width: 38%; }
+.skeleton-line--long { width: 72%; }
+
+.skeleton-avatar,
+.skeleton-line {
+  position: relative;
+  overflow: hidden;
+  background: var(--tg-surface-hover);
+}
+
+.skeleton-avatar::after,
+.skeleton-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  100% { transform: translateX(100%); }
+}
+
 .chat-item-wrapper {
   position: relative;
   overflow: hidden;
@@ -326,7 +478,6 @@ const formatTime = (time) => {
   padding: 10px 12px;
   cursor: pointer;
   transition: transform 0.2s ease-out, background 0.15s ease;
-  border-radius: 16px;
   position: relative;
   background: #ffffff;
   z-index: 1;
@@ -379,7 +530,7 @@ const formatTime = (time) => {
   right: 0;
   width: 12px;
   height: 12px;
-  background: #22c55e;
+  background: var(--tg-online);
   border: 2px solid #ffffff;
   border-radius: 50%;
 }
@@ -407,7 +558,7 @@ const formatTime = (time) => {
   position: absolute;
   top: -4px;
   right: -4px;
-  background: #00B4D8;
+  background: var(--tg-unread);
   color: white;
   font-size: 10px;
   font-weight: 700;
@@ -477,6 +628,118 @@ const formatTime = (time) => {
 
 .pin-indicator .material-icons-round {
   font-size: 16px;
+}
+
+/* Desktop hover actions — refined pill buttons, replace the swipe colour bars on pointer devices */
+.chat-hover-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 10px 0 32px;
+  border-radius: 0 16px 16px 0;
+  opacity: 0;
+  transform: translateX(8px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 3;
+  background: linear-gradient(to right, rgba(241, 245, 249, 0) 0%, #f1f5f9 32px);
+}
+
+.chat-item:hover .chat-hover-actions {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* Fade the meta (time / pin marker) out on hover so the actions get clean space */
+.chat-time,
+.pin-indicator {
+  transition: opacity 0.18s ease;
+}
+
+.chat-item:hover .chat-time,
+.chat-item:hover .pin-indicator {
+  opacity: 0;
+}
+
+.hover-action-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hover-action-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -2px rgba(15, 23, 42, 0.18);
+}
+
+.hover-action-btn:active {
+  transform: translateY(0) scale(0.92);
+}
+
+.hover-action-btn.pin:hover,
+.hover-action-btn.pin.active {
+  background: #ccfbf1;
+  color: #0d9488;
+}
+
+.hover-action-btn.danger:hover {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.hover-action-btn .material-icons-round {
+  font-size: 17px;
+}
+
+/* On pointer/hover devices use the hover actions and hide the swipe colour bars entirely */
+@media (hover: hover) and (pointer: fine) {
+  .swipe-actions {
+    display: none;
+  }
+}
+
+/* Touch devices keep using swipe gestures, no hover actions */
+@media (hover: none) {
+  .chat-hover-actions {
+    display: none;
+  }
+}
+
+/* Dark mode hover actions */
+[data-theme="dark"] .chat-hover-actions {
+  background: linear-gradient(to right, rgba(51, 65, 85, 0) 0%, #334155 32px);
+}
+
+[data-theme="dark"] .hover-action-btn {
+  background: #1e293b;
+  color: #94a3b8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .hover-action-btn.pin:hover,
+[data-theme="dark"] .hover-action-btn.pin.active {
+  background: rgba(20, 184, 166, 0.2);
+  color: #5eead4;
+}
+
+[data-theme="dark"] .hover-action-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.22);
+  color: #f87171;
 }
 
 /* Swiped state */
@@ -551,7 +814,6 @@ const formatTime = (time) => {
 
   .chat-item {
     padding: 12px 10px;
-    border-radius: 14px;
   }
 
   .chat-avatar {

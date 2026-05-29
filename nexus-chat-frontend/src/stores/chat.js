@@ -8,6 +8,8 @@ export const useChatStore = defineStore('chat', () => {
     const activeChat = ref(null)
     const chats = ref([])
     const isLoading = ref(false)
+    const loadError = ref(false)
+    let lastFetchUserId = null
     const subscribedChatIds = ref(new Set()) // Track subscribed chat rooms
 
     const messages = ref([])
@@ -233,7 +235,9 @@ export const useChatStore = defineStore('chat', () => {
 
     // Fetch chats from backend
     const fetchChats = async (userId) => {
+        lastFetchUserId = userId
         isLoading.value = true
+        loadError.value = false
         try {
             const response = await chatAPI.getUserChats(userId)
             const chatList = response.data || []
@@ -259,9 +263,14 @@ export const useChatStore = defineStore('chat', () => {
             if (hiddenTypeChanged) saveHiddenChats()
         } catch (error) {
             console.error('Failed to fetch chats:', error)
+            loadError.value = true
         } finally {
             isLoading.value = false
         }
+    }
+
+    const retryFetchChats = () => {
+        if (lastFetchUserId != null) fetchChats(lastFetchUserId)
     }
 
     const setActiveChat = (chat) => {
@@ -645,6 +654,7 @@ export const useChatStore = defineStore('chat', () => {
         chats,
         messages,
         isLoading,
+        loadError,
         subscribedChatIds,
         mutedChats,
         pinnedChats,
@@ -656,6 +666,7 @@ export const useChatStore = defineStore('chat', () => {
         selectedChatId,
         sortedChats,
         fetchChats,
+        retryFetchChats,
         setActiveChat,
         toggleActiveChat,
         sendMessage,

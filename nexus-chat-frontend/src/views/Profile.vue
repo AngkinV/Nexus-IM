@@ -189,9 +189,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
 import { useChatStore } from '@/stores/chat'
+import { useConnectionStore } from '@/stores/connection'
 import { userAPI, fileAPI } from '@/services/api'
 import { ElMessage } from 'element-plus'
 import {
@@ -203,13 +205,16 @@ import SocialModule from '@/components/profile/SocialModule.vue'
 import AccountSecurityModule from '@/components/profile/AccountSecurityModule.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const userStore = useUserStore()
 const contactStore = useContactStore()
 const chatStore = useChatStore()
+const connectionStore = useConnectionStore()
 
 const showEditProfile = ref(false)
 const fileInput = ref(null)
-const isOnline = ref(true)
+// Own online status reflects the live WebSocket connection, not a hard-coded value.
+const isOnline = computed(() => connectionStore.isConnected)
 const activeSection = ref('overview')
 const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 const userStats = ref(null)
@@ -298,8 +303,9 @@ const loadProfileData = async () => {
 }
 
 const getActivityText = (type) => {
-  const texts = { message: 'Sent a message', contact: 'Added a new contact', group: 'Joined a group', login: 'Logged in' }
-  return texts[type.toLowerCase()] || 'Activity recorded'
+  const keys = { message: 'activitySentMessage', contact: 'activityAddedContact', group: 'activityJoinedGroup', login: 'activityLoggedIn' }
+  const key = keys[type.toLowerCase()]
+  return key ? t(`profile.${key}`) : t('profile.activityRecorded')
 }
 
 const goBack = () => router.back()
@@ -308,8 +314,8 @@ const triggerFileUpload = () => fileInput.value.click()
 const handleBackgroundUpload = async (event) => {
   const file = event.target.files[0]
   if (!file) return
-  if (!file.type.startsWith('image/')) return ElMessage.error('Please upload an image file')
-  if (file.size > 5 * 1024 * 1024) return ElMessage.error('Image size should be less than 5MB')
+  if (!file.type.startsWith('image/')) return ElMessage.error(t('profile.pleaseUploadImage'))
+  if (file.size > 5 * 1024 * 1024) return ElMessage.error(t('profile.imageMaxSize5MB'))
 
   try {
     // 上传文件到服务器，获取 URL
@@ -318,25 +324,25 @@ const handleBackgroundUpload = async (event) => {
 
     // 保存 URL 到用户资料
     await userStore.updateBackground(imageUrl)
-    ElMessage.success('Background updated successfully')
+    ElMessage.success(t('profile.backgroundUpdated'))
   } catch (error) {
     console.error('Failed to upload background:', error)
-    ElMessage.error('Failed to update background')
+    ElMessage.error(t('profile.backgroundUpdateFailed'))
   }
 }
 
 const copyProfileLink = () => {
   navigator.clipboard.writeText(`${window.location.origin}/profile/${userStore.currentUser?.username}`)
-  ElMessage.success('Profile link copied!')
+  ElMessage.success(t('profile.linkCopied'))
 }
 
 const handleProfileUpdated = () => loadProfileData()
 const formatTime = (time) => {
   const date = new Date(time); const now = new Date(); const diff = now - date;
   const hours = Math.floor(diff / (1000 * 60 * 60))
-  if (hours < 1) return 'Just now'
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
+  if (hours < 1) return t('profile.justNow')
+  if (hours < 24) return t('profile.hoursAgo', { n: hours })
+  return t('profile.daysAgo', { n: Math.floor(hours / 24) })
 }
 </script>
 

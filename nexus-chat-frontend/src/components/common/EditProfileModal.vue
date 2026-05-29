@@ -15,7 +15,7 @@
         <div class="hero-overlay"></div>
         
         <!-- Background Edit Button -->
-        <el-tooltip content="Change Cover" placement="bottom">
+        <el-tooltip :content="$t('profile.changeCover')" placement="bottom">
           <div class="edit-cover-btn" @click="showBackgroundOptions = true">
             <el-icon><Picture /></el-icon>
           </div>
@@ -37,7 +37,7 @@
               </div>
             </div>
           </el-upload>
-          <div v-if="form.avatar" class="remove-avatar-btn" @click="removeAvatar" title="Remove Avatar">
+          <div v-if="form.avatar" class="remove-avatar-btn" @click="removeAvatar" :title="$t('profile.removeAvatar')">
             <el-icon><Delete /></el-icon>
           </div>
         </div>
@@ -97,21 +97,21 @@
             <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showOnlineStatus') }}</span>
             </div>
-            <el-switch v-model="form.showOnlineStatus" active-color="#3390ec" />
+            <el-switch v-model="form.showOnlineStatus" active-color="#14b8a6" />
           </div>
 
           <div class="toggle-item">
              <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showPhone') }}</span>
             </div>
-            <el-switch v-model="form.showPhone" active-color="#3390ec" />
+            <el-switch v-model="form.showPhone" active-color="#14b8a6" />
           </div>
 
            <div class="toggle-item">
              <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showEmail') }}</span>
             </div>
-            <el-switch v-model="form.showEmail" active-color="#3390ec" />
+            <el-switch v-model="form.showEmail" active-color="#14b8a6" />
           </div>
         </div>
 
@@ -131,7 +131,7 @@
   <!-- Background Options Dialog (Nested) -->
   <el-dialog
     v-model="showBackgroundOptions"
-    title="Select Background"
+    :title="$t('profile.selectBackground')"
     width="360px"
     align-center
     append-to-body
@@ -147,11 +147,11 @@
           @change="handleBackgroundImageUpload"
         >
         <el-icon class="upload-icon"><Upload /></el-icon>
-        <span>Upload Valid Image</span>
+        <span>{{ $t('profile.uploadImage') }}</span>
       </div>
 
       <div class="gradient-section">
-        <span class="sub-label">Presets</span>
+        <span class="sub-label">{{ $t('profile.presets') }}</span>
         <div class="gradient-grid">
           <div 
             v-for="(gradient, idx) in presetGradients" 
@@ -277,14 +277,14 @@ const selectGradient = (gradientStyle) => {
 const handleBackgroundImageUpload = (event) => {
   const file = event.target.files[0]
   if (!file) return
-  if (!file.type.startsWith('image/')) return ElMessage.error('Please upload an image')
-  if (file.size > 5 * 1024 * 1024) return ElMessage.error('Max size 5MB')
+  if (!file.type.startsWith('image/')) return ElMessage.error(t('profile.pleaseUploadImage'))
+  if (file.size > 5 * 1024 * 1024) return ElMessage.error(t('profile.imageMaxSize5MB'))
 
   const reader = new FileReader()
   reader.onload = (e) => {
     form.value.profileBackground = e.target.result
     showBackgroundOptions.value = false
-    ElMessage.success('Background updated')
+    ElMessage.success(t('profile.backgroundUpdated'))
   }
   reader.readAsDataURL(file)
 }
@@ -297,7 +297,7 @@ const saveProfile = async () => {
     try {
       const userId = userStore.currentUser?.id
       if (!userId) {
-        ElMessage.error('User not found')
+        ElMessage.error(t('profile.userNotFound'))
         return
       }
 
