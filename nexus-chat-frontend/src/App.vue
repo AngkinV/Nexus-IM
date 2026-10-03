@@ -1,5 +1,6 @@
 <template>
   <div class="app-container">
+    <ConnectionBanner />
     <router-view />
   </div>
 </template>
@@ -7,6 +8,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useUserStore } from '@/stores/user'
+import ConnectionBanner from '@/components/common/ConnectionBanner.vue'
 
 const userStore = useUserStore()
 

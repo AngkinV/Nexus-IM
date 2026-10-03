@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS contacts (
     INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS blocked_users (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    blocked_user_id BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocked_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_block (user_id, blocked_user_id),
+    INDEX idx_blocked_owner (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS chats (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     type ENUM('direct', 'group') NOT NULL,
@@ -106,14 +117,20 @@ CREATE TABLE IF NOT EXISTS messages (
     chat_id BIGINT NOT NULL,
     sender_id BIGINT NOT NULL,
     content TEXT,
-    message_type ENUM('text', 'image', 'file', 'emoji') NOT NULL DEFAULT 'text',
+    message_type ENUM('text', 'image', 'file', 'emoji', 'video', 'audio') NOT NULL DEFAULT 'text',
     file_url TEXT,
     sequence_number BIGINT DEFAULT NULL,
     client_message_id VARCHAR(36) DEFAULT NULL,
+    reply_to_message_id BIGINT DEFAULT NULL,
+    is_edited BOOLEAN DEFAULT FALSE,
+    edited_at TIMESTAMP NULL,
+    is_recalled BOOLEAN DEFAULT FALSE,
+    recalled_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
     FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
     INDEX idx_chat_id_created_at (chat_id, created_at),
+    INDEX idx_messages_reply_to (reply_to_message_id),
     INDEX idx_sender_id (sender_id),
     UNIQUE INDEX idx_messages_client_msg_id (client_message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -129,6 +146,51 @@ CREATE TABLE IF NOT EXISTS message_read_status (
     UNIQUE KEY unique_read_status (message_id, user_id),
     INDEX idx_message_id (message_id),
     INDEX idx_user_id_is_read (user_id, is_read)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    emoji VARCHAR(32) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_message_reaction_user_emoji (message_id, user_id, emoji),
+    INDEX idx_message_reactions_message (message_id),
+    INDEX idx_message_reactions_chat (chat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_delivery_status (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    state ENUM('pending', 'delivered') NOT NULL DEFAULT 'pending',
+    delivered_at TIMESTAMP NULL,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_message_delivery_user (message_id, user_id),
+    INDEX idx_message_delivery_message (message_id),
+    INDEX idx_message_delivery_user_state (user_id, state)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS message_edit_history (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    message_id BIGINT NOT NULL,
+    chat_id BIGINT NOT NULL,
+    editor_user_id BIGINT NOT NULL,
+    previous_content TEXT,
+    new_content TEXT,
+    edited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+    FOREIGN KEY (editor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_message_edit_history_message (message_id),
+    INDEX idx_message_edit_history_chat (chat_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS file_uploads (
@@ -193,6 +255,7 @@ CREATE TABLE IF NOT EXISTS user_security_settings (
     two_factor_secret VARCHAR(255) DEFAULT NULL,
     backup_codes TEXT DEFAULT NULL,
     password_changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    password_strength INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

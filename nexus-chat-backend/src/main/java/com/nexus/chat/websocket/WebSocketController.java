@@ -59,6 +59,9 @@ public class WebSocketController {
             String messageTypeStr = (String) payload.get("messageType");
             String fileUrl = (String) payload.get("fileUrl");
             clientMsgId = (String) payload.get("clientMsgId");
+            Long replyToMessageId = payload.get("replyToMessageId") == null
+                    ? null
+                    : Long.valueOf(payload.get("replyToMessageId").toString());
 
             // Sanitize content to prevent XSS
             if (content != null) {
@@ -70,11 +73,11 @@ public class WebSocketController {
             }
 
             Message.MessageType messageType = messageTypeStr != null
-                    ? Message.MessageType.valueOf(messageTypeStr)
+                    ? Message.MessageType.valueOf(messageTypeStr.toLowerCase())
                     : Message.MessageType.text;
 
             // Send message with clientMsgId for deduplication, sequence number is generated inside
-            MessageDTO message = messageService.sendMessage(chatId, senderId, content, messageType, fileUrl, clientMsgId);
+            MessageDTO message = messageService.sendMessage(chatId, senderId, content, messageType, fileUrl, clientMsgId, replyToMessageId);
 
             WebSocketMessage wsMessage = new WebSocketMessage(
                     WebSocketMessage.MessageType.CHAT_MESSAGE,
@@ -98,6 +101,10 @@ public class WebSocketController {
                     if (presenceService.isUserOnline(member.getUserId())) {
                         // Online: deliver via relay (supports cross-instance)
                         sendToUserChannel(member.getUserId(), wsMessage);
+                        messageService.markMessageDelivered(message.getId(), member.getUserId());
+                        sendToUserChannel(senderId, new WebSocketMessage(
+                                WebSocketMessage.MessageType.MESSAGE_DELIVERED,
+                                Map.of("messageId", message.getId(), "chatId", chatId, "userId", member.getUserId())));
                     } else {
                         // Offline: queue in Redis
                         redisCacheService.queueOfflineMessage(member.getUserId(), wsMessage);

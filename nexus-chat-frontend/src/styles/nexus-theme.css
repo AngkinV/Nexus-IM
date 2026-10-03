@@ -1,37 +1,38 @@
 /* Nexus-inspired theme colors and variables */
 :root {
     /* Light mode colors */
-    --tg-primary: #14b8a6;
-    --tg-primary-dark: #0d9488;
-    --tg-secondary: #06b6d4;
+    --tg-primary: #4f8ef0;
+    --tg-primary-dark: #3b78dd;
+    --tg-secondary: #6aa8f6;
     --tg-background: #ffffff;
-    --tg-surface: #f4f4f5;
-    --tg-surface-hover: #e8e8e9;
-    --tg-divider: #e0e0e0;
-    --tg-text-primary: #000000;
-    --tg-text-secondary: #707579;
-    --tg-text-tertiary: #a0a0a0;
+    --tg-surface: #f4f6fb;
+    --tg-surface-hover: #eef2ff;
+    --tg-background-chat: #f4f6fb;
+    --tg-divider: #eef0f4;
+    --tg-text-primary: #1f2430;
+    --tg-text-secondary: #8a93a5;
+    --tg-text-tertiary: #aab2c0;
 
-    /* Teal/Cyan color palette */
-    --teal-50: #f0fdfa;
-    --teal-100: #ccfbf1;
-    --teal-200: #99f6e4;
-    --teal-300: #5eead4;
-    --teal-400: #2dd4bf;
-    --teal-500: #14b8a6;
-    --teal-600: #0d9488;
-    --teal-700: #0f766e;
-    --cyan-400: #22d3ee;
-    --cyan-500: #06b6d4;
-    --cyan-600: #0891b2;
-    --emerald-500: #10b981;
+    /* Blue/Indigo color palette (was teal/cyan) */
+    --teal-50: #eef4fd;
+    --teal-100: #dbeafe;
+    --teal-200: #c3ddfb;
+    --teal-300: #9cc6f8;
+    --teal-400: #6aa8f6;
+    --teal-500: #4f8ef0;
+    --teal-600: #3b78dd;
+    --teal-700: #2f63c4;
+    --cyan-400: #6aa8f6;
+    --cyan-500: #4f8ef0;
+    --cyan-600: #3b78dd;
+    --emerald-500: #6aa8f6;
 
     /* Message bubble colors */
-    --tg-message-out: #ccfbf1;
+    --tg-message-out: #dbeafe;
     --tg-message-in: #f5f5f5;
 
     /* Status colors */
-    --tg-online: #10b981;
+    --tg-online: #22c55e;
     --tg-offline: #9e9e9e;
     --tg-unread: #f43f5e;
 
@@ -53,15 +54,17 @@
     --tg-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
     --tg-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
     --tg-shadow-lg: 0 10px 30px -10px rgba(0, 0, 0, 0.1);
-    --tg-shadow-glow: 0 0 20px -5px rgba(20, 184, 166, 0.3);
+    --tg-shadow-glow: 0 0 20px -5px rgba(79, 142, 240, 0.3);
+    --tg-shadow-soft: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
 
     /* Gradients */
-    --gradient-primary: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
-    --gradient-accent: linear-gradient(135deg, #06b6d4 0%, #10b981 100%);
+    --gradient-primary: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 100%);
+    --gradient-accent: linear-gradient(135deg, #4f8ef0 0%, #5b9bf2 100%);
 
     /* Transitions */
     --tg-transition: all 0.2s ease;
     --tg-transition-smooth: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    --tg-transition-slow: all 0.3s ease;
 
     /* Dialogs */
     --tg-dialog-bg: var(--tg-surface);
@@ -75,41 +78,63 @@
     --tg-dialog-title-weight: 600;
     --tg-dialog-close-bg: var(--tg-surface-hover);
     --tg-dialog-close-color: var(--tg-text-secondary);
-    --tg-dialog-close-hover-bg: rgba(20, 184, 166, 0.16);
+    --tg-dialog-close-hover-bg: rgba(79, 142, 240, 0.16);
     --tg-dialog-close-hover-color: var(--tg-primary-dark);
     --tg-dialog-scrim: rgba(15, 23, 42, 0.4);
+
+    /* AI Assistant accent (coral) — scoped to the AI 助手 surface only */
+    --ai-coral: #4f8ef0;
+    --ai-coral-deep: #3b78dd;
+    --ai-coral-grad: linear-gradient(135deg, #8fd0fb 0%, #4f8ef0 55%, #3b78dd 100%);
+    --ai-coral-soft: rgba(79, 142, 240, 0.10);
+    --ai-coral-soft-hover: rgba(79, 142, 240, 0.16);
+    --ai-coral-border: rgba(79, 142, 240, 0.26);
+    --ai-coral-shadow: 0 8px 20px -8px rgba(59, 120, 221, 0.5);
+    --ai-hero-bg: linear-gradient(180deg, #fbfdff 0%, #eef4fd 100%);
+    --ai-card-bg: rgba(255, 255, 255, 0.96);
+    --ai-card-border: rgba(15, 23, 42, 0.06);
 }
 
 /* Dark mode colors */
 [data-theme="dark"] {
-    --tg-primary: #14b8a6;
-    --tg-primary-dark: #0d9488;
-    --tg-secondary: #06b6d4;
-    --tg-background: #0F1115;
-    --tg-surface: #181B21;
-    --tg-surface-hover: #232730;
-    --tg-divider: #2a2f38;
-    --tg-text-primary: #ffffff;
-    --tg-text-secondary: #c5c7c9;
+    --tg-primary: #6aa8f6;
+    --tg-primary-dark: #4f8ef0;
+    --tg-secondary: #8fc0f8;
+    --tg-background: #14161c;
+    --tg-surface: #1e2230;
+    --tg-surface-hover: #262a34;
+    --tg-background-chat: #14161c;
+    --tg-divider: #262a34;
+    --tg-text-primary: #eef1f6;
+    --tg-text-secondary: #aab2c0;
     --tg-text-tertiary: #8b8d91;
 
-    --tg-message-out: #0d4a44;
-    --tg-message-in: #181B21;
+    --tg-message-out: #23344f;
+    --tg-message-in: #1e2230;
 
-    --tg-online: #10b981;
+    --tg-online: #22c55e;
     --tg-offline: #8b8d91;
     --tg-unread: #f43f5e;
 
-    --tg-shadow-glow: 0 0 20px -5px rgba(20, 184, 166, 0.4);
+    --tg-shadow-glow: 0 0 20px -5px rgba(79, 142, 240, 0.4);
+    --tg-shadow-soft: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
 
     --tg-dialog-bg: var(--tg-surface);
     --tg-dialog-border: var(--tg-divider);
     --tg-dialog-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.6);
     --tg-dialog-close-bg: rgba(255, 255, 255, 0.06);
     --tg-dialog-close-color: var(--tg-text-secondary);
-    --tg-dialog-close-hover-bg: rgba(20, 184, 166, 0.22);
+    --tg-dialog-close-hover-bg: rgba(79, 142, 240, 0.22);
     --tg-dialog-close-hover-color: var(--tg-primary);
     --tg-dialog-scrim: rgba(3, 7, 18, 0.6);
+
+    /* AI Assistant accent (coral) — dark overrides */
+    --ai-coral-soft: rgba(79, 142, 240, 0.14);
+    --ai-coral-soft-hover: rgba(79, 142, 240, 0.22);
+    --ai-coral-border: rgba(79, 142, 240, 0.30);
+    --ai-hero-bg: linear-gradient(180deg, rgba(20, 22, 28, 0) 0%, rgba(79, 142, 240, 0.06) 100%);
+    --ai-card-bg: rgba(30, 41, 59, 0.85);
+    --ai-card-border: rgba(51, 65, 85, 0.6);
 }
 
 /* Global styles */
@@ -123,6 +148,13 @@ body {
     background: var(--tg-background);
     color: var(--tg-text-primary);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Global keyboard focus indicator. :focus-visible only triggers for keyboard /
+   assistive-tech navigation, so mouse users never see the ring. */
+:focus-visible {
+    outline: 2px solid var(--tg-primary);
+    outline-offset: 2px;
 }
 
 /* Material Icons Round ligature baseline */

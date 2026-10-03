@@ -31,6 +31,11 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     long countBySenderId(Long senderId);
 
     /**
+     * Count messages a user sent within a time window (for day-over-day stats)
+     */
+    long countBySenderIdAndCreatedAtBetween(Long senderId, LocalDateTime start, LocalDateTime end);
+
+    /**
      * Get only the last message for a single chat (replaces loading ALL messages)
      */
     Optional<Message> findFirstByChatIdOrderByCreatedAtDesc(Long chatId);
@@ -63,5 +68,13 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     List<Message> findByChatIdAndSequenceNumberGreaterThan(
             @Param("chatId") Long chatId,
             @Param("fromSeq") Long fromSeq);
+
+    @Query("SELECT m FROM Message m WHERE m.chatId = :chatId " +
+            "AND (m.isRecalled = false OR m.isRecalled IS NULL) " +
+            "AND LOWER(m.content) LIKE LOWER(CONCAT('%', :query, '%')) " +
+            "ORDER BY m.createdAt DESC")
+    Page<Message> searchInChat(@Param("chatId") Long chatId,
+                               @Param("query") String query,
+                               Pageable pageable);
 
 }

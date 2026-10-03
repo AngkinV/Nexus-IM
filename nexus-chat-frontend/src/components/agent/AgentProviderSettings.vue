@@ -412,7 +412,7 @@ async function testFromForm() {
   font-size: 12.5px;
 }
 .key-mask {
-  background: rgba(6, 182, 212, 0.1);
+  background: rgba(79, 142, 240, 0.1);
   color: var(--tg-primary);
   padding: 2px 8px;
   border-radius: 6px;

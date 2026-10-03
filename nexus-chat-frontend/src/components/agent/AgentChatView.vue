@@ -79,19 +79,64 @@
     <!-- Message stream -->
     <div ref="scrollEl" class="agent-messages">
       <div v-if="!agentStore.hasMessages" class="agent-empty">
-        <div class="empty-icon">
-          <span class="material-icons-round">auto_awesome</span>
+        <div class="hero-top">
+          <div class="hero-copy">
+            <h2 class="hero-title">
+              {{ $t('agent.welcomeTitlePre') }}<span class="hero-brand">{{ $t('agent.welcomeBrand') }}</span>
+            </h2>
+            <p class="hero-sub">{{ $t('agent.welcomeBody') }}</p>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <svg class="art-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="aiOrbGrad" cx="0.36" cy="0.30" r="0.78">
+                  <stop offset="0" stop-color="#D9ECFD" />
+                  <stop offset="0.45" stop-color="#7DB8F5" />
+                  <stop offset="1" stop-color="#3B78DD" />
+                </radialGradient>
+                <radialGradient id="aiHaloGrad" cx="0.5" cy="0.5" r="0.5">
+                  <stop stop-color="#4F8EF0" stop-opacity="0.22" />
+                  <stop offset="1" stop-color="#4F8EF0" stop-opacity="0" />
+                </radialGradient>
+              </defs>
+
+              <circle cx="120" cy="102" r="98" fill="url(#aiHaloGrad)" />
+              <ellipse cx="120" cy="166" rx="44" ry="9" fill="#3B78DD" fill-opacity="0.14" />
+
+              <g transform="translate(48,58)"><g class="art-spark art-spark--1">
+                <path d="M0 -7C1.2 -1.5 1.5 -1.2 7 0C1.5 1.2 1.2 1.5 0 7C-1.2 1.5 -1.5 1.2 -7 0C-1.5 -1.2 -1.2 -1.5 0 -7Z" fill="#7DB8F5" />
+              </g></g>
+              <g transform="translate(198,76)"><g class="art-spark art-spark--2">
+                <path d="M0 -6C1 -1.3 1.3 -1 6 0C1.3 1 1 1.3 0 6C-1 1.3 -1.3 1 -6 0C-1.3 -1 -1 -1.3 0 -6Z" fill="#A9D2FA" />
+              </g></g>
+              <g transform="translate(64,150)"><g class="art-spark art-spark--3">
+                <circle r="4" fill="#8FC0F8" />
+              </g></g>
+
+              <g class="art-orb">
+                <circle cx="120" cy="104" r="52" fill="url(#aiOrbGrad)" />
+                <ellipse cx="102" cy="86" rx="16" ry="10.5" fill="#FFFFFF" fill-opacity="0.45" transform="rotate(-28 102 86)" />
+                <circle cx="108" cy="82" r="3.6" fill="#FFFFFF" fill-opacity="0.7" />
+              </g>
+            </svg>
+          </div>
         </div>
-        <h3>{{ $t('agent.welcomeTitle') }}</h3>
-        <p>{{ $t('agent.welcomeBody') }}</p>
-        <div class="example-prompts">
+
+        <div class="hero-cards">
           <button
-            v-for="(ex, idx) in examplePrompts"
-            :key="idx"
-            class="example-chip"
-            @click="prefill(ex)"
+            v-for="(card, idx) in welcomeCards"
+            :key="card.key"
+            class="hero-card"
+            :style="{ '--i': idx }"
+            @click="prefill(card.prompt)"
           >
-            {{ ex }}
+            <span class="hero-card-icon" :class="`ic-${card.key}`">
+              <span class="material-icons-round">{{ card.icon }}</span>
+            </span>
+            <span class="hero-card-text">
+              <span class="hero-card-title">{{ card.title }}</span>
+              <span class="hero-card-desc">{{ card.desc }}</span>
+            </span>
           </button>
         </div>
       </div>
@@ -196,10 +241,28 @@ const scrollEl = ref(null)
 const providerDialogVisible = ref(false)
 const kbDialogVisible = ref(false)
 
-const examplePrompts = computed(() => [
-  t('agent.examples.summarize'),
-  t('agent.examples.weeklyReport'),
-  t('agent.examples.quickReply')
+const welcomeCards = computed(() => [
+  {
+    key: 'summary',
+    icon: 'summarize',
+    title: t('agent.cards.summary.title'),
+    desc: t('agent.cards.summary.desc'),
+    prompt: t('agent.examples.summarize')
+  },
+  {
+    key: 'report',
+    icon: 'event_note',
+    title: t('agent.cards.report.title'),
+    desc: t('agent.cards.report.desc'),
+    prompt: t('agent.examples.weeklyReport')
+  },
+  {
+    key: 'reply',
+    icon: 'quickreply',
+    title: t('agent.cards.reply.title'),
+    desc: t('agent.cards.reply.desc'),
+    prompt: t('agent.examples.quickReply')
+  }
 ])
 
 const activeProviderLabel = computed(() => {
@@ -377,12 +440,12 @@ watch(
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 50%, #0d9488 100%);
+  background: var(--ai-coral-grad);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  box-shadow: 0 6px 18px -6px rgba(20, 184, 166, 0.55);
+  box-shadow: 0 6px 18px -6px rgba(59, 120, 221, 0.5);
 }
 
 .agent-avatar .material-icons-round {
@@ -406,8 +469,8 @@ watch(
   font-weight: 700;
   padding: 2px 8px;
   border-radius: var(--tg-radius-full);
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
   letter-spacing: 0.5px;
 }
 
@@ -437,8 +500,8 @@ watch(
 }
 
 .action-btn:hover:not(:disabled) {
-  background: rgba(6, 182, 212, 0.1);
-  color: var(--tg-primary);
+  background: var(--ai-coral-soft);
+  color: var(--ai-coral);
 }
 
 .action-btn:disabled {
@@ -452,9 +515,9 @@ watch(
   gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(6, 182, 212, 0.3);
-  background: rgba(6, 182, 212, 0.08);
-  color: var(--tg-primary);
+  border: 1px solid var(--ai-coral-border);
+  background: var(--ai-coral-soft);
+  color: var(--ai-coral);
   font-size: 13px;
   cursor: pointer;
   max-width: 240px;
@@ -462,7 +525,7 @@ watch(
 }
 
 .model-switcher:hover {
-  background: rgba(6, 182, 212, 0.15);
+  background: var(--ai-coral-soft-hover);
 }
 
 .model-switcher .model-text {
@@ -505,7 +568,7 @@ watch(
      when streaming deltas mutate the DOM near the bottom. */
   overflow-anchor: none;
   padding: 24px 28px;
-  background-color: var(--tg-background-chat);
+  background: var(--ai-hero-bg);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -513,61 +576,154 @@ watch(
 
 .agent-empty {
   margin: auto;
-  text-align: center;
-  max-width: 460px;
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  padding: 10px 4px;
+}
+
+.hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.hero-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  animation: aiRise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.hero-title {
+  margin: 0 0 12px;
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.4px;
+  color: var(--tg-text-primary);
+}
+
+.hero-brand {
+  background: var(--ai-coral-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-sub {
+  margin: 0;
+  max-width: 440px;
+  font-size: 14px;
+  line-height: 1.65;
   color: var(--tg-text-secondary);
 }
 
-.agent-empty .empty-icon {
-  width: 84px;
-  height: 84px;
-  border-radius: 28px;
-  margin: 0 auto 18px;
-  background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%);
+.hero-art {
+  flex: 0 0 auto;
+  width: 200px;
+  animation: aiRise 0.6s 0.08s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.art-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.art-orb {
+  animation: float 6s ease-in-out infinite;
+}
+
+.art-spark {
+  animation: aiTwinkle 2.6s ease-in-out infinite;
+}
+
+.art-spark--2 { animation-delay: 0.7s; }
+.art-spark--3 { animation-delay: 1.3s; }
+
+.hero-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.hero-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  text-align: left;
+  font-family: inherit;
+  border-radius: 16px;
+  background: var(--ai-card-bg);
+  border: 1px solid var(--ai-card-border);
+  box-shadow: 0 4px 16px -10px rgba(15, 23, 42, 0.2);
+  cursor: pointer;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease, background 0.2s ease;
+  animation: aiRise 0.55s both;
+  animation-delay: calc(0.18s + var(--i) * 0.09s);
+}
+
+.hero-card:hover {
+  border-color: var(--ai-coral-border);
+  background: var(--ai-coral-soft);
+  box-shadow: 0 14px 28px -16px rgba(59, 120, 221, 0.5);
+}
+
+.hero-card-icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  box-shadow: 0 16px 40px -16px rgba(20, 184, 166, 0.55);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.agent-empty .empty-icon .material-icons-round {
-  font-size: 38px;
+.hero-card:hover .hero-card-icon {
+  transform: scale(1.1) rotate(-4deg);
 }
 
-.agent-empty h3 {
-  font-size: 22px;
-  margin: 0 0 8px;
-  color: var(--tg-text-primary);
-  font-weight: 700;
+.hero-card-icon .material-icons-round {
+  font-size: 20px;
 }
 
-.agent-empty p {
-  margin: 0 0 20px;
-  font-size: 14px;
-  line-height: 1.6;
-}
+.ic-summary { background: rgba(79, 142, 240, 0.14); color: #4f8ef0; }
+.ic-report { background: rgba(245, 158, 11, 0.14); color: #f59e0b; }
+.ic-reply { background: rgba(20, 184, 166, 0.14); color: #14b8a6; }
 
-.example-prompts {
+.hero-card-text {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
-.example-chip {
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(6, 182, 212, 0.08);
-  color: var(--tg-primary);
-  font-size: 13px;
-  border: 1px solid rgba(6, 182, 212, 0.2);
-  cursor: pointer;
-  transition: var(--tg-transition);
+.hero-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--tg-text-primary);
 }
 
-.example-chip:hover {
-  background: rgba(6, 182, 212, 0.15);
+.hero-card-desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--tg-text-secondary);
+}
+
+@keyframes aiRise {
+  from { opacity: 0; transform: translateY(22px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes aiTwinkle {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.12); }
 }
 
 .agent-msg {
@@ -594,7 +750,7 @@ watch(
 }
 
 .msg-user .msg-bubble {
-  background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%);
+  background: var(--ai-coral-grad);
   color: #fff;
   border-bottom-right-radius: 6px;
 }
@@ -626,9 +782,9 @@ watch(
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 12px;
-  background: rgba(6, 182, 212, 0.1);
-  color: var(--tg-primary);
-  border: 1px solid rgba(6, 182, 212, 0.25);
+  background: var(--ai-coral-soft);
+  color: var(--ai-coral);
+  border: 1px solid var(--ai-coral-border);
 }
 
 .tool-chip .material-icons-round {
@@ -651,8 +807,8 @@ watch(
 .tool-spinner {
   width: 10px;
   height: 10px;
-  border: 2px solid rgba(6, 182, 212, 0.3);
-  border-top-color: var(--tg-primary);
+  border: 2px solid var(--ai-coral-border);
+  border-top-color: var(--ai-coral);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -675,7 +831,7 @@ watch(
   width: 6px;
   height: 14px;
   margin-left: 2px;
-  background: var(--tg-primary);
+  background: var(--ai-coral);
   vertical-align: middle;
   border-radius: 1px;
   animation: blink 1s steps(2) infinite;
@@ -717,19 +873,24 @@ watch(
   resize: none;
 }
 
+.agent-textarea :deep(.el-textarea__inner):focus {
+  border-color: var(--ai-coral);
+  box-shadow: 0 0 0 2px var(--ai-coral-soft);
+}
+
 .agent-send {
   width: 44px;
   height: 44px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 100%);
+  background: var(--ai-coral-grad);
   color: #fff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 8px 20px -8px rgba(20, 184, 166, 0.5);
+  box-shadow: var(--ai-coral-shadow);
   transition: var(--tg-transition);
 }
 
@@ -759,5 +920,10 @@ watch(
   .agent-header { height: 64px; padding: 0 12px; }
   .agent-messages { padding: 16px; }
   .msg-bubble { max-width: 85%; }
+  .hero-top { flex-direction: column; align-items: center; text-align: center; }
+  .hero-copy { text-align: center; }
+  .hero-sub { margin-left: auto; margin-right: auto; }
+  .hero-art { width: 150px; order: -1; }
+  .hero-cards { grid-template-columns: 1fr; }
 }
 </style>

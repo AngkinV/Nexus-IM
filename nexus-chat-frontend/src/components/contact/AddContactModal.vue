@@ -4,6 +4,8 @@
     :title="$t('contact.addContact')"
     width="360px"
     class="add-contact-dialog"
+    append-to-body
+    align-center
     :before-close="handleClose"
     :close-on-click-modal="false"
   >

@@ -1,6 +1,7 @@
 <template>
   <div class="main-layout">
-    <LeftPanel class="panel-left" ref="leftPanelRef" />
+    <NavRail class="panel-nav" />
+    <LeftPanel class="panel-left" />
     <MiddlePanel
       class="panel-middle"
       :class="{ 'mobile-active': isMobile && chatStore.activeChat }"
@@ -33,6 +34,7 @@
 
 <script setup>
 import { ref, provide, onMounted, onUnmounted, computed } from 'vue'
+import NavRail from '@/components/layout/NavRail.vue'
 import LeftPanel from '@/components/layout/LeftPanel.vue'
 import MiddlePanel from '@/components/layout/MiddlePanel.vue'
 import RightPanel from '@/components/layout/RightPanel.vue'
@@ -59,8 +61,13 @@ const callStore = useCallStore()
 const companionStore = useCompanionStore()
 
 const showRightPanel = ref(false)
-const leftPanelRef = ref(null)
 const showCompanion = ref(false)
+
+// Active left-nav view, driven by the NavRail and consumed by the LeftPanel.
+const activeView = ref('chats')
+const setActiveView = (view) => {
+  activeView.value = view
+}
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
 const isAiChat = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
@@ -73,10 +80,8 @@ const handleResize = () => {
 
 // Handle open new chat from MiddlePanel
 const handleOpenNewChat = () => {
-  // Switch to contacts tab in LeftPanel
-  if (leftPanelRef.value) {
-    leftPanelRef.value.$el.querySelector('.contacts-tab')?.click()
-  }
+  // Switch to the contacts view so the user can pick someone to message.
+  setActiveView('contacts')
 }
 
 // Provide global state for panels
@@ -86,6 +91,8 @@ const toggleRightPanel = () => {
 provide('toggleRightPanel', toggleRightPanel)
 provide('showRightPanel', showRightPanel)
 provide('isMobile', isMobile)
+provide('activeView', activeView)
+provide('setActiveView', setActiveView)
 
 /**
  * Optimized startup flow (WeChat-style):
@@ -133,7 +140,8 @@ onMounted(async () => {
           syncService.performDeltaSync({
             chatStore,
             messageStore,
-            contactStore
+            contactStore,
+            userStore
           })
         ])
       } catch (error) {
@@ -168,21 +176,31 @@ onUnmounted(() => {
   display: flex;
   width: 100vw;
   height: 100vh;
-  background: #f8fafc;
+  background:
+    radial-gradient(1100px 720px at 72% 26%, rgba(186, 212, 248, 0.55), transparent 60%),
+    radial-gradient(820px 560px at 88% 62%, rgba(196, 206, 248, 0.50), transparent 58%),
+    radial-gradient(720px 560px at 16% 82%, rgba(206, 222, 248, 0.45), transparent 60%),
+    linear-gradient(135deg, #eef3fc 0%, #e6eef9 48%, #dde8f7 100%);
   overflow: hidden;
   position: relative;
   transition: background 0.3s ease;
 }
 
+.panel-nav {
+  flex-shrink: 0;
+  height: 100%;
+  z-index: 11;
+}
+
 .panel-left {
-  width: 380px;
-  min-width: 320px;
-  max-width: 420px;
-  border-right: 1px solid #f1f5f9;
+  width: 340px;
+  min-width: 300px;
+  max-width: 400px;
+  border-right: 1px solid rgba(15, 23, 42, 0.06);
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   z-index: 10;
@@ -205,7 +223,7 @@ onUnmounted(() => {
   width: 25%;
   min-width: 280px;
   max-width: 380px;
-  border-left: 1px solid #f1f5f9;
+  border-left: 1px solid rgba(15, 23, 42, 0.06);
   height: 100%;
   transition: all 0.3s ease;
   background: rgba(255, 255, 255, 0.9);
@@ -222,24 +240,28 @@ onUnmounted(() => {
 
 /* Dark Mode */
 [data-theme="dark"] .main-layout {
-  background: #0F1115;
+  background:
+    radial-gradient(1100px 720px at 72% 26%, rgba(79, 142, 240, 0.18), transparent 60%),
+    radial-gradient(820px 560px at 88% 62%, rgba(70, 90, 200, 0.16), transparent 58%),
+    radial-gradient(720px 560px at 16% 82%, rgba(90, 150, 230, 0.14), transparent 60%),
+    linear-gradient(135deg, #14161c 0%, #15171f 50%, #161922 100%);
 }
 
 [data-theme="dark"] .panel-left {
-  background: rgba(24, 27, 33, 0.8);
-  border-right-color: #232730;
+  background: rgba(30, 34, 48, 0.72);
+  border-right-color: #262a34;
 }
 
 [data-theme="dark"] .panel-right {
-  background: rgba(24, 27, 33, 0.9);
-  border-left-color: #232730;
+  background: rgba(30, 34, 48, 0.9);
+  border-left-color: #262a34;
 }
 
 /* Tablet breakpoint */
 @media (max-width: 1024px) {
   .panel-left {
-    width: 320px;
-    min-width: 280px;
+    width: 300px;
+    min-width: 260px;
   }
 
   .panel-right {
@@ -255,10 +277,11 @@ onUnmounted(() => {
   }
 
   .panel-left {
-    position: absolute;
-    width: 100%;
+    position: relative;
+    flex: 1;
+    width: auto;
     max-width: none;
-    min-width: unset;
+    min-width: 0;
     height: 100%;
     z-index: 10;
     border-right: none;

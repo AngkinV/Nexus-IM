@@ -1,16 +1,19 @@
 package com.nexus.chat.service;
 
+import com.nexus.chat.dto.BlockedUserDTO;
 import com.nexus.chat.dto.ContactDTO;
 import com.nexus.chat.dto.ContactRequestDTO;
 import com.nexus.chat.dto.UserDTO;
 import com.nexus.chat.dto.WebSocketMessage;
 import com.nexus.chat.exception.BusinessException;
+import com.nexus.chat.model.BlockedUser;
 import com.nexus.chat.model.Contact;
 import com.nexus.chat.model.ContactRequest;
 import com.nexus.chat.model.ContactRequest.RequestStatus;
 import com.nexus.chat.model.User;
 import com.nexus.chat.model.UserPrivacySettings;
 import com.nexus.chat.model.UserPrivacySettings.FriendRequestMode;
+import com.nexus.chat.repository.BlockedUserRepository;
 import com.nexus.chat.repository.ChatMemberRepository;
 import com.nexus.chat.repository.ChatRepository;
 import com.nexus.chat.repository.ContactRepository;
@@ -34,6 +37,7 @@ public class ContactService {
 
     private final ContactRepository contactRepository;
     private final ContactRequestRepository contactRequestRepository;
+    private final BlockedUserRepository blockedUserRepository;
     private final UserRepository userRepository;
     private final UserPrivacySettingsRepository privacySettingsRepository;
     private final ChatRepository chatRepository;
@@ -522,6 +526,73 @@ public class ContactService {
         }
 
         return dto;
+    }
+
+    // ==================== 黑名单相关方法 ====================
+
+    /**
+     * 获取用户的黑名单列表
+     */
+    public List<BlockedUserDTO> getBlacklist(Long userId) {
+        List<BlockedUser> blocks = blockedUserRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        if (blocks.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> blockedIds = blocks.stream()
+                .map(BlockedUser::getBlockedUserId)
+                .collect(Collectors.toList());
+        Map<Long, User> usersById = userRepository.findAllByIdIn(blockedIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        return blocks.stream()
+                .map(block -> {
+                    User user = usersById.get(block.getBlockedUserId());
+                    if (user == null) return null;
+                    return new BlockedUserDTO(
+                            user.getId(),
+                            user.getUsername(),
+                            user.getNickname(),
+                            user.getAvatarUrl(),
+                            block.getCreatedAt());
+                })
+                .filter(dto -> dto != null)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 拉黑用户（仅记录黑名单，不影响好友关系，便于移除后好友仍在）
+     */
+    @Transactional
+    public void blockUser(Long userId, Long blockedUserId) {
+        if (userId.equals(blockedUserId)) {
+            throw new BusinessException("error.contact.self.block");
+        }
+
+        userRepository.findById(blockedUserId)
+                .orElseThrow(() -> new BusinessException("error.user.not.found"));
+
+        if (!blockedUserRepository.existsByUserIdAndBlockedUserId(userId, blockedUserId)) {
+            BlockedUser blocked = new BlockedUser();
+            blocked.setUserId(userId);
+            blocked.setBlockedUserId(blockedUserId);
+            blockedUserRepository.save(blocked);
+        }
+    }
+
+    /**
+     * 取消拉黑
+     */
+    @Transactional
+    public void unblockUser(Long userId, Long blockedUserId) {
+        blockedUserRepository.deleteByUserIdAndBlockedUserId(userId, blockedUserId);
+    }
+
+    /**
+     * 检查 userId 是否已拉黑 blockedUserId
+     */
+    public boolean isBlocked(Long userId, Long blockedUserId) {
+        return blockedUserRepository.existsByUserIdAndBlockedUserId(userId, blockedUserId);
     }
 
 }

@@ -29,6 +29,15 @@ public interface ChatRepository extends JpaRepository<Chat, Long> {
     long countUserGroups(@Param("userId") Long userId);
 
     /**
+     * Count group memberships a user joined within a time window (day-over-day stats)
+     */
+    @Query("SELECT COUNT(cm) FROM Chat c JOIN ChatMember cm ON c.id = cm.chatId " +
+           "WHERE cm.userId = :userId AND c.type = 'group' AND cm.joinedAt BETWEEN :start AND :end")
+    long countUserGroupsJoinedBetween(@Param("userId") Long userId,
+                                      @Param("start") LocalDateTime start,
+                                      @Param("end") LocalDateTime end);
+
+    /**
      * Find groups created by a user
      */
     List<Chat> findByCreatedByAndType(Long createdBy, Chat.ChatType type);

@@ -26,6 +26,7 @@ public class WebSocketMessage {
         USER_OFFLINE,
         USER_STATUS_CHANGED,
         USER_PROFILE_UPDATED,  // User avatar/nickname updated
+        FORCE_LOGOUT,          // A device session was revoked; matching device must sign out
 
         // Group events
         GROUP_CREATED,
@@ -51,6 +52,9 @@ public class WebSocketMessage {
         MESSAGE_ACK,              // Server confirmed receipt
         MESSAGE_DELIVERED,        // Delivered to recipient
         MESSAGE_DELIVERY_FAILED,  // Delivery failed
+        MESSAGE_EDITED,
+        MESSAGE_RECALLED,
+        MESSAGE_REACTION_UPDATED,
 
         // Sync (Phase 3/4)
         SYNC_REQUEST,             // Client requests missing messages

@@ -142,8 +142,8 @@ async function onDelete(s) {
   gap: 6px;
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(20, 184, 166, 0.25);
-  background: rgba(20, 184, 166, 0.08);
+  border: 1px solid rgba(79, 142, 240, 0.25);
+  background: rgba(79, 142, 240, 0.08);
   color: var(--tg-text-primary);
   font-size: 13px;
   font-weight: 600;
@@ -152,7 +152,7 @@ async function onDelete(s) {
   transition: var(--tg-transition);
 }
 .session-trigger:hover {
-  background: rgba(20, 184, 166, 0.16);
+  background: rgba(79, 142, 240, 0.16);
 }
 .session-trigger .material-icons-round {
   font-size: 16px;
@@ -173,7 +173,7 @@ async function onDelete(s) {
   padding: 8px 12px;
 }
 .session-menu :deep(.el-dropdown-menu__item.is-active) {
-  background: rgba(6, 182, 212, 0.08);
+  background: rgba(79, 142, 240, 0.08);
   color: var(--tg-primary);
 }
 .new-row {

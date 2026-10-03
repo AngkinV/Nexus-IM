@@ -41,12 +41,27 @@ public class Message {
     @Column(name = "client_message_id", length = 36, unique = true)
     private String clientMessageId;
 
+    @Column(name = "reply_to_message_id")
+    private Long replyToMessageId;
+
+    @Column(name = "is_edited")
+    private Boolean isEdited = false;
+
+    @Column(name = "edited_at")
+    private LocalDateTime editedAt;
+
+    @Column(name = "is_recalled")
+    private Boolean isRecalled = false;
+
+    @Column(name = "recalled_at")
+    private LocalDateTime recalledAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
     public enum MessageType {
-        text, image, file, emoji
+        text, image, file, emoji, video, audio
     }
 
 }

@@ -26,6 +26,11 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
     Optional<UserSession> findBySessionToken(String sessionToken);
 
     /**
+     * Whether a session with this token still exists (used to enforce revocation).
+     */
+    boolean existsBySessionToken(String sessionToken);
+
+    /**
      * Find current session for a user
      */
     Optional<UserSession> findByUserIdAndIsCurrentTrue(Long userId);

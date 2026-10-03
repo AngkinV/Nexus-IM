@@ -4,8 +4,10 @@ import { useMessageStore } from '@/stores/message'
 import { useChatStore } from '@/stores/chat'
 import { useContactStore } from '@/stores/contact'
 import { useUserStore } from '@/stores/user'
+import { useConnectionStore } from '@/stores/connection'
 import { resolveFileUrl } from '@/services/api'
 import { WS_URL } from '@/services/runtimeConfig'
+import i18n from '@/locales/i18n'
 
 /**
  * Call signaling message types
@@ -38,6 +40,20 @@ function generateClientMsgId() {
     })
 }
 
+/**
+ * Decode the session id (`sid`) claim from a JWT without verifying it.
+ * Used to tell whether a FORCE_LOGOUT targets this very device.
+ */
+function decodeJwtSid(token) {
+    try {
+        const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        const padded = b64 + '='.repeat((4 - b64.length % 4) % 4)
+        return JSON.parse(atob(padded)).sid || null
+    } catch (e) {
+        return null
+    }
+}
+
 class WebSocketService {
     constructor() {
         this.client = null
@@ -56,6 +72,8 @@ class WebSocketService {
         this.pendingAcks = new Map()
         // Call signaling callback
         this.onCallSignal = null
+        // Set when the server force-logs-out this device, to stop reconnects.
+        this.forcedLogout = false
     }
 
     connect(userId, onConnectCallback = null) {
@@ -66,6 +84,7 @@ class WebSocketService {
 
         this.currentUserId = userId
         this.onConnectCallback = onConnectCallback
+        useConnectionStore().markConnecting()
         const socket = new SockJS(WS_URL)
 
         // Get JWT token for authentication
@@ -84,6 +103,7 @@ class WebSocketService {
             onConnect: () => {
                 console.log('WebSocket connected')
                 this.connected = true
+                useConnectionStore().markConnected()
                 this.reconnectAttempts = 0
                 this.lastHeartbeatResponse = Date.now()
 
@@ -108,11 +128,13 @@ class WebSocketService {
             onStompError: (frame) => {
                 console.error('STOMP error:', frame)
                 this.connected = false
+                useConnectionStore().markConnecting()
             },
 
             onWebSocketClose: () => {
                 console.log('WebSocket closed')
                 this.connected = false
+                useConnectionStore().markConnecting()
                 this.stopHeartbeatMonitor()
                 this.stopServerHeartbeat()
                 this.attemptReconnect(userId)
@@ -145,6 +167,13 @@ class WebSocketService {
                 case 'MESSAGE_DELIVERY_FAILED':
                     this.handleMessageDeliveryFailed(data)
                     break
+                case 'MESSAGE_EDITED':
+                case 'MESSAGE_RECALLED':
+                    this.handleMessageUpdated(data)
+                    break
+                case 'MESSAGE_REACTION_UPDATED':
+                    this.handleMessageReactionUpdated(data)
+                    break
                 case 'TYPING':
                     this.handleTypingIndicator(data)
                     break
@@ -176,6 +205,9 @@ class WebSocketService {
                     break
                 case 'ERROR':
                     this.handleError(data)
+                    break
+                case 'FORCE_LOGOUT':
+                    this.handleForceLogout(data)
                     break
                 default:
                     console.log('Unhandled message type via user channel:', data.type)
@@ -224,7 +256,19 @@ class WebSocketService {
             isRead: payload.isRead,
             isSelf: isSelf,
             sequenceNumber: payload.sequenceNumber,
-            clientMsgId: payload.clientMsgId
+            clientMsgId: payload.clientMsgId,
+            isEdited: payload.isEdited,
+            editedAt: payload.editedAt,
+            editCount: payload.editCount || 0,
+            canEdit: payload.canEdit,
+            canRecall: payload.canRecall,
+            isRecalled: payload.isRecalled,
+            recalledAt: payload.recalledAt,
+            replyToMessageId: payload.replyToMessageId,
+            replyToMessage: payload.replyToMessage,
+            reactions: payload.reactions || [],
+            deliveredCount: payload.deliveredCount || 0,
+            readCount: payload.readCount || 0
         }
 
         // If the user previously hid this chat, a new inbound message
@@ -337,6 +381,51 @@ class WebSocketService {
         }
     }
 
+    handleMessageUpdated(data) {
+        const payload = data.payload
+        if (!payload?.chatId || !payload?.id) return
+        const messageStore = useMessageStore()
+        const userStore = useUserStore()
+        messageStore.updateMessage(payload.chatId, payload.id, {
+            content: payload.content,
+            type: payload.messageType?.toUpperCase() || 'TEXT',
+            fileUrl: payload.fileUrl,
+            isEdited: payload.isEdited,
+            editedAt: payload.editedAt,
+            editCount: payload.editCount || 0,
+            canEdit: payload.canEdit,
+            canRecall: payload.canRecall,
+            isRecalled: payload.isRecalled,
+            recalledAt: payload.recalledAt,
+            reactions: payload.reactions || [],
+            replyToMessageId: payload.replyToMessageId,
+            replyToMessage: payload.replyToMessage,
+            isSelf: payload.senderId === userStore.currentUser?.id
+        })
+
+        // When a message is recalled, refresh the chat-list preview so it no
+        // longer shows the recalled content. Prefer the latest still-valid
+        // message. Only recompute when this chat's messages are loaded, so we
+        // never clobber a correct preview for a chat we haven't opened.
+        if (payload.isRecalled) {
+            const chatStore = useChatStore()
+            const msgs = messageStore.getMessages(payload.chatId)
+            if (msgs && msgs.length) {
+                const lastValid = [...msgs].reverse().find(m => !m.isRecalled)
+                chatStore.updateChat(payload.chatId, {
+                    lastMessage: lastValid ? (lastValid.content || '') : i18n.global.t('chat.messageRecalled')
+                })
+            }
+        }
+    }
+
+    handleMessageReactionUpdated(data) {
+        const { chatId, messageId, reactions } = data.payload || {}
+        if (!chatId || !messageId) return
+        const messageStore = useMessageStore()
+        messageStore.updateReactions(chatId, messageId, reactions || [])
+    }
+
     /**
      * Handle typing indicator received via unified channel.
      */
@@ -374,6 +463,27 @@ class WebSocketService {
         if (chatId) {
             const messageStore = useMessageStore()
             messageStore.markLastMessageFailed(chatId)
+        }
+    }
+
+    /**
+     * Server revoked one of this user's device sessions. If the targeted
+     * session is THIS device, sign out immediately and return to login.
+     */
+    handleForceLogout(data) {
+        const token = localStorage.getItem('token')
+        const mySid = token ? decodeJwtSid(token) : null
+        const targets = data.payload?.targetSids || []
+        if (!mySid || !targets.includes(mySid)) return // not this device
+
+        console.warn('This device was signed out remotely')
+        this.forcedLogout = true
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        try { this.disconnect() } catch (e) { /* ignore */ }
+        const here = window.location.hash || window.location.pathname
+        if (!String(here).includes('/login')) {
+            window.location.reload()
         }
     }
 
@@ -600,7 +710,7 @@ class WebSocketService {
 
         if (data.type === 'CHAT_CREATED') {
             const chatData = data.payload
-            const isGroup = chatData.type === 'group'
+            const isGroup = String(chatData.type).toLowerCase() === 'group'
             const memberOnline = chatData.members?.find(m => m.id !== chatData.createdBy)?.isOnline || false
 
             const newChat = {
@@ -667,7 +777,7 @@ class WebSocketService {
      * Send a message with clientMsgId for deduplication and ACK tracking.
      * Returns a Promise that resolves when the server ACKs the message.
      */
-    sendMessage(chatId, senderId, content, messageType = 'text', fileUrl = null) {
+    sendMessage(chatId, senderId, content, messageType = 'text', fileUrl = null, replyToMessageId = null) {
         const clientMsgId = generateClientMsgId()
 
         if (!this.connected) {
@@ -683,6 +793,7 @@ class WebSocketService {
                 content,
                 messageType,
                 fileUrl,
+                replyToMessageId,
                 clientMsgId
             })
         })
@@ -748,6 +859,9 @@ class WebSocketService {
     }
 
     attemptReconnect(userId) {
+        if (this.forcedLogout) {
+            return // device was signed out remotely; do not reconnect
+        }
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error('Max reconnect attempts reached')
             return
@@ -794,6 +908,7 @@ class WebSocketService {
             if (this.connected && (now - this.lastHeartbeatResponse > 60000)) {
                 console.warn('No heartbeat response for 60s, forcing reconnect...')
                 this.connected = false
+                useConnectionStore().markConnecting()
                 if (this.client) {
                     try { this.client.deactivate() } catch (e) { /* ignore */ }
                 }
@@ -834,6 +949,7 @@ class WebSocketService {
             this.connected = false
             this.currentUserId = null
         }
+        useConnectionStore().markDisconnected()
     }
 
     isConnected() {

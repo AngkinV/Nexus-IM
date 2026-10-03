@@ -9,6 +9,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -36,6 +38,14 @@ public class RedisCacheService {
     private static final String CHAT_SEQ_PREFIX = "chat:seq:";
     private static final String WS_SESSIONS_PREFIX = "ws:sessions:";
     private static final String PENDING_REQS_PREFIX = "user:pendingreqs:";
+
+    // Online-time accounting (driven by the 30s presence heartbeat)
+    private static final String ONLINE_TOTAL_PREFIX = "online:sec:total:"; // online:sec:total:{userId}
+    private static final String ONLINE_DAY_PREFIX = "online:sec:";         // online:sec:{userId}:{yyyyMMdd}
+    private static final String ONLINE_TICK_PREFIX = "online:tick:";       // online:tick:{userId}
+    private static final long ONLINE_HEARTBEAT_SECONDS = 30L;
+    private static final long ONLINE_TICK_TTL_SECONDS = 28L;
+    private static final DateTimeFormatter ONLINE_DAY_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     public RedisCacheService(RedisTemplate<String, Object> redisTemplate,
                              StringRedisTemplate stringRedisTemplate) {
@@ -102,6 +112,39 @@ public class RedisCacheService {
         return members.stream()
                 .map(Long::parseLong)
                 .collect(Collectors.toSet());
+    }
+
+    // ==================== Online Time Accounting ====================
+
+    /**
+     * Accumulate online time, driven by the client's 30s presence heartbeat.
+     * A short-lived SETNX tick guard means a user with multiple devices is only
+     * counted once per window, so the total stays wall-clock accurate.
+     */
+    public void recordOnlineHeartbeat(Long userId) {
+        String tickKey = ONLINE_TICK_PREFIX + userId;
+        Boolean firstTick = stringRedisTemplate.opsForValue()
+                .setIfAbsent(tickKey, "1", ONLINE_TICK_TTL_SECONDS, TimeUnit.SECONDS);
+        if (!Boolean.TRUE.equals(firstTick)) {
+            return;
+        }
+        stringRedisTemplate.opsForValue()
+                .increment(ONLINE_TOTAL_PREFIX + userId, ONLINE_HEARTBEAT_SECONDS);
+        String dayKey = ONLINE_DAY_PREFIX + userId + ":" + LocalDate.now().format(ONLINE_DAY_FMT);
+        stringRedisTemplate.opsForValue().increment(dayKey, ONLINE_HEARTBEAT_SECONDS);
+        // Keep day buckets for 3 days so "yesterday" survives for the delta.
+        stringRedisTemplate.expire(dayKey, 3, TimeUnit.DAYS);
+    }
+
+    public long getTotalOnlineSeconds(Long userId) {
+        String value = stringRedisTemplate.opsForValue().get(ONLINE_TOTAL_PREFIX + userId);
+        return value != null ? Long.parseLong(value) : 0L;
+    }
+
+    public long getOnlineSecondsForDate(Long userId, LocalDate date) {
+        String dayKey = ONLINE_DAY_PREFIX + userId + ":" + date.format(ONLINE_DAY_FMT);
+        String value = stringRedisTemplate.opsForValue().get(dayKey);
+        return value != null ? Long.parseLong(value) : 0L;
     }
 
     // ==================== User Profile Cache ====================

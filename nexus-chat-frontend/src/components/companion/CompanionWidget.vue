@@ -70,7 +70,7 @@ const avatarFallback = computed(() => {
   bottom: -2px;
   width: 10px;
   height: 10px;
-  background: #14b8a6;
+  background: #4f8ef0;
   border-radius: 999px;
   border: 2px solid #fff;
   animation: pulse 2s infinite;

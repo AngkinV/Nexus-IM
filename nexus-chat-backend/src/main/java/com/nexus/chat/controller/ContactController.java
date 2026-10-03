@@ -1,6 +1,7 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.AddContactRequest;
+import com.nexus.chat.dto.BlockedUserDTO;
 import com.nexus.chat.dto.ContactDTO;
 import com.nexus.chat.dto.ContactRequestDTO;
 import com.nexus.chat.dto.UserDTO;
@@ -177,6 +178,56 @@ public class ContactController {
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    // ==================== 黑名单相关接口 ====================
+
+    /**
+     * Get blacklist for a user
+     * GET /api/contacts/blacklist/{userId}
+     */
+    @GetMapping("/blacklist/{userId}")
+    public ResponseEntity<List<BlockedUserDTO>> getBlacklist(@PathVariable Long userId) {
+        return ResponseEntity.ok(contactService.getBlacklist(userId));
+    }
+
+    /**
+     * Block a user
+     * POST /api/contacts/blacklist
+     */
+    @PostMapping("/blacklist")
+    public ResponseEntity<?> blockUser(@RequestBody AddContactRequest request) {
+        try {
+            contactService.blockUser(request.getUserId(), request.getContactUserId());
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Unblock a user
+     * DELETE /api/contacts/blacklist
+     */
+    @DeleteMapping("/blacklist")
+    public ResponseEntity<?> unblockUser(@RequestBody AddContactRequest request) {
+        try {
+            contactService.unblockUser(request.getUserId(), request.getContactUserId());
+            return ResponseEntity.ok(Map.of("success", true));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * Check if a user is blocked
+     * GET /api/contacts/blocked/check?userId={userId}&blockedUserId={blockedUserId}
+     */
+    @GetMapping("/blocked/check")
+    public ResponseEntity<Map<String, Boolean>> isBlocked(
+            @RequestParam Long userId,
+            @RequestParam Long blockedUserId) {
+        return ResponseEntity.ok(Map.of("isBlocked", contactService.isBlocked(userId, blockedUserId)));
     }
 
 }

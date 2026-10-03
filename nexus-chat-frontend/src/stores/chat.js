@@ -3,11 +3,35 @@ import { ref, computed } from 'vue'
 import { chatAPI, resolveFileUrl } from '@/services/api'
 import offlineStore from '@/services/offlineStore'
 import { AI_ASSISTANT_CHAT_ID, buildAiAssistantChatItem } from '@/stores/agent'
+import i18n from '@/locales/i18n'
+
+// Resolve the chat-list preview text from a backend lastMessage. Guards against
+// recalled messages whose content the backend serializes as a JSON blob — those
+// must show a "message recalled" placeholder, never raw JSON.
+const tryParseJson = (s) => { try { return JSON.parse(s) } catch { return null } }
+const resolveServerLastMessage = (lm) => {
+    if (!lm) return ''
+    if (typeof lm === 'object') {
+        if (lm.isRecalled) return i18n.global.t('chat.messageRecalled')
+        return typeof lm.content === 'string' ? lm.content : ''
+    }
+    if (typeof lm === 'string') {
+        if (lm.trim().startsWith('{')) {
+            const o = tryParseJson(lm)
+            if (o && o.isRecalled) return i18n.global.t('chat.messageRecalled')
+            if (o && typeof o.content === 'string') return o.content
+        }
+        return lm
+    }
+    return ''
+}
 
 export const useChatStore = defineStore('chat', () => {
     const activeChat = ref(null)
     const chats = ref([])
     const isLoading = ref(false)
+    const loadError = ref(false)
+    let lastFetchUserId = null
     const subscribedChatIds = ref(new Set()) // Track subscribed chat rooms
 
     const messages = ref([])
@@ -94,6 +118,38 @@ export const useChatStore = defineStore('chat', () => {
         if (s === 'direct') return 'DIRECT'
         if (s === 'group') return 'GROUP'
         return raw // already normalized (e.g. 'DIRECT'/'GROUP')
+    }
+
+    // Map a backend ChatDTO into the shape the UI expects. For group chats the
+    // chat has its OWN avatar (chat.avatar). For direct chats the chat-level
+    // avatar is usually null, so we fall back to the other member's avatar.
+    // Using the wrong field for groups caused different accounts to render
+    // different "other member" avatars and made the creator's freshly-uploaded
+    // group avatar appear inconsistent across clients.
+    const normalizeChatFromServer = (chat, currentUserId) => {
+        const isGroup = String(chat.type).toLowerCase() === 'group'
+        const otherMember = chat.members?.find(m => m.id !== currentUserId)
+        const isOnline = isGroup ? false : (otherMember?.isOnline || false)
+        const avatarSource = isGroup
+            ? (chat.avatar || chat.avatarUrl)
+            : (otherMember?.avatarUrl || otherMember?.avatar || chat.avatar)
+        return {
+            id: chat.id,
+            name: chat.name,
+            avatar: resolveFileUrl(avatarSource),
+            description: chat.description || '',
+            isPrivate: chat.isPrivate || false,
+            lastMessage: resolveServerLastMessage(chat.lastMessage),
+            lastMessageTime: chat.lastMessage?.createdAt || chat.lastMessageAt || chat.lastMessageTime,
+            unreadCount: chat.unreadCount || 0,
+            online: isOnline,
+            status: isOnline ? 'online' : 'offline',
+            type: isGroup ? 'GROUP' : 'DIRECT',
+            members: chat.members,
+            memberCount: chat.memberCount || chat.members?.length || 0,
+            contactId: isGroup ? null : (otherMember?.id || null),
+            createdBy: chat.createdBy
+        }
     }
 
     // Toggle mute for a chat
@@ -201,7 +257,9 @@ export const useChatStore = defineStore('chat', () => {
 
     // Fetch chats from backend
     const fetchChats = async (userId) => {
+        lastFetchUserId = userId
         isLoading.value = true
+        loadError.value = false
         try {
             const response = await chatAPI.getUserChats(userId)
             const chatList = response.data || []
@@ -220,32 +278,21 @@ export const useChatStore = defineStore('chat', () => {
                     }
                     return true
                 })
-                .map(chat => {
-                const isOnline = chat.members?.find(m => m.id !== userId)?.isOnline || false
-                return {
-                    id: chat.id,
-                    name: chat.name,
-                    avatar: resolveFileUrl(chat.members?.find(m => m.id !== userId)?.avatarUrl),
-                    lastMessage: chat.lastMessage?.content || '',
-                    lastMessageTime: chat.lastMessage?.createdAt || chat.lastMessageAt,
-                    unreadCount: chat.unreadCount || 0,
-                    online: isOnline,
-                    status: isOnline ? 'online' : 'offline',
-                    type: chat.type === 'direct' ? 'DIRECT' : 'GROUP',
-                    members: chat.members,
-                    memberCount: chat.members?.length || 0,
-                    contactId: chat.type === 'direct' ? chat.members?.find(m => m.id !== userId)?.id : null
-                }
-            })
+                .map(chat => normalizeChatFromServer(chat, userId))
 
             // Persist to IndexedDB
             offlineStore.saveChats(chats.value).catch(() => {})
             if (hiddenTypeChanged) saveHiddenChats()
         } catch (error) {
             console.error('Failed to fetch chats:', error)
+            loadError.value = true
         } finally {
             isLoading.value = false
         }
+    }
+
+    const retryFetchChats = () => {
+        if (lastFetchUserId != null) fetchChats(lastFetchUserId)
     }
 
     const setActiveChat = (chat) => {
@@ -548,7 +595,8 @@ export const useChatStore = defineStore('chat', () => {
      * Merge delta-synced chats into the store.
      * Updates existing chats or inserts new ones.
      */
-    const mergeChats = (deltaChatList) => {
+    const mergeChats = (deltaChatList, currentUserId = null) => {
+        const userId = currentUserId
         const visible = []
         let hiddenTypeChanged = false
         for (const deltaChat of deltaChatList) {
@@ -558,13 +606,18 @@ export const useChatStore = defineStore('chat', () => {
                 }
                 continue
             }
-            const idx = chats.value.findIndex(c => c.id === deltaChat.id)
+            // Normalize so group avatars come from chat.avatar (not from a
+            // random member's avatar) and relative URLs are resolved to the
+            // backend host. Without this, raw server fields would clobber
+            // already-normalized entries on each delta merge.
+            const normalized = normalizeChatFromServer(deltaChat, userId)
+            const idx = chats.value.findIndex(c => c.id === normalized.id)
             if (idx !== -1) {
-                chats.value[idx] = { ...chats.value[idx], ...deltaChat }
+                chats.value[idx] = { ...chats.value[idx], ...normalized }
             } else {
-                chats.value.push(deltaChat)
+                chats.value.push(normalized)
             }
-            visible.push(deltaChat)
+            visible.push(normalized)
         }
         // Persist merged chats to IndexedDB (only the non-hidden ones)
         if (visible.length > 0) {
@@ -623,6 +676,7 @@ export const useChatStore = defineStore('chat', () => {
         chats,
         messages,
         isLoading,
+        loadError,
         subscribedChatIds,
         mutedChats,
         pinnedChats,
@@ -634,6 +688,7 @@ export const useChatStore = defineStore('chat', () => {
         selectedChatId,
         sortedChats,
         fetchChats,
+        retryFetchChats,
         setActiveChat,
         toggleActiveChat,
         sendMessage,

@@ -1,7 +1,14 @@
 <template>
   <div class="input-container">
+    <div v-if="replyTo" class="replying-bar">
+      <div>
+        <span class="replying-label">{{ $t('chat.replyingTo', { name: replyTo.senderName || $t('chat.unknownUser') }) }}</span>
+        <span class="replying-text">{{ replyTo.content }}</span>
+      </div>
+      <button class="replying-close" @click="$emit('cancelReply')" :title="$t('chat.cancelReply')">×</button>
+    </div>
     <div class="input-wrapper">
-      <button class="input-btn attach-btn" @click="triggerUpload" title="Attach file">
+      <button class="input-btn attach-btn" @click="triggerUpload" :title="$t('chat.attachFile')" :aria-label="$t('chat.attachFile')">
         <el-icon :size="24"><Plus /></el-icon>
       </button>
 
@@ -10,7 +17,7 @@
           v-model="content"
           type="textarea"
           :autosize="{ minRows: 1, maxRows: 4 }"
-          placeholder="Type a message..."
+          :placeholder="$t('chat.typeMessage')"
           resize="none"
           class="custom-textarea"
           @keydown.enter.prevent="handleEnter"
@@ -18,17 +25,34 @@
       </div>
 
       <div class="input-actions">
-        <button class="input-btn emoji-btn" title="Emoji">
-          <el-icon :size="22"><Sunny /></el-icon>
-        </button>
-        <button v-if="!content.trim()" class="input-btn mic-btn" title="Voice message">
+        <el-popover
+          placement="top-end"
+          trigger="click"
+          :width="320"
+          :show-arrow="false"
+          popper-class="emoji-popper"
+        >
+          <template #reference>
+            <button class="input-btn emoji-btn" :title="$t('chat.emoji')" :aria-label="$t('chat.emoji')" @click="pickerTheme = currentTheme()">
+              <el-icon :size="22"><Sunny /></el-icon>
+            </button>
+          </template>
+          <EmojiPicker
+            :native="true"
+            :theme="pickerTheme"
+            :disable-skin-tones="true"
+            @select="onEmoji"
+          />
+        </el-popover>
+        <button v-if="!content.trim()" class="input-btn mic-btn" :title="$t('chat.voiceMessage')" :aria-label="$t('chat.voiceMessage')" @click="showComingSoon">
           <el-icon :size="22"><Microphone /></el-icon>
         </button>
         <button
           v-else
           class="send-btn"
           @click="sendMessage"
-          title="Send message"
+          :title="$t('chat.sendMessage')"
+          :aria-label="$t('chat.sendMessage')"
         >
           <el-icon :size="22"><Promotion /></el-icon>
         </button>
@@ -36,7 +60,7 @@
     </div>
 
     <div class="input-hint">
-      <span>Press <strong>Enter</strong> to send</span>
+      <span>{{ $t('chat.enterToSend') }} <strong>{{ $t('chat.enterKey') }}</strong> {{ $t('chat.toSend') }}</span>
     </div>
 
     <FileUpload
@@ -49,12 +73,35 @@
 
 <script setup>
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { Plus, Sunny, Microphone, Promotion } from '@element-plus/icons-vue'
 import FileUpload from '@/components/common/FileUpload.vue'
+import EmojiPicker from 'vue3-emoji-picker'
+import 'vue3-emoji-picker/css'
 
-const emit = defineEmits(['send'])
+const { t } = useI18n()
+const showComingSoon = () => ElMessage.info(t('common.comingSoon'))
+
+const emit = defineEmits(['send', 'cancelReply'])
+defineProps({
+  replyTo: {
+    type: Object,
+    default: null
+  }
+})
 const content = ref('')
 const fileUploadRef = ref(null)
+
+// Emoji picker theme follows the app's light/dark setting.
+const pickerTheme = ref('light')
+const currentTheme = () => {
+  const attr = document.documentElement.getAttribute('data-theme') || document.body.getAttribute('data-theme')
+  return attr === 'dark' ? 'dark' : 'light'
+}
+const onEmoji = (e) => {
+  content.value += e.i
+}
 
 const handleEnter = (e) => {
   if (e.shiftKey) {
@@ -108,12 +155,53 @@ const handleUploadError = (error) => {
   padding: 8px 0;
 }
 
+.replying-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--tg-primary);
+  background: rgba(79, 142, 240, 0.08);
+  border-radius: 8px;
+}
+
+.replying-label,
+.replying-text {
+  display: block;
+  max-width: 520px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.replying-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tg-primary);
+}
+
+.replying-text {
+  font-size: 12px;
+  color: var(--tg-text-secondary);
+}
+
+.replying-close {
+  border: none;
+  background: transparent;
+  color: var(--tg-text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .input-wrapper {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 12px;
-  background: var(--tg-surface);
+  background: #ffffff;
   border-radius: 9999px;
   box-shadow: var(--tg-shadow-lg);
   border: 1px solid rgba(226, 232, 240, 0.5);
@@ -121,11 +209,12 @@ const handleUploadError = (error) => {
 }
 
 .input-wrapper:focus-within {
-  box-shadow: var(--tg-shadow-lg), 0 0 0 4px rgba(6, 182, 212, 0.1);
-  border-color: rgba(6, 182, 212, 0.3);
+  box-shadow: var(--tg-shadow-lg), 0 0 0 4px rgba(79, 142, 240, 0.1);
+  border-color: rgba(79, 142, 240, 0.3);
 }
 
 [data-theme="dark"] .input-wrapper {
+  background: var(--tg-surface);
   border: 1px solid rgba(51, 65, 85, 0.5);
 }
 
@@ -145,7 +234,7 @@ const handleUploadError = (error) => {
 }
 
 .attach-btn:hover {
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(59, 130, 246, 0.1);
   color: var(--tg-secondary);
 }
 
@@ -155,7 +244,7 @@ const handleUploadError = (error) => {
 }
 
 .mic-btn:hover {
-  background: rgba(6, 182, 212, 0.1);
+  background: rgba(79, 142, 240, 0.1);
   color: var(--tg-primary);
 }
 
@@ -195,16 +284,16 @@ const handleUploadError = (error) => {
   align-items: center;
   justify-content: center;
   border: none;
-  background: rgba(6, 182, 212, 0.1);
+  background: rgba(79, 142, 240, 0.1);
   border-radius: 50%;
-  color: #0891b2;
+  color: #4f8ef0;
   cursor: pointer;
   transition: var(--tg-transition);
   flex-shrink: 0;
 }
 
 .send-btn:hover {
-  background: rgba(6, 182, 212, 0.2);
+  background: rgba(79, 142, 240, 0.2);
   transform: scale(1.05);
 }
 
@@ -287,5 +376,26 @@ const handleUploadError = (error) => {
     width: 40px;
     height: 40px;
   }
+}
+</style>
+
+<style>
+/* Emoji picker popover (teleported to body, so it can't be scoped) */
+.emoji-popper.el-popper {
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  min-width: unset !important;
+}
+
+.emoji-popper .v3-emoji-picker {
+  width: 100% !important;
+  border-radius: 14px !important;
+  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.28) !important;
+}
+
+[data-theme="dark"] .emoji-popper .v3-emoji-picker {
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6) !important;
 }
 </style>
