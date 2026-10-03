@@ -1,13 +1,16 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.AuthResponse;
+import com.nexus.chat.dto.ChangePasswordRequest;
 import com.nexus.chat.dto.LoginRequest;
 import com.nexus.chat.dto.RegisterRequest;
 import com.nexus.chat.dto.SendCodeRequest;
 import com.nexus.chat.dto.VerifyCodeRequest;
 import com.nexus.chat.model.EmailVerificationCode.CodeType;
+import com.nexus.chat.security.JwtTokenProvider;
 import com.nexus.chat.service.AuthService;
 import com.nexus.chat.service.VerificationCodeService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +24,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final VerificationCodeService verificationCodeService;
+    private final JwtTokenProvider jwtTokenProvider;
 
     @PostMapping("/send-code")
     public ResponseEntity<?> sendVerificationCode(@RequestBody SendCodeRequest request) {
@@ -63,10 +67,10 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
+    public ResponseEntity<?> register(@RequestBody RegisterRequest request, HttpServletRequest httpRequest) {
         log.info("用户注册请求: username={}, email={}", request.getUsername(), request.getEmail());
         try {
-            AuthResponse response = authService.register(request);
+            AuthResponse response = authService.register(request, clientIp(httpRequest), userAgent(httpRequest));
             log.info("用户注册成功: userId={}, username={}", response.getUserId(), response.getUsername());
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -76,10 +80,10 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
         log.info("用户登录请求: usernameOrEmail={}", request.getUsernameOrEmail());
         try {
-            AuthResponse response = authService.login(request);
+            AuthResponse response = authService.login(request, clientIp(httpRequest), userAgent(httpRequest));
             log.info("用户登录成功: userId={}, username={}", response.getUserId(), response.getUsername());
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -89,11 +93,52 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@RequestParam Long userId) {
+    public ResponseEntity<Void> logout(@RequestParam Long userId, HttpServletRequest httpRequest) {
         log.info("用户登出请求: userId={}", userId);
-        authService.logout(userId);
+        authService.logout(userId, bearerSessionToken(httpRequest));
         log.info("用户登出成功: userId={}", userId);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(@RequestParam Long userId,
+                                            @RequestBody ChangePasswordRequest request) {
+        log.info("修改密码请求: userId={}", userId);
+        try {
+            authService.changePassword(userId, request.getCurrentPassword(), request.getNewPassword());
+            log.info("修改密码成功: userId={}", userId);
+            return ResponseEntity.ok(java.util.Map.of("message", "密码修改成功", "success", true));
+        } catch (RuntimeException e) {
+            log.warn("修改密码失败: userId={}, reason={}", userId, e.getMessage());
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage(), "success", false));
+        }
+    }
+
+    /** Best-effort client IP, honoring a reverse proxy's forwarding headers. */
+    private String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            // "client, proxy1, proxy2" -> first hop is the real client.
+            return forwarded.split(",")[0].trim();
+        }
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
+        return request.getRemoteAddr();
+    }
+
+    private String userAgent(HttpServletRequest request) {
+        return request.getHeader("User-Agent");
+    }
+
+    /** Extract the session id from the request's Bearer token, if present. */
+    private String bearerSessionToken(HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header != null && header.startsWith("Bearer ")) {
+            return jwtTokenProvider.getSessionTokenFromToken(header.substring(7));
+        }
+        return null;
     }
 
 }

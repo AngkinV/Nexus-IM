@@ -251,11 +251,11 @@ const handleGroupSelect = (group) => {
 
 .search-input-new:focus {
   background: #ffffff;
-  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.3);
+  box-shadow: 0 0 0 2px rgba(79, 142, 240, 0.3);
 }
 
 .search-bar-new:focus-within .search-icon {
-  color: #14b8a6;
+  color: #4f8ef0;
 }
 
 /* Add button */
@@ -268,16 +268,16 @@ const handleGroupSelect = (group) => {
   justify-content: center;
   border-radius: 12px;
   border: none;
-  background: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
+  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 100%);
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 4px 12px -4px rgba(20, 184, 166, 0.4);
+  box-shadow: 0 4px 12px -4px rgba(79, 142, 240, 0.4);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .icon-btn-add:hover {
   transform: translateY(-1px) rotate(90deg);
-  box-shadow: 0 8px 18px -5px rgba(20, 184, 166, 0.5);
+  box-shadow: 0 8px 18px -5px rgba(79, 142, 240, 0.5);
 }
 
 .icon-btn-add:active {
@@ -305,7 +305,7 @@ const handleGroupSelect = (group) => {
 
 /* Dark Mode */
 [data-theme="dark"] .left-panel {
-  background: rgba(24, 27, 33, 0.72);
+  background: rgba(30, 34, 48, 0.72);
 }
 
 [data-theme="dark"] .window-ctrl-btn {

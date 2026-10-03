@@ -36,6 +36,7 @@ public class PresenceService {
      */
     public void refreshPresence(Long userId) {
         redisCacheService.refreshPresence(userId);
+        redisCacheService.recordOnlineHeartbeat(userId);
     }
 
     /**

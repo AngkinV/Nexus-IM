@@ -97,21 +97,21 @@
             <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showOnlineStatus') }}</span>
             </div>
-            <el-switch v-model="form.showOnlineStatus" active-color="#14b8a6" />
+            <el-switch v-model="form.showOnlineStatus" active-color="#4f8ef0" />
           </div>
 
           <div class="toggle-item">
              <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showPhone') }}</span>
             </div>
-            <el-switch v-model="form.showPhone" active-color="#14b8a6" />
+            <el-switch v-model="form.showPhone" active-color="#4f8ef0" />
           </div>
 
            <div class="toggle-item">
              <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showEmail') }}</span>
             </div>
-            <el-switch v-model="form.showEmail" active-color="#14b8a6" />
+            <el-switch v-model="form.showEmail" active-color="#4f8ef0" />
           </div>
         </div>
 

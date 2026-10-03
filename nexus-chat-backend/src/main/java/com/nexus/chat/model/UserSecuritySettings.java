@@ -35,6 +35,10 @@ public class UserSecuritySettings {
     @Column(name = "password_changed_at")
     private LocalDateTime passwordChangedAt;
 
+    /** Cached strength score (0-100) computed from the plaintext at set/change time. */
+    @Column(name = "password_strength")
+    private Integer passwordStrength;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

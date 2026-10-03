@@ -472,14 +472,14 @@ const handleAvatarClick = (senderId) => {
 
 /* Sent message bubble */
 .bubble-out {
-  background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 100%);
   border-radius: 18px 18px 4px 18px;
   color: #FFFFFF;
-  box-shadow: 0 4px 14px -5px rgba(15, 118, 110, 0.5);
+  box-shadow: 0 4px 14px -5px rgba(79, 142, 240, 0.5);
 }
 
 .bubble-out:hover {
-  box-shadow: 0 8px 20px -6px rgba(15, 118, 110, 0.62);
+  box-shadow: 0 8px 20px -6px rgba(79, 142, 240, 0.62);
 }
 
 /* Grouped continuation: flatten the corner that connects to the message above */
@@ -603,7 +603,7 @@ const handleAvatarClick = (senderId) => {
 .reaction-pill.active {
   border-color: var(--tg-primary);
   color: var(--tg-primary);
-  background: rgba(6, 182, 212, 0.08);
+  background: rgba(79, 142, 240, 0.08);
 }
 
 /* Image message */

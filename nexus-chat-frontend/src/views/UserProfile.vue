@@ -37,16 +37,30 @@
 
         <!-- Action buttons -->
         <div class="action-buttons">
-          <!-- Already a contact: Send message -->
-          <el-button v-if="isContact" type="primary" class="action-btn" @click="startChat">
-            <el-icon><ChatDotRound /></el-icon>
-            {{ $t('chat.sendMessage') }}
-          </el-button>
+          <template v-if="!isBlocked">
+            <!-- Already a contact: Send message -->
+            <el-button v-if="isContact" type="primary" class="action-btn" @click="startChat">
+              <el-icon><ChatDotRound /></el-icon>
+              {{ $t('chat.sendMessage') }}
+            </el-button>
 
-          <!-- Not a contact: Add friend -->
-          <el-button v-else type="primary" class="action-btn" @click="addContact" :loading="addingContact">
-            <el-icon><Plus /></el-icon>
-            {{ $t('contact.addContact') }}
+            <!-- Not a contact: Add friend -->
+            <el-button v-else type="primary" class="action-btn" @click="addContact" :loading="addingContact">
+              <el-icon><Plus /></el-icon>
+              {{ $t('contact.addContact') }}
+            </el-button>
+
+            <!-- Block -->
+            <el-button type="danger" plain class="action-btn" @click="blockUser" :loading="blocking">
+              <el-icon><CircleClose /></el-icon>
+              {{ $t('profile.blockUser') }}
+            </el-button>
+          </template>
+
+          <!-- Blocked: Unblock -->
+          <el-button v-else class="action-btn" @click="unblockUser" :loading="blocking">
+            <el-icon><CircleCheck /></el-icon>
+            {{ $t('profile.unblock') }}
           </el-button>
         </div>
       </div>
@@ -136,16 +150,17 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
 import { useChatStore } from '@/stores/chat'
 import { userAPI, contactAPI, chatAPI } from '@/services/api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import {
   ArrowLeft, ChatDotRound, Plus, Message, Phone,
-  Calendar, Link
+  Calendar, Link, CircleClose, CircleCheck
 } from '@element-plus/icons-vue'
 
 dayjs.extend(relativeTime)
@@ -159,6 +174,7 @@ const props = defineProps({
 
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 const userStore = useUserStore()
 const contactStore = useContactStore()
 const chatStore = useChatStore()
@@ -168,6 +184,8 @@ const addingContact = ref(false)
 const userProfile = ref(null)
 const userStats = ref(null)
 const isContact = ref(false)
+const isBlocked = ref(false)
+const blocking = ref(false)
 const mutualContacts = ref([])
 const socialLinks = ref({})
 
@@ -212,6 +230,14 @@ const loadProfile = async () => {
       isContact.value = contactCheck.data
     } catch (e) {
       isContact.value = false
+    }
+
+    // Check if blocked
+    try {
+      const blockCheck = await contactAPI.checkBlocked(viewerId, userId.value)
+      isBlocked.value = blockCheck.data?.isBlocked || false
+    } catch (e) {
+      isBlocked.value = false
     }
 
     // Get mutual contacts
@@ -264,6 +290,47 @@ const addContact = async () => {
     ElMessage.error('Failed to send friend request')
   } finally {
     addingContact.value = false
+  }
+}
+
+// Block user
+const blockUser = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t('profile.confirmBlock', { name: userProfile.value?.nickname }),
+      t('profile.blockUser'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    )
+  } catch (e) {
+    return
+  }
+  blocking.value = true
+  try {
+    await contactAPI.blockUser(userStore.currentUser.id, userId.value)
+    isBlocked.value = true
+    ElMessage.success(t('profile.blockSuccess'))
+  } catch (error) {
+    ElMessage.error(t('profile.blockFailed'))
+  } finally {
+    blocking.value = false
+  }
+}
+
+// Unblock user
+const unblockUser = async () => {
+  blocking.value = true
+  try {
+    await contactAPI.unblockUser(userStore.currentUser.id, userId.value)
+    isBlocked.value = false
+    ElMessage.success(t('profile.unblockSuccess'))
+  } catch (error) {
+    ElMessage.error(t('profile.unblockFailed'))
+  } finally {
+    blocking.value = false
   }
 }
 
@@ -354,7 +421,7 @@ onMounted(() => {
 }
 
 .default-gradient {
-  background: linear-gradient(135deg, #14b8a6 0%, #3b82f6 50%, #8b5cf6 100%);
+  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 50%, #3b78dd 100%);
 }
 
 .cover-overlay {
@@ -397,7 +464,7 @@ onMounted(() => {
 }
 
 .status-dot.online {
-  background: #10b981;
+  background: #22c55e;
 }
 
 .user-info {
@@ -433,7 +500,7 @@ onMounted(() => {
 }
 
 .online-text {
-  color: #10b981;
+  color: #22c55e;
   font-weight: 600;
 }
 

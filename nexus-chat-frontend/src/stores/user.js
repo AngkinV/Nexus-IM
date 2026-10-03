@@ -205,6 +205,7 @@ export const useUserStore = defineStore('user', () => {
                 nickname: profile.nickname,
                 avatar: resolveFileUrl(profile.avatarUrl),
                 bio: profile.bio,
+                createdAt: profile.createdAt,
                 profileBackground: profile.profileBackground,
                 showOnlineStatus: profile.showOnlineStatus,
                 showLastSeen: profile.showLastSeen,

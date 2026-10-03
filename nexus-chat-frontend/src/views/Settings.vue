@@ -301,7 +301,7 @@ const downloadUpdate = () => {
 <style scoped>
 .settings-container {
   height: 100vh;
-  background: linear-gradient(180deg, #f8fafc 0%, #f0f2f5 100%);
+  background: linear-gradient(180deg, #f7f9fd 0%, #f4f6fb 100%);
   display: flex;
   flex-direction: column;
   overflow: hidden;

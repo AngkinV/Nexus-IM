@@ -12,7 +12,7 @@
 [![Element Plus](https://img.shields.io/badge/Element%20Plus-2.5.0-409EFF?style=flat-square)](https://element-plus.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-English | **[简体中文](./README.md)**
+English | **[简体中文](../README.md#frontend)**
 
 </div>
 

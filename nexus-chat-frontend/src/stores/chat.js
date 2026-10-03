@@ -3,6 +3,28 @@ import { ref, computed } from 'vue'
 import { chatAPI, resolveFileUrl } from '@/services/api'
 import offlineStore from '@/services/offlineStore'
 import { AI_ASSISTANT_CHAT_ID, buildAiAssistantChatItem } from '@/stores/agent'
+import i18n from '@/locales/i18n'
+
+// Resolve the chat-list preview text from a backend lastMessage. Guards against
+// recalled messages whose content the backend serializes as a JSON blob — those
+// must show a "message recalled" placeholder, never raw JSON.
+const tryParseJson = (s) => { try { return JSON.parse(s) } catch { return null } }
+const resolveServerLastMessage = (lm) => {
+    if (!lm) return ''
+    if (typeof lm === 'object') {
+        if (lm.isRecalled) return i18n.global.t('chat.messageRecalled')
+        return typeof lm.content === 'string' ? lm.content : ''
+    }
+    if (typeof lm === 'string') {
+        if (lm.trim().startsWith('{')) {
+            const o = tryParseJson(lm)
+            if (o && o.isRecalled) return i18n.global.t('chat.messageRecalled')
+            if (o && typeof o.content === 'string') return o.content
+        }
+        return lm
+    }
+    return ''
+}
 
 export const useChatStore = defineStore('chat', () => {
     const activeChat = ref(null)
@@ -117,7 +139,7 @@ export const useChatStore = defineStore('chat', () => {
             avatar: resolveFileUrl(avatarSource),
             description: chat.description || '',
             isPrivate: chat.isPrivate || false,
-            lastMessage: chat.lastMessage?.content || chat.lastMessage || '',
+            lastMessage: resolveServerLastMessage(chat.lastMessage),
             lastMessageTime: chat.lastMessage?.createdAt || chat.lastMessageAt || chat.lastMessageTime,
             unreadCount: chat.unreadCount || 0,
             online: isOnline,

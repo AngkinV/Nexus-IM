@@ -163,7 +163,7 @@ const handleUploadError = (error) => {
   margin: 0 8px 8px;
   padding: 8px 10px;
   border-left: 3px solid var(--tg-primary);
-  background: rgba(6, 182, 212, 0.08);
+  background: rgba(79, 142, 240, 0.08);
   border-radius: 8px;
 }
 
@@ -201,7 +201,7 @@ const handleUploadError = (error) => {
   align-items: center;
   gap: 8px;
   padding: 8px 8px 8px 12px;
-  background: var(--tg-surface);
+  background: #ffffff;
   border-radius: 9999px;
   box-shadow: var(--tg-shadow-lg);
   border: 1px solid rgba(226, 232, 240, 0.5);
@@ -209,11 +209,12 @@ const handleUploadError = (error) => {
 }
 
 .input-wrapper:focus-within {
-  box-shadow: var(--tg-shadow-lg), 0 0 0 4px rgba(6, 182, 212, 0.1);
-  border-color: rgba(6, 182, 212, 0.3);
+  box-shadow: var(--tg-shadow-lg), 0 0 0 4px rgba(79, 142, 240, 0.1);
+  border-color: rgba(79, 142, 240, 0.3);
 }
 
 [data-theme="dark"] .input-wrapper {
+  background: var(--tg-surface);
   border: 1px solid rgba(51, 65, 85, 0.5);
 }
 
@@ -233,7 +234,7 @@ const handleUploadError = (error) => {
 }
 
 .attach-btn:hover {
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(59, 130, 246, 0.1);
   color: var(--tg-secondary);
 }
 
@@ -243,7 +244,7 @@ const handleUploadError = (error) => {
 }
 
 .mic-btn:hover {
-  background: rgba(6, 182, 212, 0.1);
+  background: rgba(79, 142, 240, 0.1);
   color: var(--tg-primary);
 }
 
@@ -283,16 +284,16 @@ const handleUploadError = (error) => {
   align-items: center;
   justify-content: center;
   border: none;
-  background: rgba(6, 182, 212, 0.1);
+  background: rgba(79, 142, 240, 0.1);
   border-radius: 50%;
-  color: #0891b2;
+  color: #4f8ef0;
   cursor: pointer;
   transition: var(--tg-transition);
   flex-shrink: 0;
 }
 
 .send-btn:hover {
-  background: rgba(6, 182, 212, 0.2);
+  background: rgba(79, 142, 240, 0.2);
   transform: scale(1.05);
 }
 

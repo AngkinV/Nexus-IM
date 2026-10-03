@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS contacts (
     INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS blocked_users (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    blocked_user_id BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (blocked_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_block (user_id, blocked_user_id),
+    INDEX idx_blocked_owner (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS chats (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     type ENUM('direct', 'group') NOT NULL,
@@ -244,6 +255,7 @@ CREATE TABLE IF NOT EXISTS user_security_settings (
     two_factor_secret VARCHAR(255) DEFAULT NULL,
     backup_codes TEXT DEFAULT NULL,
     password_changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    password_strength INT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

@@ -61,7 +61,8 @@
       <div
         class="chat-item"
         :class="{
-          active: chatStore.activeChat?.id === chat.id
+          active: chatStore.activeChat?.id === chat.id,
+          'ai-item': chat.isAi
         }"
         :style="{ transform: `translateX(${getSwipeOffset(chat.id)}px)` }"
         @click="handleChatClick(chat)"
@@ -72,9 +73,7 @@
         <!-- Avatar -->
         <div class="chat-avatar">
           <template v-if="chat.isAi">
-            <div class="ai-avatar">
-              <span class="material-icons-round">auto_awesome</span>
-            </div>
+            <div class="ai-avatar"></div>
           </template>
           <template v-else>
             <el-avatar :size="44" :src="chat.avatar || defaultAvatar" class="avatar-img" />
@@ -356,7 +355,7 @@ const formatTime = (time) => {
 }
 
 .state-action:hover {
-  background: #0c5e57;
+  background: #2a3aa8;
 }
 
 /* Loading skeleton */
@@ -465,7 +464,7 @@ const formatTime = (time) => {
 }
 
 .pin-btn {
-  background: #00B4D8;
+  background: #4f8ef0;
 }
 
 .delete-btn {
@@ -494,6 +493,11 @@ const formatTime = (time) => {
   background: #e2e8f0;
 }
 
+.chat-item.ai-item:hover,
+.chat-item.ai-item.active {
+  background: var(--ai-coral-soft);
+}
+
 .chat-avatar {
   position: relative;
   margin-right: 12px;
@@ -509,19 +513,28 @@ const formatTime = (time) => {
 }
 
 .ai-avatar {
+  position: relative;
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #06b6d4 0%, #14b8a6 50%, #0d9488 100%);
-  color: #fff;
-  box-shadow: 0 6px 18px -8px rgba(20, 184, 166, 0.55);
+  background: radial-gradient(circle at 34% 30%, #d9ecfd 0%, #7db8f5 46%, #3b78dd 100%);
+  box-shadow:
+    inset 0 -3px 7px rgba(59, 120, 221, 0.4),
+    inset 2px 3px 6px rgba(255, 255, 255, 0.4),
+    0 6px 18px -8px rgba(59, 120, 221, 0.55);
+  overflow: hidden;
 }
 
-.ai-avatar .material-icons-round {
-  font-size: 24px;
+.ai-avatar::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 9px;
+  width: 13px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  transform: rotate(-26deg);
 }
 
 .online-badge {
@@ -541,7 +554,7 @@ const formatTime = (time) => {
   right: -2px;
   width: 18px;
   height: 18px;
-  background: #00B4D8;
+  background: #3b82f6;
   border: 2px solid #ffffff;
   border-radius: 50%;
   display: flex;
@@ -620,7 +633,7 @@ const formatTime = (time) => {
 }
 
 .pin-indicator {
-  color: #00B4D8;
+  color: #4f8ef0;
   margin-left: 8px;
   flex-shrink: 0;
   opacity: 0.7;
@@ -693,8 +706,8 @@ const formatTime = (time) => {
 
 .hover-action-btn.pin:hover,
 .hover-action-btn.pin.active {
-  background: #ccfbf1;
-  color: #0d9488;
+  background: #e8f1fd;
+  color: #4f8ef0;
 }
 
 .hover-action-btn.danger:hover {
@@ -733,8 +746,8 @@ const formatTime = (time) => {
 
 [data-theme="dark"] .hover-action-btn.pin:hover,
 [data-theme="dark"] .hover-action-btn.pin.active {
-  background: rgba(20, 184, 166, 0.2);
-  color: #5eead4;
+  background: rgba(79, 142, 240, 0.2);
+  color: #9cc6f8;
 }
 
 [data-theme="dark"] .hover-action-btn.danger:hover {
@@ -744,7 +757,7 @@ const formatTime = (time) => {
 
 /* Swiped state */
 .chat-item-wrapper.swiped {
-  background: #00B4D8;
+  background: #4f8ef0;
 }
 
 .chat-item-wrapper.swiped .chat-item {
@@ -764,13 +777,18 @@ const formatTime = (time) => {
   background: #475569;
 }
 
+[data-theme="dark"] .chat-item.ai-item:hover,
+[data-theme="dark"] .chat-item.ai-item.active {
+  background: rgba(79, 142, 240, 0.16);
+}
+
 [data-theme="dark"] .online-badge {
   border-color: #1e293b;
 }
 
 [data-theme="dark"] .group-badge {
   border-color: #1e293b;
-  background: #0891b2;
+  background: #3b82f6;
 }
 
 [data-theme="dark"] .unread-badge {
@@ -794,7 +812,7 @@ const formatTime = (time) => {
 }
 
 [data-theme="dark"] .pin-btn {
-  background: #0891b2;
+  background: #4f8ef0;
 }
 
 [data-theme="dark"] .delete-btn {
@@ -802,7 +820,7 @@ const formatTime = (time) => {
 }
 
 [data-theme="dark"] .chat-item-wrapper.swiped {
-  background: #0891b2;
+  background: #4f8ef0;
 }
 
 /* Mobile Responsive Styles */

@@ -176,7 +176,11 @@ onUnmounted(() => {
   display: flex;
   width: 100vw;
   height: 100vh;
-  background: #f8fafc;
+  background:
+    radial-gradient(1100px 720px at 72% 26%, rgba(186, 212, 248, 0.55), transparent 60%),
+    radial-gradient(820px 560px at 88% 62%, rgba(196, 206, 248, 0.50), transparent 58%),
+    radial-gradient(720px 560px at 16% 82%, rgba(206, 222, 248, 0.45), transparent 60%),
+    linear-gradient(135deg, #eef3fc 0%, #e6eef9 48%, #dde8f7 100%);
   overflow: hidden;
   position: relative;
   transition: background 0.3s ease;
@@ -236,17 +240,21 @@ onUnmounted(() => {
 
 /* Dark Mode */
 [data-theme="dark"] .main-layout {
-  background: #0F1115;
+  background:
+    radial-gradient(1100px 720px at 72% 26%, rgba(79, 142, 240, 0.18), transparent 60%),
+    radial-gradient(820px 560px at 88% 62%, rgba(70, 90, 200, 0.16), transparent 58%),
+    radial-gradient(720px 560px at 16% 82%, rgba(90, 150, 230, 0.14), transparent 60%),
+    linear-gradient(135deg, #14161c 0%, #15171f 50%, #161922 100%);
 }
 
 [data-theme="dark"] .panel-left {
-  background: rgba(24, 27, 33, 0.72);
-  border-right-color: #232730;
+  background: rgba(30, 34, 48, 0.72);
+  border-right-color: #262a34;
 }
 
 [data-theme="dark"] .panel-right {
-  background: rgba(24, 27, 33, 0.9);
-  border-left-color: #232730;
+  background: rgba(30, 34, 48, 0.9);
+  border-left-color: #262a34;
 }
 
 /* Tablet breakpoint */

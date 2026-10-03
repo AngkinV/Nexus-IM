@@ -17,6 +17,25 @@ apiClient.interceptors.request.use(config => {
     return config
 })
 
+// Force logout when the session was revoked on another device (HTTP 401).
+let authRedirecting = false
+apiClient.interceptors.response.use(
+    response => response,
+    error => {
+        if (error.response?.status === 401 && !authRedirecting) {
+            authRedirecting = true
+            localStorage.removeItem('token')
+            localStorage.removeItem('user')
+            const here = window.location.hash || window.location.pathname
+            if (!String(here).includes('/login')) {
+                // Reload so the router guard sends the device to the login page.
+                window.location.reload()
+            }
+        }
+        return Promise.reject(error)
+    }
+)
+
 // Auth API
 export const authAPI = {
     register: ({ email, username, password, nickname, phone, avatarUrl, verificationCode }) =>
@@ -27,6 +46,9 @@ export const authAPI = {
 
     logout: (userId) =>
         apiClient.post('/auth/logout', null, { params: { userId } }),
+
+    changePassword: (userId, currentPassword, newPassword) =>
+        apiClient.post('/auth/change-password', { currentPassword, newPassword }, { params: { userId } }),
 
     sendVerificationCode: (email, type = 'REGISTER') =>
         apiClient.post('/auth/send-code', { email, type }),
@@ -90,6 +112,30 @@ export const userAPI = {
 
     getFriendActivities: (id, limit = 20) =>
         apiClient.get(`/users/${id}/friend-activities`, { params: { limit } })
+}
+
+// Security API (sessions, login history, security settings)
+export const securityAPI = {
+    getSessions: (userId) => apiClient.get(`/users/${userId}/sessions`),
+
+    revokeSession: (userId, sessionId) =>
+        apiClient.delete(`/users/${userId}/sessions/${sessionId}`),
+
+    revokeOtherSessions: (userId) => apiClient.delete(`/users/${userId}/sessions`),
+
+    getLoginHistory: (userId, limit = 10) =>
+        apiClient.get(`/users/${userId}/login-history`, { params: { limit } }),
+
+    getSecuritySettings: (userId) => apiClient.get(`/users/${userId}/security`),
+
+    setupTwoFactor: (userId) =>
+        apiClient.post(`/users/${userId}/security/two-factor/setup`),
+
+    verifyTwoFactor: (userId, code) =>
+        apiClient.post(`/users/${userId}/security/two-factor/verify`, { code }),
+
+    disableTwoFactor: (userId) =>
+        apiClient.put(`/users/${userId}/security/two-factor`, { enabled: false })
 }
 
 // Chat API
@@ -181,7 +227,25 @@ export const contactAPI = {
 
     // 拒绝好友申请
     rejectRequest: (requestId, userId) =>
-        apiClient.post(`/contacts/requests/${requestId}/reject`, null, { params: { userId } })
+        apiClient.post(`/contacts/requests/${requestId}/reject`, null, { params: { userId } }),
+
+    // ==================== 黑名单相关API ====================
+
+    // 获取黑名单列表
+    getBlacklist: (userId) =>
+        apiClient.get(`/contacts/blacklist/${userId}`),
+
+    // 拉黑用户
+    blockUser: (userId, contactUserId) =>
+        apiClient.post('/contacts/blacklist', { userId, contactUserId }),
+
+    // 取消拉黑
+    unblockUser: (userId, contactUserId) =>
+        apiClient.delete('/contacts/blacklist', { data: { userId, contactUserId } }),
+
+    // 检查是否已拉黑
+    checkBlocked: (userId, blockedUserId) =>
+        apiClient.get('/contacts/blocked/check', { params: { userId, blockedUserId } })
 }
 
 // Group API

@@ -23,9 +23,10 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final VerificationCodeService verificationCodeService;
+    private final SecurityService securityService;
 
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
+    public AuthResponse register(RegisterRequest request, String ip, String userAgent) {
         // Verify the verification code first
         if (request.getVerificationCode() == null || request.getVerificationCode().isEmpty()) {
             throw new BusinessException("请输入邮箱验证码");
@@ -63,8 +64,12 @@ public class AuthService {
 
         User savedUser = userRepository.save(user);
 
-        // Generate JWT token
-        String token = jwtTokenProvider.generateToken(savedUser.getId(), savedUser.getUsername());
+        // Seed security settings (password set time + strength) and the first session.
+        securityService.recordPasswordChange(savedUser.getId(), request.getPassword());
+        String sessionToken = securityService.recordSuccessfulLogin(savedUser.getId(), ip, userAgent);
+
+        // Generate JWT token carrying the session id.
+        String token = jwtTokenProvider.generateToken(savedUser.getId(), savedUser.getUsername(), sessionToken);
 
         return new AuthResponse(
                 token,
@@ -79,7 +84,7 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResponse login(LoginRequest request) {
+    public AuthResponse login(LoginRequest request, String ip, String userAgent) {
         String usernameOrEmail = request.getUsernameOrEmail();
 
         // Try to find user by username or email
@@ -87,6 +92,8 @@ public class AuthService {
                 .orElseThrow(() -> new BusinessException("error.auth.invalid.credentials"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            // Record the failed attempt against the known user before rejecting.
+            securityService.recordFailedLogin(user.getId(), ip, userAgent, "invalid_password");
             throw new BusinessException("error.auth.invalid.credentials");
         }
 
@@ -94,8 +101,11 @@ public class AuthService {
         user.setIsOnline(true);
         userRepository.save(user);
 
-        // Generate JWT token
-        String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername());
+        // Track the device session and a success entry in login history.
+        String sessionToken = securityService.recordSuccessfulLogin(user.getId(), ip, userAgent);
+
+        // Generate JWT token carrying the session id.
+        String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername(), sessionToken);
 
         return new AuthResponse(
                 token,
@@ -110,11 +120,36 @@ public class AuthService {
     }
 
     @Transactional
-    public void logout(Long userId) {
+    public void logout(Long userId, String sessionToken) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("error.user.not.found"));
         user.setIsOnline(false);
         userRepository.save(user);
+
+        // Remove the device session so it stops showing as active.
+        securityService.endSession(userId, sessionToken);
+    }
+
+    @Transactional
+    public void changePassword(Long userId, String currentPassword, String newPassword) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException("error.user.not.found"));
+
+        if (currentPassword == null || !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new BusinessException("error.auth.password.incorrect");
+        }
+        if (newPassword == null || newPassword.length() < 8) {
+            throw new BusinessException("error.auth.password.too.short");
+        }
+        if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
+            throw new BusinessException("error.auth.password.same");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        // Persist the change time + recomputed strength for the security page.
+        securityService.recordPasswordChange(userId, newPassword);
     }
 
 }

@@ -7,6 +7,7 @@ import { useUserStore } from '@/stores/user'
 import { useConnectionStore } from '@/stores/connection'
 import { resolveFileUrl } from '@/services/api'
 import { WS_URL } from '@/services/runtimeConfig'
+import i18n from '@/locales/i18n'
 
 /**
  * Call signaling message types
@@ -39,6 +40,20 @@ function generateClientMsgId() {
     })
 }
 
+/**
+ * Decode the session id (`sid`) claim from a JWT without verifying it.
+ * Used to tell whether a FORCE_LOGOUT targets this very device.
+ */
+function decodeJwtSid(token) {
+    try {
+        const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        const padded = b64 + '='.repeat((4 - b64.length % 4) % 4)
+        return JSON.parse(atob(padded)).sid || null
+    } catch (e) {
+        return null
+    }
+}
+
 class WebSocketService {
     constructor() {
         this.client = null
@@ -57,6 +72,8 @@ class WebSocketService {
         this.pendingAcks = new Map()
         // Call signaling callback
         this.onCallSignal = null
+        // Set when the server force-logs-out this device, to stop reconnects.
+        this.forcedLogout = false
     }
 
     connect(userId, onConnectCallback = null) {
@@ -188,6 +205,9 @@ class WebSocketService {
                     break
                 case 'ERROR':
                     this.handleError(data)
+                    break
+                case 'FORCE_LOGOUT':
+                    this.handleForceLogout(data)
                     break
                 default:
                     console.log('Unhandled message type via user channel:', data.type)
@@ -382,6 +402,21 @@ class WebSocketService {
             replyToMessage: payload.replyToMessage,
             isSelf: payload.senderId === userStore.currentUser?.id
         })
+
+        // When a message is recalled, refresh the chat-list preview so it no
+        // longer shows the recalled content. Prefer the latest still-valid
+        // message. Only recompute when this chat's messages are loaded, so we
+        // never clobber a correct preview for a chat we haven't opened.
+        if (payload.isRecalled) {
+            const chatStore = useChatStore()
+            const msgs = messageStore.getMessages(payload.chatId)
+            if (msgs && msgs.length) {
+                const lastValid = [...msgs].reverse().find(m => !m.isRecalled)
+                chatStore.updateChat(payload.chatId, {
+                    lastMessage: lastValid ? (lastValid.content || '') : i18n.global.t('chat.messageRecalled')
+                })
+            }
+        }
     }
 
     handleMessageReactionUpdated(data) {
@@ -428,6 +463,27 @@ class WebSocketService {
         if (chatId) {
             const messageStore = useMessageStore()
             messageStore.markLastMessageFailed(chatId)
+        }
+    }
+
+    /**
+     * Server revoked one of this user's device sessions. If the targeted
+     * session is THIS device, sign out immediately and return to login.
+     */
+    handleForceLogout(data) {
+        const token = localStorage.getItem('token')
+        const mySid = token ? decodeJwtSid(token) : null
+        const targets = data.payload?.targetSids || []
+        if (!mySid || !targets.includes(mySid)) return // not this device
+
+        console.warn('This device was signed out remotely')
+        this.forcedLogout = true
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        try { this.disconnect() } catch (e) { /* ignore */ }
+        const here = window.location.hash || window.location.pathname
+        if (!String(here).includes('/login')) {
+            window.location.reload()
         }
     }
 
@@ -803,6 +859,9 @@ class WebSocketService {
     }
 
     attemptReconnect(userId) {
+        if (this.forcedLogout) {
+            return // device was signed out remotely; do not reconnect
+        }
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error('Max reconnect attempts reached')
             return

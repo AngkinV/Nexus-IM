@@ -740,6 +740,10 @@ const handleReactMessage = async (msg, emoji) => {
 
 .input-area {
   padding: 16px 24px;
+  background: #ffffff;
+}
+
+[data-theme="dark"] .input-area {
   background: transparent;
 }
 

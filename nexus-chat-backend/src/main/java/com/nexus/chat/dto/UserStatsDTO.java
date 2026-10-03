@@ -17,4 +17,13 @@ public class UserStatsDTO {
     private Long followingCount;
     private Long followerCount;
     private Long postCount;
+
+    // Cumulative online time (hours), tracked via the presence heartbeat
+    private Double onlineHours;
+
+    // Day-over-day trend (signed percent: >0 up, <0 down, 0 flat, null when no data)
+    private Integer messagesDelta;
+    private Integer contactsDelta;
+    private Integer groupsDelta;
+    private Integer onlineDelta;
 }

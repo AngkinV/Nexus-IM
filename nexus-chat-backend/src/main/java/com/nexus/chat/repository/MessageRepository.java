@@ -31,6 +31,11 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     long countBySenderId(Long senderId);
 
     /**
+     * Count messages a user sent within a time window (for day-over-day stats)
+     */
+    long countBySenderIdAndCreatedAtBetween(Long senderId, LocalDateTime start, LocalDateTime end);
+
+    /**
      * Get only the last message for a single chat (replaces loading ALL messages)
      */
     Optional<Message> findFirstByChatIdOrderByCreatedAtDesc(Long chatId);

@@ -19,6 +19,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +43,7 @@ public class UserService {
     private final UserActivityRepository activityRepository;
     private final UserFollowRepository userFollowRepository;
     private final PostRepository postRepository;
+    private final RedisCacheService redisCacheService;
 
     // Avatar upload directory (can be configured)
     private static final String AVATAR_UPLOAD_DIR = "uploads/avatars/";
@@ -342,8 +345,51 @@ public class UserService {
         long followerCount = userFollowRepository.countByFollowingId(userId);
         long postCount = postRepository.countByAuthorId(userId);
 
-        return new UserStatsDTO(contactCount, groupCount, messageCount,
-                followingCount, followerCount, postCount);
+        // Day-over-day windows [start, end)
+        LocalDate today = LocalDate.now();
+        LocalDateTime startToday = today.atStartOfDay();
+        LocalDateTime startTomorrow = today.plusDays(1).atStartOfDay();
+        LocalDateTime startYesterday = today.minusDays(1).atStartOfDay();
+
+        long messagesToday = messageRepository.countBySenderIdAndCreatedAtBetween(userId, startToday, startTomorrow);
+        long messagesYesterday = messageRepository.countBySenderIdAndCreatedAtBetween(userId, startYesterday, startToday);
+        long contactsToday = contactRepository.countByUserIdAndCreatedAtBetween(userId, startToday, startTomorrow);
+        long contactsYesterday = contactRepository.countByUserIdAndCreatedAtBetween(userId, startYesterday, startToday);
+        long groupsToday = chatRepository.countUserGroupsJoinedBetween(userId, startToday, startTomorrow);
+        long groupsYesterday = chatRepository.countUserGroupsJoinedBetween(userId, startYesterday, startToday);
+
+        long onlineSecToday = redisCacheService.getOnlineSecondsForDate(userId, today);
+        long onlineSecYesterday = redisCacheService.getOnlineSecondsForDate(userId, today.minusDays(1));
+        // Cumulative online time, 1-decimal hours
+        double onlineHours = Math.round(redisCacheService.getTotalOnlineSeconds(userId) / 360.0) / 10.0;
+
+        UserStatsDTO dto = new UserStatsDTO();
+        dto.setContactCount(contactCount);
+        dto.setGroupCount(groupCount);
+        dto.setMessageCount(messageCount);
+        dto.setFollowingCount(followingCount);
+        dto.setFollowerCount(followerCount);
+        dto.setPostCount(postCount);
+        dto.setOnlineHours(onlineHours);
+        dto.setMessagesDelta(pctDelta(messagesToday, messagesYesterday));
+        dto.setContactsDelta(pctDelta(contactsToday, contactsYesterday));
+        dto.setGroupsDelta(pctDelta(groupsToday, groupsYesterday));
+        dto.setOnlineDelta(pctDelta(onlineSecToday, onlineSecYesterday));
+        return dto;
+    }
+
+    /**
+     * Day-over-day percent change. Positive = up, negative = down, 0 = flat.
+     * With no activity yesterday, any activity today reads as +100%.
+     */
+    private Integer pctDelta(long today, long yesterday) {
+        if (yesterday == 0) {
+            return today > 0 ? 100 : 0;
+        }
+        long pct = Math.round((today - yesterday) * 100.0 / yesterday);
+        if (pct > 999) pct = 999;
+        if (pct < -999) pct = -999;
+        return (int) pct;
     }
 
     /**
@@ -410,11 +456,14 @@ public class UserService {
     }
 
     /**
-     * Calculate password strength (simplified)
+     * Password strength as cached on the security settings at register /
+     * change-password time. 0 when the user has never had a score recorded.
      */
     private Integer calculatePasswordStrength(UserSecuritySettings security) {
-        // Default strength, in production this would be calculated based on password policy
-        return 60;
+        if (security != null && security.getPasswordStrength() != null) {
+            return security.getPasswordStrength();
+        }
+        return 0;
     }
 
     /**

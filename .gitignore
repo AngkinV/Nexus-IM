@@ -36,6 +36,7 @@ nexus-chat-backend/mvnw.cmd
 
 # ==================== Flutter App ====================
 nexus-chat-app/build/
+/nexus-chat-app/android/build/
 nexus-chat-app/.dart_tool/
 nexus-chat-app/.flutter-plugins
 nexus-chat-app/.flutter-plugins-dependencies
@@ -67,3 +68,7 @@ node_modules
 
 # 忽略整个虚拟环境目录
 nexus-agent-backend/.venv/
+
+# 测试运行缓存（不含测试源码）
+/.pytest_cache/
+/nexus-agent-backend/.pytest_cache/

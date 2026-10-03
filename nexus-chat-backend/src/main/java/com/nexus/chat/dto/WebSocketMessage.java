@@ -26,6 +26,7 @@ public class WebSocketMessage {
         USER_OFFLINE,
         USER_STATUS_CHANGED,
         USER_PROFILE_UPDATED,  // User avatar/nickname updated
+        FORCE_LOGOUT,          // A device session was revoked; matching device must sign out
 
         // Group events
         GROUP_CREATED,

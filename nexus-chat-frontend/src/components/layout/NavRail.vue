@@ -142,8 +142,8 @@ const goToProfile = () => router.push('/profile')
 
 .rail-item.active {
   background: #ffffff;
-  color: #0d9488;
-  box-shadow: 0 6px 18px -7px rgba(20, 184, 166, 0.5), 0 2px 6px rgba(15, 23, 42, 0.08);
+  color: #4f8ef0;
+  box-shadow: 0 6px 18px -7px rgba(79, 142, 240, 0.5), 0 2px 6px rgba(15, 23, 42, 0.08);
 }
 
 .rail-icon-wrap {
@@ -161,7 +161,7 @@ const goToProfile = () => router.push('/profile')
   position: absolute;
   top: -6px;
   right: -8px;
-  background: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
+  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 100%);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -213,7 +213,7 @@ const goToProfile = () => router.push('/profile')
 }
 
 .rail-avatar:hover .el-avatar {
-  border-color: #14b8a6;
+  border-color: #4f8ef0;
 }
 
 .online-dot {
@@ -229,7 +229,7 @@ const goToProfile = () => router.push('/profile')
 
 /* Dark Mode */
 [data-theme="dark"] .nav-rail {
-  background: rgba(24, 27, 33, 0.72);
+  background: rgba(30, 34, 48, 0.72);
 }
 
 [data-theme="dark"] .rail-item {
@@ -237,13 +237,13 @@ const goToProfile = () => router.push('/profile')
 }
 
 [data-theme="dark"] .rail-item.active {
-  background: #232730;
-  color: #5eead4;
-  box-shadow: 0 6px 18px -7px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(20, 184, 166, 0.25);
+  background: #262a34;
+  color: #9cc6f8;
+  box-shadow: 0 6px 18px -7px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(79, 142, 240, 0.25);
 }
 
 [data-theme="dark"] .rail-badge {
-  border-color: #181B21;
+  border-color: #1e2230;
 }
 
 [data-theme="dark"] .rail-avatar .el-avatar {
@@ -251,11 +251,11 @@ const goToProfile = () => router.push('/profile')
 }
 
 [data-theme="dark"] .rail-avatar:hover .el-avatar {
-  border-color: #14b8a6;
+  border-color: #4f8ef0;
 }
 
 [data-theme="dark"] .online-dot {
-  border-color: #181B21;
+  border-color: #1e2230;
 }
 
 /* Mobile */

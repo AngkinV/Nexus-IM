@@ -1,5 +1,6 @@
 package com.nexus.chat.config;
 
+import com.nexus.chat.repository.UserSessionRepository;
 import com.nexus.chat.security.JwtTokenProvider;
 import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.service.WebSocketSessionRegistry;
@@ -28,6 +29,7 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     private final JwtTokenProvider jwtTokenProvider;
     private final WebSocketSessionRegistry sessionRegistry;
     private final PresenceService presenceService;
+    private final UserSessionRepository sessionRepository;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -50,6 +52,12 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
             if (jwtTokenProvider.validateToken(token)) {
+                // Enforce session revocation: a revoked device can't (re)connect.
+                String sid = jwtTokenProvider.getSessionTokenFromToken(token);
+                if (sid != null && !sessionRepository.existsBySessionToken(sid)) {
+                    log.warn("WebSocket 会话已被吊销, 拒绝连接");
+                    throw new MessageDeliveryException("Session revoked");
+                }
                 userId = jwtTokenProvider.getUserIdFromToken(token);
                 accessor.setUser(new StompPrincipal(String.valueOf(userId)));
                 log.info("WebSocket JWT 认证成功: userId={}", userId);

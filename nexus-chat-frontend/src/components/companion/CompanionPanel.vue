@@ -932,21 +932,21 @@ fetchServerModels()
   --cp-border: #e2e8f0;
   --cp-text: #0f172a;
   --cp-muted: #64748b;
-  --cp-primary: #5eead4;
-  --cp-primary-strong: #2dd4bf;
+  --cp-primary: #a9c4ff;
+  --cp-primary-strong: #7aa0f5;
   --cp-primary-ink: #08322e;
   --cp-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
-  --el-color-primary: #5eead4;
-  --el-color-primary-light-3: rgba(20, 184, 166, 0.55);
-  --el-color-primary-light-5: rgba(20, 184, 166, 0.35);
-  --el-color-primary-light-7: rgba(20, 184, 166, 0.2);
-  --el-color-primary-light-8: rgba(20, 184, 166, 0.16);
-  --el-color-primary-light-9: rgba(20, 184, 166, 0.12);
-  --el-color-primary-dark-2: #2dd4bf;
+  --el-color-primary: #a9c4ff;
+  --el-color-primary-light-3: rgba(79, 142, 240, 0.55);
+  --el-color-primary-light-5: rgba(79, 142, 240, 0.35);
+  --el-color-primary-light-7: rgba(79, 142, 240, 0.2);
+  --el-color-primary-light-8: rgba(79, 142, 240, 0.16);
+  --el-color-primary-light-9: rgba(79, 142, 240, 0.12);
+  --el-color-primary-dark-2: #7aa0f5;
   --el-text-color-primary: #0f172a;
   --el-border-color: #e2e8f0;
   --el-border-color-light: #e2e8f0;
-  --el-fill-color-light: rgba(20, 184, 166, 0.15);
+  --el-fill-color-light: rgba(79, 142, 240, 0.15);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
@@ -1010,7 +1010,7 @@ fetchServerModels()
 }
 
 .badge {
-  background: rgba(20, 184, 166, 0.35);
+  background: rgba(79, 142, 240, 0.35);
   color: var(--cp-primary-ink);
   font-size: 10px;
   font-weight: 700;
@@ -1018,7 +1018,7 @@ fetchServerModels()
   border-radius: 999px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  border: 1px solid rgba(20, 184, 166, 0.7);
+  border: 1px solid rgba(79, 142, 240, 0.7);
   flex-shrink: 0;
 }
 
@@ -1077,7 +1077,7 @@ fetchServerModels()
   background: var(--cp-primary);
   border-color: var(--cp-primary);
   color: var(--cp-primary-ink);
-  box-shadow: 0 6px 14px rgba(20, 184, 166, 0.35);
+  box-shadow: 0 6px 14px rgba(79, 142, 240, 0.35);
 }
 
 .role-btn:hover {
@@ -1143,11 +1143,11 @@ fetchServerModels()
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  background: rgba(20, 184, 166, 0.35);
+  background: rgba(79, 142, 240, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(20, 184, 166, 0.6);
+  border: 1px solid rgba(79, 142, 240, 0.6);
   flex-shrink: 0;
 }
 
@@ -1460,7 +1460,7 @@ fetchServerModels()
 
 .local-motion-item.active {
   border-color: var(--cp-primary-strong);
-  background: rgba(20, 184, 166, 0.2);
+  background: rgba(79, 142, 240, 0.2);
 }
 
 .local-motion-name {
@@ -1482,7 +1482,7 @@ fetchServerModels()
   background: var(--cp-surface);
   color: var(--cp-text);
   outline: none;
-  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.35);
+  box-shadow: 0 0 0 2px rgba(79, 142, 240, 0.35);
   font-family: inherit;
 }
 
@@ -1527,27 +1527,27 @@ fetchServerModels()
 }
 
 [data-theme="dark"] .cp-window {
-  --cp-bg: #0F1115;
-  --cp-surface: #181B21;
+  --cp-bg: #14161c;
+  --cp-surface: #1e2230;
   --cp-surface-muted: #1f242c;
   --cp-border: #2a2f38;
   --cp-text: #f1f5f9;
   --cp-muted: #8b8d91;
-  --cp-primary: #5eead4;
-  --cp-primary-strong: #99f6e4;
+  --cp-primary: #a9c4ff;
+  --cp-primary-strong: #c9d8ff;
   --cp-primary-ink: #062a26;
   --cp-shadow: 0 18px 40px rgba(3, 8, 4, 0.6);
-  --el-color-primary: #5eead4;
-  --el-color-primary-light-3: rgba(20, 184, 166, 0.55);
-  --el-color-primary-light-5: rgba(20, 184, 166, 0.35);
-  --el-color-primary-light-7: rgba(20, 184, 166, 0.22);
-  --el-color-primary-light-8: rgba(20, 184, 166, 0.18);
-  --el-color-primary-light-9: rgba(20, 184, 166, 0.14);
-  --el-color-primary-dark-2: #2dd4bf;
+  --el-color-primary: #a9c4ff;
+  --el-color-primary-light-3: rgba(79, 142, 240, 0.55);
+  --el-color-primary-light-5: rgba(79, 142, 240, 0.35);
+  --el-color-primary-light-7: rgba(79, 142, 240, 0.22);
+  --el-color-primary-light-8: rgba(79, 142, 240, 0.18);
+  --el-color-primary-light-9: rgba(79, 142, 240, 0.14);
+  --el-color-primary-dark-2: #7aa0f5;
   --el-text-color-primary: #f1f5f9;
   --el-border-color: #2a2f38;
   --el-border-color-light: #2a2f38;
-  --el-fill-color-light: rgba(20, 184, 166, 0.18);
+  --el-fill-color-light: rgba(79, 142, 240, 0.18);
 }
 
 /* ── Element Plus overrides ── */
@@ -1561,7 +1561,7 @@ fetchServerModels()
 }
 
 .cp-window :deep(.el-button:hover) {
-  background: rgba(20, 184, 166, 0.15);
+  background: rgba(79, 142, 240, 0.15);
   border-color: var(--cp-primary);
   color: var(--cp-text);
 }
@@ -1570,7 +1570,7 @@ fetchServerModels()
   background: var(--cp-primary);
   border-color: var(--cp-primary);
   color: var(--cp-primary-ink);
-  box-shadow: 0 10px 20px rgba(20, 184, 166, 0.3);
+  box-shadow: 0 10px 20px rgba(79, 142, 240, 0.3);
 }
 
 .cp-window :deep(.el-button--primary:hover) {
@@ -1584,7 +1584,7 @@ fetchServerModels()
 
 .cp-window :deep(.el-button.is-text:hover) {
   color: var(--cp-text);
-  background: rgba(20, 184, 166, 0.12);
+  background: rgba(79, 142, 240, 0.12);
 }
 
 .cp-window :deep(.el-input__wrapper),
@@ -1598,7 +1598,7 @@ fetchServerModels()
 
 .cp-window :deep(.el-input__wrapper.is-focus),
 .cp-window :deep(.el-select__wrapper.is-focus) {
-  box-shadow: inset 0 0 0 1px var(--cp-primary-strong), 0 0 0 3px rgba(20, 184, 166, 0.35);
+  box-shadow: inset 0 0 0 1px var(--cp-primary-strong), 0 0 0 3px rgba(79, 142, 240, 0.35);
 }
 
 .cp-window :deep(.el-progress-bar__inner) {
@@ -1613,8 +1613,8 @@ fetchServerModels()
 <style>
 /* Global styles for popper (not scoped) */
 .companion-popper {
-  --el-color-primary: #5eead4;
-  --el-color-primary-light-9: rgba(20, 184, 166, 0.15);
+  --el-color-primary: #a9c4ff;
+  --el-color-primary-light-9: rgba(79, 142, 240, 0.15);
   --el-text-color-primary: #0f172a;
   --el-border-color-light: #e2e8f0;
   --el-bg-color-overlay: #ffffff;
@@ -1626,6 +1626,6 @@ fetchServerModels()
 }
 
 .companion-popper .el-select-dropdown__item.is-hovering {
-  background: rgba(20, 184, 166, 0.2);
+  background: rgba(79, 142, 240, 0.2);
 }
 </style>
