@@ -161,7 +161,7 @@ async def test_ingest_pipeline_writes_chunks_to_chroma(tmp_path: Path):
     assert result.doc_id == "doc_test1"
 
     # Verify the chunks landed in the canonical collection with correct metadata.
-    col = vs.get_or_create_collection(vs.KNOWLEDGE_COLLECTION)
+    col = vs.get_or_create_collection(vs.knowledge_collection_for("kb_test"))
     got = col.get(where={"docId": "doc_test1"})
     assert len(got["ids"]) == result.chunk_count
     md0 = got["metadatas"][0]
@@ -206,7 +206,7 @@ async def test_delete_document_removes_only_target_doc(tmp_path: Path):
     deleted = await ing.delete_document(kb_id="kb_multi", doc_id="doc_drop")
     assert deleted >= 1
 
-    col = vs.get_or_create_collection(vs.KNOWLEDGE_COLLECTION)
+    col = vs.get_or_create_collection(vs.knowledge_collection_for("kb_multi"))
     keep = col.get(where={"docId": "doc_keep"})
     drop = col.get(where={"docId": "doc_drop"})
     assert len(keep["ids"]) >= 1
@@ -230,6 +230,6 @@ async def test_delete_whole_kb_clears_all_its_docs(tmp_path: Path):
     total_before = await ing.delete_document(kb_id="kb_wipe")  # doc_id None -> whole kb
     assert total_before >= 3
 
-    col = vs.get_or_create_collection(vs.KNOWLEDGE_COLLECTION)
+    col = vs.get_or_create_collection(vs.knowledge_collection_for("kb_wipe"))
     remaining = col.get(where={"kbId": "kb_wipe"})
     assert len(remaining["ids"]) == 0
