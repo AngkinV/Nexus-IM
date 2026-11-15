@@ -3,6 +3,7 @@ package com.nexus.chat.controller;
 import com.nexus.chat.dto.*;
 import com.nexus.chat.model.Contact;
 import com.nexus.chat.repository.ContactRepository;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.service.RedisCacheService;
 import com.nexus.chat.service.RedisMessageRelay;
@@ -86,8 +87,9 @@ public class UserController {
      */
     @GetMapping("/recommended")
     public ResponseEntity<List<UserDTO>> getRecommendedUsers(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam(defaultValue = "10") int limit) {
+        Long userId = CurrentUser.require(claimedUserId);
         List<UserDTO> users = userService.getRecommendedUsers(userId, limit);
         return ResponseEntity.ok(users);
     }
@@ -98,6 +100,8 @@ public class UserController {
      */
     @GetMapping("/{id}/profile")
     public ResponseEntity<UserProfileDTO> getUserProfile(@PathVariable Long id) {
+        // Full profile (email, phone, security state): own account only. Others go through /profile/view.
+        CurrentUser.require(id);
         try {
             UserProfileDTO profile = userService.getUserProfile(id);
             return ResponseEntity.ok(profile);
@@ -113,7 +117,8 @@ public class UserController {
     @GetMapping("/{id}/profile/view")
     public ResponseEntity<UserProfileDTO> getUserProfileForViewer(
             @PathVariable Long id,
-            @RequestParam Long viewerId) {
+            @RequestParam(name = "viewerId", required = false) Long claimedViewerId) {
+        Long viewerId = CurrentUser.require(claimedViewerId);
         try {
             UserProfileDTO profile = userService.getUserProfileForViewer(id, viewerId);
             return ResponseEntity.ok(profile);
@@ -130,6 +135,7 @@ public class UserController {
     public ResponseEntity<UserProfileDTO> updateProfile(
             @PathVariable Long id,
             @RequestBody UpdateProfileRequest request) {
+        CurrentUser.require(id);
         try {
             UserProfileDTO updated = userService.updateUserProfile(id, request);
 
@@ -152,6 +158,7 @@ public class UserController {
     public ResponseEntity<Map<String, String>> uploadAvatar(
             @PathVariable Long id,
             @RequestParam("file") MultipartFile file) {
+        CurrentUser.require(id);
         try {
             String avatarUrl = userService.uploadAvatar(id, file);
 
@@ -172,6 +179,7 @@ public class UserController {
     public ResponseEntity<Map<String, String>> uploadAvatarBase64(
             @PathVariable Long id,
             @RequestBody Map<String, String> request) {
+        CurrentUser.require(id);
         try {
             String base64Image = request.get("avatar");
             if (base64Image == null || base64Image.isEmpty()) {
@@ -194,6 +202,7 @@ public class UserController {
      */
     @DeleteMapping("/{id}/avatar")
     public ResponseEntity<Void> deleteAvatar(@PathVariable Long id) {
+        CurrentUser.require(id);
         try {
             userService.deleteAvatar(id);
             return ResponseEntity.ok().build();
@@ -210,6 +219,7 @@ public class UserController {
     public ResponseEntity<PrivacySettingsDTO> updatePrivacySettings(
             @PathVariable Long id,
             @RequestBody PrivacySettingsDTO request) {
+        CurrentUser.require(id);
         try {
             PrivacySettingsDTO settings = userService.updatePrivacySettings(id, request);
             return ResponseEntity.ok(settings);
@@ -240,6 +250,7 @@ public class UserController {
     public ResponseEntity<Void> updateOnlineStatus(
             @PathVariable Long id,
             @RequestParam boolean isOnline) {
+        CurrentUser.require(id);
         userService.updateOnlineStatus(id, isOnline);
         return ResponseEntity.ok().build();
     }
@@ -252,6 +263,7 @@ public class UserController {
     public ResponseEntity<Map<String, String>> updateBackground(
             @PathVariable Long id,
             @RequestBody Map<String, String> request) {
+        CurrentUser.require(id);
         try {
             String background = request.get("background");
             if (background == null || background.isEmpty()) {
@@ -286,6 +298,7 @@ public class UserController {
     public ResponseEntity<SocialLinkDTO> addSocialLink(
             @PathVariable Long id,
             @RequestBody Map<String, String> request) {
+        CurrentUser.require(id);
         try {
             String platform = request.get("platform");
             String url = request.get("url");
@@ -307,6 +320,7 @@ public class UserController {
     public ResponseEntity<Void> deleteSocialLink(
             @PathVariable Long id,
             @PathVariable String platform) {
+        CurrentUser.require(id);
         try {
             userService.deleteSocialLink(id, platform);
             return ResponseEntity.ok().build();
@@ -323,6 +337,7 @@ public class UserController {
     public ResponseEntity<Map<String, String>> updateSocialLinks(
             @PathVariable Long id,
             @RequestBody Map<String, String> links) {
+        CurrentUser.require(id);
         try {
             Map<String, String> updated = userService.updateSocialLinks(id, links);
             return ResponseEntity.ok(updated);
@@ -339,6 +354,7 @@ public class UserController {
     public ResponseEntity<List<ActivityDTO>> getUserActivities(
             @PathVariable Long id,
             @RequestParam(defaultValue = "20") int limit) {
+        CurrentUser.require(id);
         try {
             List<ActivityDTO> activities = userService.getUserActivities(id, limit);
             return ResponseEntity.ok(activities);
@@ -355,6 +371,7 @@ public class UserController {
     public ResponseEntity<List<ActivityDTO>> getFriendActivities(
             @PathVariable Long id,
             @RequestParam(defaultValue = "20") int limit) {
+        CurrentUser.require(id);
         try {
             List<ActivityDTO> activities = userService.getFriendActivities(id, limit);
             return ResponseEntity.ok(activities);

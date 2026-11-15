@@ -1,6 +1,7 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.*;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.PostService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -27,6 +28,7 @@ public class PostController {
      */
     @PostMapping
     public ResponseEntity<?> createPost(@RequestBody CreatePostRequest request) {
+        request.setAuthorId(CurrentUser.require(request.getAuthorId()));
         try {
             PostDTO post = postService.createPost(request);
             return ResponseEntity.ok(post);
@@ -41,7 +43,8 @@ public class PostController {
     @GetMapping("/{postId}")
     public ResponseEntity<?> getPost(
             @PathVariable Long postId,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             PostDTO post = postService.getPost(postId, userId);
             return ResponseEntity.ok(post);
@@ -56,7 +59,8 @@ public class PostController {
     @DeleteMapping("/{postId}")
     public ResponseEntity<?> deletePost(
             @PathVariable Long postId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             postService.deletePost(postId, userId);
             return ResponseEntity.ok(successResponse("删除成功"));
@@ -74,7 +78,8 @@ public class PostController {
     public ResponseEntity<?> getRecommendedPosts(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostDTO> posts = postService.getRecommendedPosts(page, size, userId);
             return ResponseEntity.ok(posts);
@@ -90,7 +95,8 @@ public class PostController {
     public ResponseEntity<?> getHotPosts(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostDTO> posts = postService.getHotPosts(page, size, userId);
             return ResponseEntity.ok(posts);
@@ -106,7 +112,8 @@ public class PostController {
     public ResponseEntity<?> getLatestPosts(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostDTO> posts = postService.getLatestPosts(page, size, userId);
             return ResponseEntity.ok(posts);
@@ -123,7 +130,8 @@ public class PostController {
             @PathVariable Long authorId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostDTO> posts = postService.getUserPosts(authorId, page, size, userId);
             return ResponseEntity.ok(posts);
@@ -140,7 +148,8 @@ public class PostController {
             @RequestParam String keyword,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostDTO> posts = postService.searchPosts(keyword, page, size, userId);
             return ResponseEntity.ok(posts);
@@ -157,7 +166,8 @@ public class PostController {
     @PostMapping("/{postId}/upvote")
     public ResponseEntity<?> upvotePost(
             @PathVariable Long postId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             PostDTO post = postService.vote(postId, userId, 1);
             return ResponseEntity.ok(post);
@@ -172,7 +182,8 @@ public class PostController {
     @PostMapping("/{postId}/downvote")
     public ResponseEntity<?> downvotePost(
             @PathVariable Long postId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             PostDTO post = postService.vote(postId, userId, -1);
             return ResponseEntity.ok(post);
@@ -189,7 +200,8 @@ public class PostController {
     @PostMapping("/{postId}/bookmark")
     public ResponseEntity<?> toggleBookmark(
             @PathVariable Long postId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             PostDTO post = postService.toggleBookmark(postId, userId);
             return ResponseEntity.ok(post);
@@ -203,9 +215,10 @@ public class PostController {
      */
     @GetMapping("/bookmarks")
     public ResponseEntity<?> getUserBookmarks(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostDTO> posts = postService.getUserBookmarks(userId, page, size);
             return ResponseEntity.ok(posts);
@@ -223,6 +236,7 @@ public class PostController {
     public ResponseEntity<?> createComment(
             @PathVariable Long postId,
             @RequestBody CreateCommentRequest request) {
+        request.setAuthorId(CurrentUser.require(request.getAuthorId()));
         try {
             request.setPostId(postId);
             PostCommentDTO comment = postService.createComment(request);
@@ -240,7 +254,8 @@ public class PostController {
             @PathVariable Long postId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Page<PostCommentDTO> comments = postService.getPostComments(postId, page, size, userId);
             return ResponseEntity.ok(comments);
@@ -255,7 +270,8 @@ public class PostController {
     @DeleteMapping("/comments/{commentId}")
     public ResponseEntity<?> deleteComment(
             @PathVariable Long commentId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             postService.deleteComment(commentId, userId);
             return ResponseEntity.ok(successResponse("删除成功"));
@@ -271,7 +287,8 @@ public class PostController {
     @PostMapping("/comments/{commentId}/like")
     public ResponseEntity<?> likeComment(
             @PathVariable Long commentId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(postService.toggleCommentLike(commentId, userId));
         } catch (Exception e) {
@@ -286,7 +303,8 @@ public class PostController {
     @GetMapping("/comments/{commentId}/replies")
     public ResponseEntity<?> getCommentReplies(
             @PathVariable Long commentId,
-            @RequestParam(required = false) Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(postService.getCommentReplies(commentId, userId));
         } catch (Exception e) {

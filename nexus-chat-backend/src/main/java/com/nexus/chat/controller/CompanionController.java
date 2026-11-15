@@ -2,6 +2,7 @@ package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.*;
 import com.nexus.chat.model.CompanionModelBinding;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.CompanionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +21,8 @@ public class CompanionController {
     private final CompanionService companionService;
 
     @PostMapping("/roles/init")
-    public ResponseEntity<List<CompanionRoleDTO>> initRoles(@RequestParam Long userId) {
+    public ResponseEntity<List<CompanionRoleDTO>> initRoles(@RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.initDefaultRoles(userId));
         } catch (Exception e) {
@@ -30,7 +32,8 @@ public class CompanionController {
     }
 
     @GetMapping("/roles")
-    public ResponseEntity<List<CompanionRoleDTO>> getRoles(@RequestParam Long userId) {
+    public ResponseEntity<List<CompanionRoleDTO>> getRoles(@RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getRoles(userId));
         } catch (Exception e) {
@@ -42,8 +45,9 @@ public class CompanionController {
     @PutMapping("/roles/{roleId}")
     public ResponseEntity<CompanionRoleDTO> updateRole(
             @PathVariable Long roleId,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody CompanionRoleDTO update) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.updateRole(userId, roleId, update));
         } catch (Exception e) {
@@ -55,7 +59,8 @@ public class CompanionController {
     @GetMapping("/conversations/{roleId}")
     public ResponseEntity<List<CompanionMessageDTO>> getConversation(
             @PathVariable Long roleId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getConversation(userId, roleId));
         } catch (Exception e) {
@@ -66,8 +71,9 @@ public class CompanionController {
 
     @PostMapping("/messages")
     public ResponseEntity<CompanionChatResponse> sendMessage(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody Map<String, Object> request) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Long roleId = Long.valueOf(request.get("roleId").toString());
             String content = request.get("content") == null ? "" : request.get("content").toString();
@@ -80,8 +86,9 @@ public class CompanionController {
 
     @GetMapping("/memories")
     public ResponseEntity<List<CompanionMemoryDTO>> getMemories(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Long roleId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getMemories(userId, roleId));
         } catch (Exception e) {
@@ -92,8 +99,9 @@ public class CompanionController {
 
     @PostMapping("/memories")
     public ResponseEntity<CompanionMemoryDTO> createMemory(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody Map<String, Object> request) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             Long roleId = Long.valueOf(request.get("roleId").toString());
             String type = request.get("type") != null ? request.get("type").toString() : "mid";
@@ -108,7 +116,8 @@ public class CompanionController {
     @PostMapping("/memories/{id}/confirm")
     public ResponseEntity<CompanionMemoryDTO> confirmMemory(
             @PathVariable Long id,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.confirmMemory(userId, id));
         } catch (Exception e) {
@@ -120,7 +129,8 @@ public class CompanionController {
     @DeleteMapping("/memories/{id}")
     public ResponseEntity<Void> deleteMemory(
             @PathVariable Long id,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             companionService.deleteMemory(userId, id);
             return ResponseEntity.ok().build();
@@ -132,8 +142,9 @@ public class CompanionController {
 
     @DeleteMapping("/memories")
     public ResponseEntity<Void> clearMemories(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Long roleId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             companionService.clearMemories(userId, roleId);
             return ResponseEntity.ok().build();
@@ -146,7 +157,8 @@ public class CompanionController {
     @GetMapping("/growth/{roleId}")
     public ResponseEntity<CompanionGrowthDTO> getGrowth(
             @PathVariable Long roleId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getGrowth(userId, roleId));
         } catch (Exception e) {
@@ -158,7 +170,8 @@ public class CompanionController {
     @GetMapping("/status/{roleId}")
     public ResponseEntity<CompanionStatusDTO> getStatus(
             @PathVariable Long roleId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getStatus(userId, roleId));
         } catch (Exception e) {
@@ -170,8 +183,9 @@ public class CompanionController {
     @PutMapping("/status/{roleId}")
     public ResponseEntity<CompanionStatusDTO> updateStatus(
             @PathVariable Long roleId,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody Map<String, Object> request) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             String statusType = request.get("statusType") != null ? request.get("statusType").toString() : null;
             String summary = request.get("summary") != null ? request.get("summary").toString() : null;
@@ -184,8 +198,9 @@ public class CompanionController {
 
     @PostMapping("/model-credential")
     public ResponseEntity<ModelCredentialStatusDTO> saveCredential(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody Map<String, Object> request) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             String provider = request.get("provider") != null ? request.get("provider").toString() : "openai-compatible";
             String apiKey = request.get("apiKey") != null ? request.get("apiKey").toString() : null;
@@ -201,8 +216,9 @@ public class CompanionController {
 
     @GetMapping("/model-credential/status")
     public ResponseEntity<ModelCredentialStatusDTO> getCredentialStatus(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam(defaultValue = "openai-compatible") String provider) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getCredentialStatus(userId, provider));
         } catch (Exception e) {
@@ -214,8 +230,9 @@ public class CompanionController {
     @PutMapping("/model-binding/{roleId}")
     public ResponseEntity<CompanionModelBinding> bindModel(
             @PathVariable Long roleId,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody Map<String, Object> request) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             String provider = request.get("provider") != null ? request.get("provider").toString() : "openai-compatible";
             String modelName = request.get("modelName") != null ? request.get("modelName").toString() : null;

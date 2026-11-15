@@ -1,6 +1,7 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.*;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.GroupService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,8 +27,9 @@ public class GroupController {
      */
     @PostMapping
     public ResponseEntity<GroupDTO> createGroup(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody CreateGroupRequest request) {
+        Long userId = CurrentUser.require(claimedUserId);
         GroupDTO group = groupService.createGroup(userId, request);
         return ResponseEntity.ok(group);
     }
@@ -38,6 +40,7 @@ public class GroupController {
      */
     @GetMapping("/{id}")
     public ResponseEntity<GroupDTO> getGroupById(@PathVariable Long id) {
+        groupService.requireMember(id, CurrentUser.require());
         GroupDTO group = groupService.getGroupById(id);
         return ResponseEntity.ok(group);
     }
@@ -49,8 +52,9 @@ public class GroupController {
     @PutMapping("/{id}")
     public ResponseEntity<GroupDTO> updateGroup(
             @PathVariable Long id,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody UpdateGroupRequest request) {
+        Long userId = CurrentUser.require(claimedUserId);
         GroupDTO group = groupService.updateGroup(id, userId, request);
         return ResponseEntity.ok(group);
     }
@@ -62,7 +66,8 @@ public class GroupController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteGroup(
             @PathVariable Long id,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         groupService.deleteGroup(id, userId);
         return ResponseEntity.ok().build();
     }
@@ -74,8 +79,9 @@ public class GroupController {
     @PostMapping("/{id}/members")
     public ResponseEntity<Void> addMembers(
             @PathVariable Long id,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody AddMembersRequest request) {
+        Long userId = CurrentUser.require(claimedUserId);
         groupService.addMembers(id, userId, request.getUserIds());
         return ResponseEntity.ok().build();
     }
@@ -88,7 +94,8 @@ public class GroupController {
     public ResponseEntity<Void> removeMember(
             @PathVariable Long id,
             @PathVariable Long memberId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         groupService.removeMember(id, userId, memberId);
         return ResponseEntity.ok().build();
     }
@@ -100,7 +107,8 @@ public class GroupController {
     @PostMapping("/{id}/leave")
     public ResponseEntity<Void> leaveGroup(
             @PathVariable Long id,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         groupService.leaveGroup(id, userId);
         return ResponseEntity.ok().build();
     }
@@ -111,6 +119,7 @@ public class GroupController {
      */
     @GetMapping("/{id}/members")
     public ResponseEntity<List<GroupMemberDTO>> getGroupMembers(@PathVariable Long id) {
+        groupService.requireMember(id, CurrentUser.require());
         List<GroupMemberDTO> members = groupService.getGroupMembers(id);
         return ResponseEntity.ok(members);
     }
@@ -123,8 +132,9 @@ public class GroupController {
     public ResponseEntity<Void> setAdmin(
             @PathVariable Long id,
             @PathVariable Long memberId,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Boolean isAdmin) {
+        Long userId = CurrentUser.require(claimedUserId);
         groupService.setAdmin(id, userId, memberId, isAdmin);
         return ResponseEntity.ok().build();
     }
@@ -136,8 +146,9 @@ public class GroupController {
     @PostMapping("/{id}/transfer")
     public ResponseEntity<Void> transferOwnership(
             @PathVariable Long id,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Long newOwnerId) {
+        Long userId = CurrentUser.require(claimedUserId);
         groupService.transferOwnership(id, userId, newOwnerId);
         return ResponseEntity.ok().build();
     }
@@ -148,6 +159,7 @@ public class GroupController {
      */
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<GroupDTO>> getUserGroups(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         List<GroupDTO> groups = groupService.getUserGroups(userId);
         return ResponseEntity.ok(groups);
     }

@@ -1,6 +1,7 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.UserDTO;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.FollowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +29,8 @@ public class FollowController {
     @PostMapping("/{id}/follow")
     public ResponseEntity<?> followUser(
             @PathVariable Long id,
-            @RequestParam Long followerId) {
+            @RequestParam(name = "followerId", required = false) Long claimedFollowerId) {
+        Long followerId = CurrentUser.require(claimedFollowerId);
         try {
             followService.followUser(followerId, id);
             return ResponseEntity.ok(Map.of("success", true));
@@ -44,7 +46,8 @@ public class FollowController {
     @DeleteMapping("/{id}/follow")
     public ResponseEntity<?> unfollowUser(
             @PathVariable Long id,
-            @RequestParam Long followerId) {
+            @RequestParam(name = "followerId", required = false) Long claimedFollowerId) {
+        Long followerId = CurrentUser.require(claimedFollowerId);
         try {
             followService.unfollowUser(followerId, id);
             return ResponseEntity.ok(Map.of("success", true));
@@ -60,7 +63,8 @@ public class FollowController {
     @GetMapping("/{id}/follow/status")
     public ResponseEntity<?> getFollowStatus(
             @PathVariable Long id,
-            @RequestParam Long followerId) {
+            @RequestParam(name = "followerId", required = false) Long claimedFollowerId) {
+        Long followerId = CurrentUser.require(claimedFollowerId);
         boolean isFollowing = followService.isFollowing(followerId, id);
         return ResponseEntity.ok(Map.of("isFollowing", isFollowing));
     }

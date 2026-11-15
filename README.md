@@ -353,8 +353,8 @@ flowchart LR
 #### 其他实时细节
 
 - `WebSocketAuthChannelInterceptor`
-  - WebSocket 优先走 JWT
-  - 仍兼容旧式 `userId` 头
+  - 连接必须带 JWT，不再接受只带 `userId` 头的连接
+  - 只能订阅自己的 `/topic/user.{id}.*` 和 `/user/**`，只能向 `/app/**` 发送
 - `MessageValidationInterceptor`
   - 文本校验、XSS 清洗、URL 校验
 - `WebSocketRateLimiter`

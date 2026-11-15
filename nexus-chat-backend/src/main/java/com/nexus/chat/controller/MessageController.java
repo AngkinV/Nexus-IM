@@ -10,6 +10,7 @@ import com.nexus.chat.dto.WebSocketMessage;
 import com.nexus.chat.model.ChatMember;
 import com.nexus.chat.model.Message;
 import com.nexus.chat.repository.ChatMemberRepository;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.MessageService;
 import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.service.RedisCacheService;
@@ -17,8 +18,6 @@ import com.nexus.chat.service.RedisMessageRelay;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,9 +37,10 @@ public class MessageController {
 
     @PostMapping
     public ResponseEntity<MessageDTO> sendMessage(@RequestBody Map<String, Object> request) {
+        Long senderId = CurrentUser.require(
+                request.get("senderId") == null ? null : Long.valueOf(request.get("senderId").toString()));
         try {
             Long chatId = Long.valueOf(request.get("chatId").toString());
-            Long senderId = Long.valueOf(request.get("senderId").toString());
             String content = (String) request.get("content");
             String messageTypeStr = (String) request.get("messageType");
             String fileUrl = (String) request.get("fileUrl");
@@ -128,20 +128,13 @@ public class MessageController {
         }
     }
 
-    private Long requireAuthenticatedUser() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !(auth.getPrincipal() instanceof Long userId)) {
-            throw new IllegalArgumentException("authenticated user required");
-        }
-        return userId;
-    }
-
     @GetMapping("/chat/{chatId}")
     public ResponseEntity<List<MessageDTO>> getChatMessages(
             @PathVariable Long chatId,
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             List<MessageDTO> messages = messageService.getChatMessages(chatId, userId, page, size);
             return ResponseEntity.ok(messages);
@@ -156,7 +149,7 @@ public class MessageController {
             @RequestParam String query,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "30") int size) {
-        Long userId = requireAuthenticatedUser();
+        Long userId = CurrentUser.require();
         return ResponseEntity.ok(messageService.searchMessages(chatId, userId, query, page, size));
     }
 
@@ -164,7 +157,7 @@ public class MessageController {
     public ResponseEntity<MessageDTO> editMessage(
             @PathVariable Long messageId,
             @RequestBody EditMessageRequest request) {
-        Long userId = requireAuthenticatedUser();
+        Long userId = CurrentUser.require();
         String content = request.getContent();
         MessageValidationInterceptor.validateTextContent(content);
         content = MessageValidationInterceptor.sanitizeContent(content);
@@ -176,7 +169,7 @@ public class MessageController {
 
     @PostMapping("/{messageId}/recall")
     public ResponseEntity<MessageDTO> recallMessage(@PathVariable Long messageId) {
-        Long userId = requireAuthenticatedUser();
+        Long userId = CurrentUser.require();
         MessageDTO message = messageService.recallMessage(messageId, userId);
         notifyMessageEventToMembers(message.getChatId(),
                 new WebSocketMessage(WebSocketMessage.MessageType.MESSAGE_RECALLED, message));
@@ -187,7 +180,7 @@ public class MessageController {
     public ResponseEntity<List<MessageReactionDTO>> toggleReaction(
             @PathVariable Long messageId,
             @RequestBody ReactionRequest request) {
-        Long userId = requireAuthenticatedUser();
+        Long userId = CurrentUser.require();
         List<MessageReactionDTO> reactions = messageService.toggleReaction(messageId, userId, request.getEmoji());
         MessageDTO message = messageService.getMessageForUser(messageId, userId);
         notifyMessageEventToMembers(message.getChatId(),
@@ -201,13 +194,13 @@ public class MessageController {
 
     @GetMapping("/{messageId}/edits")
     public ResponseEntity<List<MessageEditHistoryDTO>> editHistory(@PathVariable Long messageId) {
-        Long userId = requireAuthenticatedUser();
+        Long userId = CurrentUser.require();
         return ResponseEntity.ok(messageService.getEditHistory(messageId, userId));
     }
 
     @PostMapping("/{messageId}/delivered")
     public ResponseEntity<Void> markDelivered(@PathVariable Long messageId) {
-        Long userId = requireAuthenticatedUser();
+        Long userId = CurrentUser.require();
         messageService.markMessageDelivered(messageId, userId);
         return ResponseEntity.ok().build();
     }
@@ -215,7 +208,8 @@ public class MessageController {
     @PutMapping("/{messageId}/read")
     public ResponseEntity<Void> markMessageAsRead(
             @PathVariable Long messageId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             messageService.markMessageAsRead(messageId, userId);
             return ResponseEntity.ok().build();
@@ -227,7 +221,8 @@ public class MessageController {
     @PutMapping("/chat/{chatId}/read")
     public ResponseEntity<Void> markChatMessagesAsRead(
             @PathVariable Long chatId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             messageService.markChatMessagesAsRead(chatId, userId);
             return ResponseEntity.ok().build();
