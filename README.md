@@ -69,9 +69,6 @@
 - `docker-compose.yml`
   - 启动 `mysql + redis + backend + frontend + cloudflared`
   - 适合 Web/Electron 体系的公网发布
-- `docker-compose-app.yml`
-  - 启动 `mysql + redis + backend`
-  - 让手机 App 直接通过公网 IP 访问后端
 - `nginx/nginx.conf`
   - 负责 Vue 静态资源
   - 反代 `/api`
@@ -459,8 +456,6 @@ Agent / 知识库相关表包括:
 
 - `application.properties`
   - 本地开发配置
-- `application-prod.properties`
-  - 生产配置
 - `application-docker.properties`
   - 容器环境配置
 
@@ -486,7 +481,7 @@ Companion 资产路径有两种模式:
 
 当前后端实现已经很丰富，但有几处工程信号值得单独记住:
 
-- `application.properties` 和 `application-prod.properties` 中存在硬编码敏感配置，不适合继续保留在仓库里。
+- `application.properties` 中存在硬编码敏感配置，不适合继续保留在仓库里。
 - 多个 profile 都在使用 `spring.jpa.hibernate.ddl-auto=update`，上线环境存在 schema 漂移风险。
 - 自动化测试基本缺失，`src/test` 下没有有效测试代码。
 - WebSocket、Redis、同步、Companion 都已经进入"可运行复杂系统"阶段，但回归保障不足。
@@ -694,7 +689,6 @@ mvn clean package      # 打包；生产配置还需选择相应 profile
 - LangChain 0.3 + LangChain Community / Chroma / OpenAI / TextSplitters
 - LangGraph 0.2 (备选编排引擎)
 - ChromaDB 0.5 (本地持久化向量库)
-- structlog (结构化日志)
 - pypdf / unstructured / python-docx / docx2txt / markdown (Module B 文档加载器)
 - pytest + pytest-asyncio
 
@@ -1094,7 +1088,7 @@ Pinia Store 划分比较成熟:
 - GitHub Release 更新检查
 - preload 桥接 `electronAPI`
 
-在 Vue 端，`LeftPanel`、`Settings.vue`、`TitleBar.vue`、通话组件等都直接使用了这个桥。
+在 Vue 端，`LeftPanel`、`Settings.vue`、通话组件等都直接使用了这个桥。
 
 ### 5.9 环境配置与部署
 
@@ -1219,14 +1213,12 @@ Store 文件均在 `src/stores/`，六个 Store 的基本职责见 5.5。补充�
 | `chat/GroupList.vue` | 群列表与状态 |
 | `contact/ContactList.vue` | 联系人与好友申请展示 |
 | `contact/AddContactModal.vue` | 用户搜索、直接添加、推荐列表 |
-| `contact/ContactRequestList.vue` | 好友申请收件/发件对话框 |
 | `call/IncomingCallModal.vue`、`call/OutgoingCallModal.vue`、`call/CallView.vue`、`call/CallEndModal.vue` | 来电、去电、通话、结束界面（5.11.5） |
-| `companion/CompanionAvatar3D.vue`、`companion/CompanionPanel.vue`、`companion/CompanionWidget.vue` | 3D 伙伴、面板和挂件；模型/动作、表情、记忆/成长及凭据绑定见 5.7 |
+| `companion/CompanionAvatar3D.vue`、`companion/CompanionPanel.vue` | 3D 伙伴和面板；模型/动作、表情、记忆/成长及凭据绑定见 5.7 |
 | `profile/SocialModule.vue` | 社交链接管理、在线好友与动态 |
 | `profile/AccountSecurityModule.vue` | 安全与登录会话；“示例数据”旧限制已变化，见 5.11.7 |
 | `common/EditProfileModal.vue` | 资料编辑与背景图设置 |
 | `common/FileUpload.vue` | 文件直传/分片、进度弹窗 |
-| `common/TitleBar.vue` | Electron 自定义标题栏 |
 
 消息类型包括 `TEXT`、`IMAGE`、`VIDEO`、`AUDIO`、`FILE`；文件支持小文件直传与大文件分片，原说明默认切片为 5MB。群组管理员设置、联系人在线状态、资料头像/背景/社交链接、历史消息搜索均由上述页面与组件配合完成。
 
@@ -1634,7 +1626,7 @@ Store 文件均在 `src/stores/`，六个 Store 的基本职责见 5.5。补充�
 
 建议按下面顺序熟悉:
 
-1. 先读根目录 `docker-compose.yml`、`docker-compose-app.yml`、`nginx/nginx.conf`
+1. 先读根目录 `docker-compose.yml`、`nginx/nginx.conf`
 2. 再读 `nexus-chat-backend`
    - 先 `controller`
    - 再 `service`

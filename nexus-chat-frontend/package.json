@@ -21,7 +21,6 @@
     "dayjs": "^1.11.10",
     "dexie": "^4.0.0",
     "element-plus": "^2.5.0",
-    "marked": "^11.0.0",
     "pinia": "^2.1.7",
     "sockjs-client": "^1.6.1",
     "three": "^0.164.1",

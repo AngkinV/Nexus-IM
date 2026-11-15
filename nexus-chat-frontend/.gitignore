@@ -1,6 +1,5 @@
 # 核心：排除依赖文件夹
 node_modules/
-electron/
 
 # 打包/构建产物
 dist/

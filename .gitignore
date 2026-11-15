@@ -72,3 +72,14 @@ nexus-agent-backend/.venv/
 # 测试运行缓存（不含测试源码）
 /.pytest_cache/
 /nexus-agent-backend/.pytest_cache/
+.alma-snapshots
+
+# 运行时数据：用户上传的文件、向量库（只留在本机，不进仓库）
+/uploads/
+/nexus-chat-backend/uploads/
+/nexus-agent-backend/data/
+
+# 本地工具产生的索引和缓存
+.codegraph/
+.pi/
+.alma/
