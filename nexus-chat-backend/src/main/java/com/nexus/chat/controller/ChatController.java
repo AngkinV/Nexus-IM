@@ -2,6 +2,7 @@ package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.ChatDTO;
 import com.nexus.chat.dto.CreateGroupRequest;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,8 +21,9 @@ public class ChatController {
 
     @PostMapping("/direct")
     public ResponseEntity<ChatDTO> createDirectChat(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Long contactId) {
+        Long userId = CurrentUser.require(claimedUserId);
         log.debug("创建私聊: userId={}, contactId={}", userId, contactId);
         try {
             ChatDTO chat = chatService.createDirectChat(userId, contactId);
@@ -35,8 +37,9 @@ public class ChatController {
 
     @PostMapping("/group")
     public ResponseEntity<ChatDTO> createGroupChat(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestBody CreateGroupRequest request) {
+        Long userId = CurrentUser.require(claimedUserId);
         log.debug("创建群聊: userId={}, name={}", userId, request.getName());
         try {
             ChatDTO chat = chatService.createGroupChat(userId, request);
@@ -50,6 +53,7 @@ public class ChatController {
 
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<ChatDTO>> getUserChats(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         log.debug("获取用户聊天列表: userId={}", userId);
         List<ChatDTO> chats = chatService.getUserChats(userId);
         return ResponseEntity.ok(chats);
@@ -58,7 +62,8 @@ public class ChatController {
     @GetMapping("/{chatId}")
     public ResponseEntity<ChatDTO> getChatById(
             @PathVariable Long chatId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         log.debug("获取聊天详情: chatId={}, userId={}", chatId, userId);
         try {
             ChatDTO chat = chatService.getChatById(chatId, userId);

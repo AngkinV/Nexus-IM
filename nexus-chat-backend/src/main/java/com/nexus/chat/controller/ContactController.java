@@ -5,6 +5,7 @@ import com.nexus.chat.dto.BlockedUserDTO;
 import com.nexus.chat.dto.ContactDTO;
 import com.nexus.chat.dto.ContactRequestDTO;
 import com.nexus.chat.dto.UserDTO;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.ContactService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,9 +35,10 @@ public class ContactController {
      */
     @PostMapping
     public ResponseEntity<?> addContact(@RequestBody AddContactRequest request) {
+        Long userId = CurrentUser.require(request.getUserId());
         try {
             Object result = contactService.addContact(
-                    request.getUserId(),
+                    userId,
                     request.getContactUserId(),
                     request.getMessage()
             );
@@ -64,8 +66,9 @@ public class ContactController {
      */
     @DeleteMapping
     public ResponseEntity<Void> removeContact(@RequestBody AddContactRequest request) {
+        Long userId = CurrentUser.require(request.getUserId());
         try {
-            contactService.removeContact(request.getUserId(), request.getContactUserId());
+            contactService.removeContact(userId, request.getContactUserId());
             return ResponseEntity.ok().build();
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
@@ -78,6 +81,7 @@ public class ContactController {
      */
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<UserDTO>> getContacts(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         List<UserDTO> contacts = contactService.getContacts(userId);
         return ResponseEntity.ok(contacts);
     }
@@ -88,6 +92,7 @@ public class ContactController {
      */
     @GetMapping("/user/{userId}/detailed")
     public ResponseEntity<List<ContactDTO>> getContactsDetailed(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         List<ContactDTO> contacts = contactService.getContactsDetailed(userId);
         return ResponseEntity.ok(contacts);
     }
@@ -98,8 +103,9 @@ public class ContactController {
      */
     @GetMapping("/check")
     public ResponseEntity<Map<String, Boolean>> isContact(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Long contactUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         boolean isContact = contactService.isContact(userId, contactUserId);
         return ResponseEntity.ok(Map.of("isContact", isContact));
     }
@@ -110,8 +116,9 @@ public class ContactController {
      */
     @GetMapping("/mutual")
     public ResponseEntity<List<UserDTO>> getMutualContacts(
-            @RequestParam Long userId1,
+            @RequestParam(name = "userId1", required = false) Long claimedUserId1,
             @RequestParam Long userId2) {
+        Long userId1 = CurrentUser.require(claimedUserId1);
         List<UserDTO> mutualContacts = contactService.getMutualContacts(userId1, userId2);
         return ResponseEntity.ok(mutualContacts);
     }
@@ -124,6 +131,7 @@ public class ContactController {
      */
     @GetMapping("/requests/pending/{userId}")
     public ResponseEntity<List<ContactRequestDTO>> getPendingRequests(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         List<ContactRequestDTO> requests = contactService.getPendingRequests(userId);
         return ResponseEntity.ok(requests);
     }
@@ -134,6 +142,7 @@ public class ContactController {
      */
     @GetMapping("/requests/sent/{userId}")
     public ResponseEntity<List<ContactRequestDTO>> getSentRequests(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         List<ContactRequestDTO> requests = contactService.getSentRequests(userId);
         return ResponseEntity.ok(requests);
     }
@@ -144,6 +153,7 @@ public class ContactController {
      */
     @GetMapping("/requests/count/{userId}")
     public ResponseEntity<Map<String, Long>> getPendingRequestCount(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         long count = contactService.getPendingRequestCount(userId);
         return ResponseEntity.ok(Map.of("count", count));
     }
@@ -155,7 +165,8 @@ public class ContactController {
     @PostMapping("/requests/{requestId}/accept")
     public ResponseEntity<?> acceptRequest(
             @PathVariable Long requestId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             ContactDTO contact = contactService.acceptContactRequest(requestId, userId);
             return ResponseEntity.ok(contact);
@@ -171,7 +182,8 @@ public class ContactController {
     @PostMapping("/requests/{requestId}/reject")
     public ResponseEntity<?> rejectRequest(
             @PathVariable Long requestId,
-            @RequestParam Long userId) {
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         try {
             contactService.rejectContactRequest(requestId, userId);
             return ResponseEntity.ok(Map.of("success", true));
@@ -188,6 +200,7 @@ public class ContactController {
      */
     @GetMapping("/blacklist/{userId}")
     public ResponseEntity<List<BlockedUserDTO>> getBlacklist(@PathVariable Long userId) {
+        CurrentUser.require(userId);
         return ResponseEntity.ok(contactService.getBlacklist(userId));
     }
 
@@ -197,8 +210,9 @@ public class ContactController {
      */
     @PostMapping("/blacklist")
     public ResponseEntity<?> blockUser(@RequestBody AddContactRequest request) {
+        Long userId = CurrentUser.require(request.getUserId());
         try {
-            contactService.blockUser(request.getUserId(), request.getContactUserId());
+            contactService.blockUser(userId, request.getContactUserId());
             return ResponseEntity.ok(Map.of("success", true));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -211,8 +225,9 @@ public class ContactController {
      */
     @DeleteMapping("/blacklist")
     public ResponseEntity<?> unblockUser(@RequestBody AddContactRequest request) {
+        Long userId = CurrentUser.require(request.getUserId());
         try {
-            contactService.unblockUser(request.getUserId(), request.getContactUserId());
+            contactService.unblockUser(userId, request.getContactUserId());
             return ResponseEntity.ok(Map.of("success", true));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
@@ -225,8 +240,9 @@ public class ContactController {
      */
     @GetMapping("/blocked/check")
     public ResponseEntity<Map<String, Boolean>> isBlocked(
-            @RequestParam Long userId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
             @RequestParam Long blockedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
         return ResponseEntity.ok(Map.of("isBlocked", contactService.isBlocked(userId, blockedUserId)));
     }
 

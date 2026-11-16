@@ -80,6 +80,12 @@ public class GroupService {
         return groupDTO;
     }
 
+    public void requireMember(Long groupId, Long userId) {
+        if (!chatMemberRepository.existsByChatIdAndUserId(groupId, userId)) {
+            throw new BusinessException("error.chat.not.member");
+        }
+    }
+
     /**
      * Get group by ID
      */

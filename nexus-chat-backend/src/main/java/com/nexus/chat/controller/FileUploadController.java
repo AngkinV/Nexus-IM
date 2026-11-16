@@ -2,6 +2,7 @@ package com.nexus.chat.controller;
 
 import com.nexus.chat.model.FileUpload;
 import com.nexus.chat.repository.FileUploadRepository;
+import com.nexus.chat.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -47,7 +48,8 @@ public class FileUploadController {
     @PostMapping("/upload")
     public ResponseEntity<Map<String, Object>> uploadFile(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "uploaderId", required = false) Long uploaderId) {
+            @RequestParam(value = "uploaderId", required = false) Long claimedUploaderId) {
+        Long uploaderId = CurrentUser.require(claimedUploaderId);
 
         log.debug("文件上传请求: filename={}, size={}, uploaderId={}",
                 file.getOriginalFilename(), file.getSize(), uploaderId);
@@ -128,7 +130,8 @@ public class FileUploadController {
             @RequestParam("fileId") String fileId,
             @RequestParam(value = "filename", required = false) String filename,
             @RequestParam(value = "totalSize", required = false) Long totalSize,
-            @RequestParam(value = "uploaderId", required = false) Long uploaderId) {
+            @RequestParam(value = "uploaderId", required = false) Long claimedUploaderId) {
+        Long uploaderId = CurrentUser.require(claimedUploaderId);
 
         log.debug("分片上传请求: fileId={}, chunkIndex={}/{}", fileId, chunkIndex, totalChunks);
 

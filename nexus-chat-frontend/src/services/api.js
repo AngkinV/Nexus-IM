@@ -287,12 +287,6 @@ export const groupAPI = {
         apiClient.put(`/groups/${groupId}`, data, { params: { userId } })
 }
 
-// Sync API (delta synchronization)
-export const syncAPI = {
-    getDelta: (since, types = 'messages,chats,contacts') =>
-        apiClient.get('/sync/delta', { params: { since, types } })
-}
-
 // Companion API
 export const companionAPI = {
     initRoles: (userId) =>

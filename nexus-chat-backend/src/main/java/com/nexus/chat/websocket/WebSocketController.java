@@ -11,8 +11,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Controller;
 
+import java.security.Principal;
 import java.util.List;
 import java.util.Map;
 
@@ -48,13 +50,13 @@ public class WebSocketController {
      * Includes ACK + offline queue + sequence number + deduplication.
      */
     @MessageMapping("/chat.sendMessage")
-    public void sendMessage(@Payload Map<String, Object> payload) {
+    public void sendMessage(@Payload Map<String, Object> payload, Principal principal) {
         Long chatId = null;
         Long senderId = null;
         String clientMsgId = null;
         try {
             chatId = Long.valueOf(payload.get("chatId").toString());
-            senderId = Long.valueOf(payload.get("senderId").toString());
+            senderId = actingUser(principal, payload.get("senderId"));
             String content = (String) payload.get("content");
             String messageTypeStr = (String) payload.get("messageType");
             String fileUrl = (String) payload.get("fileUrl");
@@ -129,9 +131,9 @@ public class WebSocketController {
      * Uses Redis Presence instead of MySQL.
      */
     @MessageMapping("/user.status")
-    public void updateUserStatus(@Payload Map<String, Object> payload) {
+    public void updateUserStatus(@Payload Map<String, Object> payload, Principal principal) {
         try {
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             Boolean isOnline = (Boolean) payload.get("isOnline");
 
             // Update presence in Redis (not MySQL)
@@ -163,11 +165,14 @@ public class WebSocketController {
      * Uses Redis TTL for auto-expiry (5 seconds).
      */
     @MessageMapping("/chat.typing")
-    public void userTyping(@Payload Map<String, Object> payload) {
+    public void userTyping(@Payload Map<String, Object> payload, Principal principal) {
         try {
             Long chatId = Long.valueOf(payload.get("chatId").toString());
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             Boolean isTyping = (Boolean) payload.get("isTyping");
+            if (!chatMemberRepository.existsByChatIdAndUserId(chatId, userId)) {
+                return;
+            }
 
             WebSocketMessage wsMessage = new WebSocketMessage(
                     WebSocketMessage.MessageType.TYPING,
@@ -195,13 +200,16 @@ public class WebSocketController {
      * Delivers read receipt via user channel.
      */
     @MessageMapping("/message.read")
-    public void messageRead(@Payload Map<String, Object> payload) {
+    public void messageRead(@Payload Map<String, Object> payload, Principal principal) {
         try {
             Long chatId = Long.valueOf(payload.get("chatId").toString());
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             Long messageId = payload.get("messageId") != null
                     ? Long.valueOf(payload.get("messageId").toString())
                     : null;
+            if (!chatMemberRepository.existsByChatIdAndUserId(chatId, userId)) {
+                return;
+            }
 
             WebSocketMessage wsMessage = new WebSocketMessage(
                     WebSocketMessage.MessageType.MESSAGE_READ,
@@ -223,9 +231,9 @@ public class WebSocketController {
      * Handle heartbeat from client (refresh presence TTL).
      */
     @MessageMapping("/user.heartbeat")
-    public void heartbeat(@Payload Map<String, Object> payload) {
+    public void heartbeat(@Payload Map<String, Object> payload, Principal principal) {
         try {
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             presenceService.refreshPresence(userId);
         } catch (Exception e) {
             log.debug("心跳处理失败: {}", e.getMessage());
@@ -236,9 +244,9 @@ public class WebSocketController {
      * Handle group creation
      */
     @MessageMapping("/group.create")
-    public void createGroup(@Payload Map<String, Object> payload) {
+    public void createGroup(@Payload Map<String, Object> payload, Principal principal) {
         try {
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             String name = (String) payload.get("name");
             String description = (String) payload.get("description");
             Boolean isPrivate = (Boolean) payload.getOrDefault("isPrivate", false);
@@ -270,7 +278,7 @@ public class WebSocketController {
             }
         } catch (Exception e) {
             log.error("创建群组失败: userId={}, name={}", payload.get("userId"), payload.get("name"), e);
-            sendError(payload.get("userId"), "Failed to create group: " + e.getMessage());
+            sendError(principal.getName(), "Failed to create group: " + e.getMessage());
         }
     }
 
@@ -278,11 +286,11 @@ public class WebSocketController {
      * Handle joining a group
      */
     @MessageMapping("/group.join")
-    public void joinGroup(@Payload Map<String, Object> payload) {
+    public void joinGroup(@Payload Map<String, Object> payload, Principal principal) {
         try {
             Long groupId = Long.valueOf(payload.get("groupId").toString());
             Long userId = Long.valueOf(payload.get("userId").toString());
-            Long adminUserId = Long.valueOf(payload.get("adminUserId").toString());
+            Long adminUserId = actingUser(principal, payload.get("adminUserId"));
 
             groupService.addMembers(groupId, adminUserId, List.of(userId));
 
@@ -305,10 +313,10 @@ public class WebSocketController {
      * Handle leaving a group
      */
     @MessageMapping("/group.leave")
-    public void leaveGroup(@Payload Map<String, Object> payload) {
+    public void leaveGroup(@Payload Map<String, Object> payload, Principal principal) {
         try {
             Long groupId = Long.valueOf(payload.get("groupId").toString());
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
 
             // Get members before leaving
             List<ChatMember> members = chatMemberRepository.findByChatId(groupId);
@@ -332,10 +340,10 @@ public class WebSocketController {
      * Handle group message (unified with chat.sendMessage for groups)
      */
     @MessageMapping("/group.message")
-    public void sendGroupMessage(@Payload Map<String, Object> payload) {
+    public void sendGroupMessage(@Payload Map<String, Object> payload, Principal principal) {
         try {
             Long groupId = Long.valueOf(payload.get("groupId").toString());
-            Long senderId = Long.valueOf(payload.get("senderId").toString());
+            Long senderId = actingUser(principal, payload.get("senderId"));
             String content = (String) payload.get("content");
             String messageTypeStr = (String) payload.get("messageType");
             String clientMsgId = (String) payload.get("clientMsgId");
@@ -374,9 +382,9 @@ public class WebSocketController {
      * Handle adding contact
      */
     @MessageMapping("/contact.add")
-    public void addContact(@Payload Map<String, Object> payload) {
+    public void addContact(@Payload Map<String, Object> payload, Principal principal) {
         try {
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             Long contactUserId = Long.valueOf(payload.get("contactUserId").toString());
             String message = payload.get("message") != null ? payload.get("message").toString() : null;
 
@@ -390,7 +398,7 @@ public class WebSocketController {
             }
         } catch (Exception e) {
             log.error("添加联系人失败: userId={}, contactUserId={}", payload.get("userId"), payload.get("contactUserId"), e);
-            sendError(payload.get("userId"), "Failed to add contact: " + e.getMessage());
+            sendError(principal.getName(), "Failed to add contact: " + e.getMessage());
         }
     }
 
@@ -398,9 +406,9 @@ public class WebSocketController {
      * Handle removing contact
      */
     @MessageMapping("/contact.remove")
-    public void removeContact(@Payload Map<String, Object> payload) {
+    public void removeContact(@Payload Map<String, Object> payload, Principal principal) {
         try {
-            Long userId = Long.valueOf(payload.get("userId").toString());
+            Long userId = actingUser(principal, payload.get("userId"));
             Long contactUserId = Long.valueOf(payload.get("contactUserId").toString());
 
             contactService.removeContact(userId, contactUserId);
@@ -424,7 +432,7 @@ public class WebSocketController {
      *           CALL_MUTE, CALL_VIDEO_TOGGLE
      */
     @MessageMapping("/call.signal")
-    public void handleCallSignal(@Payload Map<String, Object> payload) {
+    public void handleCallSignal(@Payload Map<String, Object> payload, Principal principal) {
         try {
             String typeStr = (String) payload.get("type");
             @SuppressWarnings("unchecked")
@@ -461,11 +469,22 @@ public class WebSocketController {
 
             log.info("Call signal received: type={}, callerId={}, calleeId={}", signalType, callerId, calleeId);
 
+            // The sender must be one of the two parties and may not name someone else as the sender.
+            Long senderId = actingUser(principal, signalPayload.get("userId"));
+            if (!senderId.equals(callerId) && !senderId.equals(calleeId)) {
+                log.warn("Call signal rejected: sender {} is not a party of the call", senderId);
+                return;
+            }
+
             // Determine target user based on signal type
             Long targetUserId = determineCallSignalTarget(signalType, callerId, calleeId, signalPayload);
 
             if (targetUserId == null) {
                 log.warn("Cannot determine target user for call signal: type={}", signalType);
+                return;
+            }
+            if (!targetUserId.equals(callerId) && !targetUserId.equals(calleeId)) {
+                log.warn("Call signal rejected: target {} is not a party of the call", targetUserId);
                 return;
             }
 
@@ -542,6 +561,18 @@ public class WebSocketController {
                 log.warn("Unknown call signal type: {}", type);
                 return calleeId;
         }
+    }
+
+    /**
+     * The acting user is the one authenticated on CONNECT. An id in the payload is only a claim:
+     * absent is fine, a different one rejects the message.
+     */
+    private Long actingUser(Principal principal, Object claimedUserId) {
+        Long userId = Long.valueOf(principal.getName());
+        if (claimedUserId != null && !userId.equals(Long.valueOf(claimedUserId.toString()))) {
+            throw new AccessDeniedException("payload user id does not match the authenticated connection");
+        }
+        return userId;
     }
 
     /**

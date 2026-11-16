@@ -1,0 +1,61 @@
+# 自动检查：每次提交合并请求、或 main 有新提交时，GitHub 会开一台临时机器跑下面三项。
+# 三项全绿才允许合并。本机对应的命令见 docs/DEVELOPMENT.md。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端 (Java)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nexus-chat-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      # NexusChatApplicationTests 要连真实的 MySQL 和 Redis，暂时排除（见 docs/ROADMAP.md 的 M0）
+      - run: mvn -B -ntp test -Dtest='!NexusChatApplicationTests' -Dsurefire.failIfNoSpecifiedTests=false
+
+  agent:
+    name: Agent (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nexus-agent-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: nexus-agent-backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  frontend:
+    name: 前端 (Vue)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nexus-chat-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: nexus-chat-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

@@ -7,6 +7,7 @@ import com.nexus.chat.dto.RegisterRequest;
 import com.nexus.chat.dto.SendCodeRequest;
 import com.nexus.chat.dto.VerifyCodeRequest;
 import com.nexus.chat.model.EmailVerificationCode.CodeType;
+import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.security.JwtTokenProvider;
 import com.nexus.chat.service.AuthService;
 import com.nexus.chat.service.VerificationCodeService;
@@ -93,7 +94,8 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(@RequestParam Long userId, HttpServletRequest httpRequest) {
+    public ResponseEntity<Void> logout(@RequestParam(name = "userId", required = false) Long claimedUserId, HttpServletRequest httpRequest) {
+        Long userId = CurrentUser.require(claimedUserId);
         log.info("用户登出请求: userId={}", userId);
         authService.logout(userId, bearerSessionToken(httpRequest));
         log.info("用户登出成功: userId={}", userId);
@@ -101,8 +103,9 @@ public class AuthController {
     }
 
     @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@RequestParam Long userId,
+    public ResponseEntity<?> changePassword(@RequestParam(name = "userId", required = false) Long claimedUserId,
                                             @RequestBody ChangePasswordRequest request) {
+        Long userId = CurrentUser.require(claimedUserId);
         log.info("修改密码请求: userId={}", userId);
         try {
             authService.changePassword(userId, request.getCurrentPassword(), request.getNewPassword());

@@ -36,10 +36,13 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
         if (accessor == null) return message;
 
-        if (StompCommand.CONNECT.equals(accessor.getCommand())) {
+        // STOMP is the 1.2 alias of CONNECT and opens a session the same way.
+        if (StompCommand.CONNECT.equals(accessor.getCommand()) || StompCommand.STOMP.equals(accessor.getCommand())) {
             handleConnect(accessor);
         } else if (StompCommand.DISCONNECT.equals(accessor.getCommand())) {
             handleDisconnect(accessor);
+        } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand()) || StompCommand.SEND.equals(accessor.getCommand())) {
+            authorizeDestination(accessor);
         }
 
         return message;
@@ -47,41 +50,47 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
 
     private void handleConnect(StompHeaderAccessor accessor) {
         String authHeader = accessor.getFirstNativeHeader("Authorization");
-        Long userId = null;
-
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            if (jwtTokenProvider.validateToken(token)) {
-                // Enforce session revocation: a revoked device can't (re)connect.
-                String sid = jwtTokenProvider.getSessionTokenFromToken(token);
-                if (sid != null && !sessionRepository.existsBySessionToken(sid)) {
-                    log.warn("WebSocket 会话已被吊销, 拒绝连接");
-                    throw new MessageDeliveryException("Session revoked");
-                }
-                userId = jwtTokenProvider.getUserIdFromToken(token);
-                accessor.setUser(new StompPrincipal(String.valueOf(userId)));
-                log.info("WebSocket JWT 认证成功: userId={}", userId);
-            } else {
-                log.warn("WebSocket JWT token 无效");
-                throw new MessageDeliveryException("Invalid JWT token");
-            }
-        } else {
-            // Fallback: accept userId header for backwards compatibility during migration
-            String userIdStr = accessor.getFirstNativeHeader("userId");
-            if (userIdStr != null && !userIdStr.isEmpty()) {
-                accessor.setUser(new StompPrincipal(userIdStr));
-                userId = Long.parseLong(userIdStr);
-                log.warn("WebSocket 使用不安全的 userId 头连接: userId={} (应迁移到 JWT)", userId);
-            } else {
-                throw new MessageDeliveryException("Missing authentication: provide Authorization header with Bearer token");
-            }
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            throw new MessageDeliveryException("Missing authentication: provide Authorization header with Bearer token");
         }
+        String token = authHeader.substring(7);
+        if (!jwtTokenProvider.validateToken(token)) {
+            log.warn("WebSocket JWT token 无效");
+            throw new MessageDeliveryException("Invalid JWT token");
+        }
+        // Enforce session revocation: a revoked device can't (re)connect.
+        String sid = jwtTokenProvider.getSessionTokenFromToken(token);
+        if (sid != null && !sessionRepository.existsBySessionToken(sid)) {
+            log.warn("WebSocket 会话已被吊销, 拒绝连接");
+            throw new MessageDeliveryException("Session revoked");
+        }
+        Long userId = jwtTokenProvider.getUserIdFromToken(token);
+        accessor.setUser(new StompPrincipal(String.valueOf(userId)));
+        log.info("WebSocket JWT 认证成功: userId={}", userId);
 
         // Register session in distributed registry
-        if (userId != null) {
-            String sessionId = accessor.getSessionId();
-            sessionRegistry.registerSession(userId, sessionId);
-            presenceService.userConnected(userId, sessionId);
+        sessionRegistry.registerSession(userId, accessor.getSessionId());
+        presenceService.userConnected(userId, accessor.getSessionId());
+    }
+
+    private void authorizeDestination(StompHeaderAccessor accessor) {
+        Principal user = accessor.getUser();
+        String destination = accessor.getDestination();
+        // A frame sent without a prior authenticated CONNECT has no user.
+        if (user == null || destination == null) {
+            throw new MessageDeliveryException("Not authenticated");
+        }
+        boolean allowed = StompCommand.SEND.equals(accessor.getCommand())
+                // Clients publish to handlers only; a SEND straight to /topic, /queue or /user/{id}
+                // would reach the broker and forge events for other users.
+                ? destination.startsWith("/app/")
+                // Allow-list, not a check on "/topic/user.{other}": the simple broker matches Ant
+                // patterns, so "/topic/**" would otherwise receive every user's events.
+                // "/user/..." is resolved by Spring to a queue private to this session.
+                : destination.startsWith("/user/") || destination.startsWith("/topic/user." + user.getName() + ".");
+        if (!allowed) {
+            log.warn("WebSocket {} 被拒绝: user={}, destination={}", accessor.getCommand(), user.getName(), destination);
+            throw new MessageDeliveryException("Destination not allowed: " + destination);
         }
     }
 

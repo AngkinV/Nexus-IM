@@ -81,6 +81,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
+        // These two act on behalf of a logged-in user, so they need the token identity.
+        if (path.equals("/api/auth/logout") || path.equals("/api/auth/change-password")) {
+            return false;
+        }
         // Skip JWT filter for auth endpoints, WebSocket, and internal Agent API (which uses its own Bearer token)
         return path.startsWith("/api/auth/") || path.startsWith("/ws") || path.startsWith("/internal/agent/");
     }
