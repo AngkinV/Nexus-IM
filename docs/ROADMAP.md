@@ -43,7 +43,7 @@
 ### M1 收敛范围
 
 - [ ] 删除只有手机端使用的后端接口（社区帖子的去留随冻结决定、版本检查、`/ws-native` 及 nginx 反代）
-- [ ] 决定 `nexus-chat-app` 目录是保留存档还是移出仓库
+- [x] `nexus-chat-app` 移出仓库（源码留在本机，最后一个包含它的提交是 `88b0d0e`）
 - [ ] Companion 并入 Agent，去掉 Java 里直连 LLM 的那套管线
 - [ ] 3D 形象默认关闭，打开后才下载 Three.js 和模型
 - [ ] 引入数据库迁移工具，以 `schema_full.sql` 为基线，`ddl-auto` 改为只校验

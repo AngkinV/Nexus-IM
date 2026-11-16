@@ -50,7 +50,7 @@
 | `nexus-chat-backend` | 核心服务端 (Java 网关)，提供鉴权、消息、群组、联系人、社区、AI 陪伴、文件、同步、版本更新、Agent/知识库网关等能力 | Spring Boot 3.2, Java 17, MySQL, Redis, STOMP WebSocket |
 | `nexus-agent-backend` | Python Agent 服务，负责 LLM 调用、工具编排、短期/长期记忆、RAG、知识库向量化与检索 | Python 3.10+, FastAPI, LangChain, LangGraph, ChromaDB, Redis, OpenAI / Anthropic / Gemini / OpenAI-compatible |
 | `nexus-chat-frontend` | Web + Electron 桌面端主界面，功能最完整 | Vue 3, Pinia, Vite, Element Plus, Electron, Dexie, Three.js |
-| `nexus-chat-app` | Flutter 移动端客户端，偏移动场景体验 | Flutter, Dio, STOMP, Hive, SecureStorage, 本地通知 |
+| `nexus-chat-app`（已暂停，源码已移出仓库） | Flutter 移动端客户端，偏移动场景体验 | Flutter, Dio, STOMP, Hive, SecureStorage, 本地通知 |
 
 可以把它理解成:
 
@@ -1307,6 +1307,8 @@ Store 文件均在 `src/stores/`，六个 Store 的基本职责见 5.5。补充�
 <a id="app"></a>
 ## 6. `nexus-chat-app` 详解
 
+> **状态：已暂停开发，源码已移出仓库。** 最后一个包含 `nexus-chat-app/` 的提交是 `88b0d0e`，需要时可从 git 历史取回。以下内容仅作历史参考。
+
 ### 6.1 项目定位
 
 `nexus-chat-app` 是 Flutter 移动端客户端，承担:
@@ -1636,7 +1638,7 @@ Store 文件均在 `src/stores/`，六个 Store 的基本职责见 5.5。补充�
    - 再 `stores`
    - 再 `services/websocket.js`、`syncService.js`
    - 最后看 `electron/` 和 `companion/`
-4. 最后读 `nexus-chat-app`
+4. `nexus-chat-app` 已移出仓库，下面几项仅在从历史取回后适用
    - 先 `main.dart`、`app.dart`
    - 再 `presentation/pages`
    - 再 `core/network`、`core/storage`

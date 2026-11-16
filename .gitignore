@@ -83,3 +83,6 @@ nexus-agent-backend/.venv/
 .codegraph/
 .pi/
 .alma/
+
+# 手机端已暂停开发，源码只留在本机，不进仓库（最后一个包含它的提交：88b0d0e）
+/nexus-chat-app/
