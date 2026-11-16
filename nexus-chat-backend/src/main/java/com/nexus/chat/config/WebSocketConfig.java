@@ -50,6 +50,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                         "http://127.0.0.1:*",
                         "https://chat.angkin.cn",
                         "https://*.angkin.cn",
+                        "https://nexus-chat-fwohlcnoevd.qoder.zone",
                         "app://*"
                 )
                 .withSockJS()
@@ -65,6 +66,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                         "http://127.0.0.1:*",
                         "https://chat.angkin.cn",
                         "https://*.angkin.cn",
+                        "https://nexus-chat-fwohlcnoevd.qoder.zone",
                         "app://*"
                 );
     }
