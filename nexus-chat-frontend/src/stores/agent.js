@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { agentAPI, streamAgentChat, AGENT_OP } from '@/services/agentApi'
+import i18n from '@/locales/i18n'
 
 export const AI_ASSISTANT_CHAT_ID = 'ai-assistant'
 const SESSION_STORAGE_KEY = 'agent.sessionId'
@@ -127,7 +128,7 @@ export const useAgentStore = defineStore('agent', () => {
         if (sessionId.value) return sessionId.value
         const response = await agentAPI.createSession({
             entryMode: AGENT_OP.ASSISTANT_CHAT,
-            title: 'AI 助手'
+            title: i18n.global.t('agent.title')
         })
         const id = response.data?.data?.sessionId
         if (!id) throw new Error('Failed to create agent session')
@@ -224,7 +225,7 @@ export const useAgentStore = defineStore('agent', () => {
                 assistantMsg.status = 'error'
                 assistantMsg.error = err
                 if (!assistantMsg.content) {
-                    assistantMsg.content = `[请求失败：${err.message || err.code || 'unknown'}]`
+                    assistantMsg.content = i18n.global.t('agent.requestFailed', { msg: err.message || err.code || 'unknown' })
                 }
             }
         }
@@ -327,7 +328,8 @@ export const useAgentStore = defineStore('agent', () => {
                     role: m.role || 'user',
                     content: m.content || '',
                     toolCalls: [],
-                    createdAt: new Date().toISOString(),
+                    // The server keeps only role + content, so the real send time is unknown.
+                    createdAt: null,
                     status: 'done'
                 }))
                 saveMessagesToCache(sid)
@@ -363,7 +365,8 @@ export const useAgentStore = defineStore('agent', () => {
                     role: m.role || 'user',
                     content: m.content || '',
                     toolCalls: [],
-                    createdAt: new Date().toISOString(),
+                    // The server keeps only role + content, so the real send time is unknown.
+                    createdAt: null,
                     status: 'done'
                 }))
                 saveMessagesToCache(sessionId.value)
@@ -378,7 +381,7 @@ export const useAgentStore = defineStore('agent', () => {
         cancelStream()
         const r = await agentAPI.createSession({
             entryMode: AGENT_OP.ASSISTANT_CHAT,
-            title: title || 'AI 助手'
+            title: title || i18n.global.t('agent.title')
         })
         const sid = r.data?.data?.sessionId
         if (!sid) throw new Error('Failed to create session')
@@ -415,6 +418,7 @@ export const useAgentStore = defineStore('agent', () => {
         lastError,
         sessions,
         sessionsLoading,
+        messagesBySessionId,
         activeSession,
         hasMessages,
         ensureSession,
@@ -432,14 +436,14 @@ export const useAgentStore = defineStore('agent', () => {
     }
 })
 
-/** Static descriptor for the virtual "AI 助手" chat list entry. */
-export function buildAiAssistantChatItem(t) {
+/** Static descriptor for the virtual AI-assistant chat list entry. */
+export function buildAiAssistantChatItem(t = i18n.global.t) {
     return {
         id: AI_ASSISTANT_CHAT_ID,
         type: 'AI',
-        name: t ? t('agent.title') : 'AI 助手',
+        name: t('agent.title'),
         avatar: '',
-        lastMessage: t ? t('agent.lastMessageHint') : '随时为你服务',
+        lastMessage: t('agent.lastMessageHint'),
         lastMessageTime: null,
         unreadCount: 0,
         online: true,

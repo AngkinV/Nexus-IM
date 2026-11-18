@@ -13,25 +13,25 @@
 
     <!-- Load error -->
     <div v-else-if="chatStore.loadError && !chatStore.chats.length" class="chat-state">
-      <span class="material-icons-round state-icon state-icon--error">cloud_off</span>
+      <span class="material-symbols-outlined state-icon state-icon--error">cloud_off</span>
       <p class="state-title">{{ $t('chat.loadFailed') }}</p>
       <button class="state-action" @click="chatStore.retryFetchChats()">{{ $t('common.retry') }}</button>
     </div>
 
     <!-- Empty: no conversations yet -->
     <div v-else-if="!filteredChats.length && !searchQuery" class="chat-state">
-      <span class="material-icons-round state-icon">forum</span>
+      <span class="material-symbols-outlined state-icon">forum</span>
       <p class="state-title">{{ $t('chat.noChats') }}</p>
       <p class="state-desc">{{ $t('chat.noChatsDesc') }}</p>
     </div>
 
     <!-- Empty: search returned nothing -->
     <div v-else-if="!filteredChats.length && searchQuery" class="chat-state">
-      <span class="material-icons-round state-icon">search_off</span>
+      <span class="material-symbols-outlined state-icon">search_off</span>
       <p class="state-title">{{ $t('chat.noSearchResults') }}</p>
     </div>
 
-    <!-- Chat items -->
+    <!-- Chat rows — Prism monochrome list item -->
     <template v-else>
     <div
       v-for="chat in filteredChats"
@@ -40,19 +40,19 @@
       :class="{ swiped: swipedChatId === chat.id }"
     >
       <!-- Swipe action buttons -->
-      <div class="swipe-actions">
+      <div class="swipe-actions" :class="{ revealed: getSwipeOffset(chat.id) !== 0 }">
         <button
           class="action-btn pin-btn"
           @click.stop="handleTogglePin(chat)"
         >
-          <span class="material-icons-round">push_pin</span>
+          <span class="material-symbols-outlined">push_pin</span>
           <span class="action-text">{{ chatStore.isChatPinned(chat.id) ? $t('chat.unpin') : $t('chat.pin') }}</span>
         </button>
         <button
           class="action-btn delete-btn"
           @click.stop="handleDelete(chat)"
         >
-          <span class="material-icons-round">delete</span>
+          <span class="material-symbols-outlined">delete</span>
           <span class="action-text">{{ $t('common.delete') }}</span>
         </button>
       </div>
@@ -73,18 +73,29 @@
         <!-- Avatar -->
         <div class="chat-avatar">
           <template v-if="chat.isAi">
-            <div class="ai-avatar"></div>
+            <div class="ai-avatar">
+              <span class="material-symbols-outlined">auto_awesome</span>
+            </div>
+            <span class="presence-dot online"></span>
           </template>
           <template v-else>
-            <el-avatar :size="44" :src="chat.avatar || defaultAvatar" class="avatar-img" />
-            <div v-if="chat.online && chat.type !== 'GROUP'" class="online-badge"></div>
-            <!-- Group badge -->
-            <div v-if="chat.type === 'GROUP'" class="group-badge">
-              <span class="material-icons-round">groups</span>
+            <div class="avatar-frame">
+              <img
+                v-if="chat.avatar && !failedAvatars[chat.id]"
+                class="avatar-img"
+                :src="chat.avatar"
+                alt=""
+                @error="failedAvatars[chat.id] = true"
+              />
+              <div v-else class="avatar-fallback" :data-initial="initialOf(chat.name)"></div>
             </div>
-            <!-- Unread badge on avatar -->
-            <div v-if="chat.unreadCount > 0" class="unread-badge">
-              {{ chat.unreadCount > 99 ? '99+' : chat.unreadCount }}
+            <span
+              v-if="chat.type !== 'GROUP'"
+              class="presence-dot"
+              :class="{ online: chat.status === 'online' }"
+            ></span>
+            <div v-if="chat.type === 'GROUP'" class="group-badge">
+              <span class="material-symbols-outlined">group</span>
             </div>
           </template>
         </div>
@@ -96,13 +107,16 @@
             <span class="chat-time">{{ formatTime(chat.lastMessageTime) }}</span>
           </div>
           <div class="chat-bottom">
-            <span class="last-message">{{ chat.lastMessage }}</span>
+            <span class="last-message">{{ chat.lastMessage || $t('common.noMessages') }}</span>
+            <span
+              v-if="chat.unreadCount > 0"
+              class="unread-badge"
+            >{{ chat.unreadCount > 99 ? '99+' : chat.unreadCount }}</span>
+            <span
+              v-else-if="chatStore.isChatPinned(chat.id)"
+              class="material-symbols-outlined pin-indicator"
+            >push_pin</span>
           </div>
-        </div>
-
-        <!-- Pin indicator -->
-        <div v-if="chatStore.isChatPinned(chat.id)" class="pin-indicator">
-          <span class="material-icons-round">push_pin</span>
         </div>
 
         <!-- Desktop hover actions (touch devices use swipe) -->
@@ -114,7 +128,7 @@
             :title="chatStore.isChatPinned(chat.id) ? $t('chat.unpin') : $t('chat.pin')"
             @click.stop="handleTogglePin(chat)"
           >
-            <span class="material-icons-round">push_pin</span>
+            <span class="material-symbols-outlined">push_pin</span>
           </button>
           <button
             class="hover-action-btn danger"
@@ -122,7 +136,7 @@
             :title="$t('common.delete')"
             @click.stop="handleDelete(chat)"
           >
-            <span class="material-icons-round">delete</span>
+            <span class="material-symbols-outlined">delete</span>
           </button>
         </div>
       </div>
@@ -132,7 +146,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, inject, reactive, ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
 import { ElMessageBox, ElMessage } from 'element-plus'
@@ -143,21 +157,38 @@ const props = defineProps({
   searchQuery: {
     type: String,
     default: ''
+  },
+  filter: {
+    type: String,
+    default: 'all'
   }
 })
 
 const { t } = useI18n()
 const chatStore = useChatStore()
+const enterAi = inject('enterAi', null)
 const messageStore = useMessageStore()
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 
-// Use sortedChats for pinned sorting
+// Remote avatars can 404; remember which ones did so we render the initial tile.
+const failedAvatars = reactive({})
+
+const initialOf = (name) => (name || '?').trim().charAt(0) || '?'
+
+// Use sortedChats for pinned sorting, then apply the search box + filter pill.
 const filteredChats = computed(() => {
-  const sorted = chatStore.sortedChats
-  if (!props.searchQuery) return sorted
-  return sorted.filter(chat =>
-    chat.name.toLowerCase().includes(props.searchQuery.toLowerCase())
-  )
+  let list = chatStore.sortedChats
+
+  if (props.filter === 'unread') {
+    list = list.filter((c) => (c.unreadCount || 0) > 0)
+  } else if (props.filter === 'starred') {
+    list = list.filter((c) => chatStore.isChatPinned(c.id))
+  } else if (props.filter === 'groups') {
+    list = list.filter((c) => c.type === 'GROUP' || c.isAi)
+  }
+
+  if (!props.searchQuery) return list
+  const q = props.searchQuery.toLowerCase()
+  return list.filter((chat) => (chat.name || '').toLowerCase().includes(q))
 })
 
 // Swipe state
@@ -256,6 +287,12 @@ const handleChatClick = (chat) => {
     closeSwipe(swipedChatId.value)
   }
 
+  // Opening the assistant goes through the Creator's Eye warp (provided by Main).
+  if (chat.isAi && enterAi && chatStore.activeChat?.id !== chat.id) {
+    enterAi(() => chatStore.setActiveChat(chat))
+    return
+  }
+
   chatStore.toggleActiveChat(chat)
 }
 
@@ -300,10 +337,10 @@ const formatTime = (time) => {
 .chat-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
-/* Empty / error states */
+/* ── Empty / error states ───────────────────────────────── */
 .chat-state {
   display: flex;
   flex-direction: column;
@@ -315,68 +352,62 @@ const formatTime = (time) => {
 }
 
 .state-icon {
-  font-size: 46px;
-  color: var(--tg-text-tertiary);
-  opacity: 0.6;
+  font-size: 40px;
+  color: #6f7274;
   margin-bottom: 4px;
 }
 
 .state-icon--error {
-  color: #ef4444;
-  opacity: 0.85;
+  color: #ffb4ab;
 }
 
 .state-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--tg-text-secondary);
-  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #c4c7c8;
 }
 
 .state-desc {
   font-size: 12px;
-  color: var(--tg-text-tertiary);
-  margin: 0;
-  max-width: 220px;
+  color: #6f7274;
   line-height: 1.5;
 }
 
 .state-action {
-  margin-top: 10px;
-  padding: 7px 20px;
-  border: none;
-  border-radius: var(--tg-radius-sm);
-  background: var(--teal-700);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
+  margin-top: 6px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(68, 71, 72, 0.6);
+  background: #1b1b1e;
+  color: #e4e1e6;
+  font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .state-action:hover {
-  background: #2a3aa8;
+  background: #2a2a2d;
 }
 
-/* Loading skeleton */
+/* ── Skeleton ───────────────────────────────────────────── */
 .chat-skeleton {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 2px;
+  padding: 4px 0;
 }
 
 .skeleton-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 0;
+  padding: 10px;
 }
 
 .skeleton-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
   flex-shrink: 0;
 }
 
@@ -388,8 +419,8 @@ const formatTime = (time) => {
 }
 
 .skeleton-line {
-  height: 10px;
-  border-radius: 6px;
+  height: 9px;
+  border-radius: 4px;
 }
 
 .skeleton-line--short { width: 38%; }
@@ -397,9 +428,9 @@ const formatTime = (time) => {
 
 .skeleton-avatar,
 .skeleton-line {
-  position: relative;
+  background: #1f1f22;
   overflow: hidden;
-  background: var(--tg-surface-hover);
+  position: relative;
 }
 
 .skeleton-avatar::after,
@@ -408,271 +439,272 @@ const formatTime = (time) => {
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
-  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.04), transparent);
+  animation: shimmer 1.4s infinite;
 }
 
-@keyframes skeleton-shimmer {
+@keyframes shimmer {
   100% { transform: translateX(100%); }
 }
 
+/* ── Row wrapper + swipe ────────────────────────────────── */
 .chat-item-wrapper {
   position: relative;
   overflow: hidden;
-  border-radius: 16px;
-  margin: 0 6px;
+  border-radius: 8px;
 }
 
+/* Kept out of paint until the row is dragged: otherwise the red delete
+   button bleeds through the row's anti-aliased rounded corners. */
 .swipe-actions {
   position: absolute;
-  right: -1px;
   top: 0;
+  right: 0;
   bottom: 0;
   display: flex;
-  align-items: stretch;
-  z-index: 0;
+  visibility: hidden;
+}
+
+.swipe-actions.revealed {
+  visibility: visible;
 }
 
 .action-btn {
+  width: 64px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 64px;
+  gap: 3px;
   border: none;
   cursor: pointer;
-  color: white;
-  gap: 2px;
-  transition: opacity 0.15s;
+  color: #e4e1e6;
 }
 
-.action-btn:hover {
-  opacity: 0.9;
-}
-
-.action-btn:active {
-  opacity: 0.8;
-}
-
-.action-btn .material-icons-round {
+.action-btn .material-symbols-outlined {
   font-size: 18px;
 }
 
 .action-text {
   font-size: 10px;
-  font-weight: 600;
 }
 
-.pin-btn {
-  background: #4f8ef0;
-}
+.pin-btn { background: #353438; }
+.delete-btn { background: #b3261e; }
 
-.delete-btn {
-  background: #ef4444;
-}
-
+/* ── Row ────────────────────────────────────────────────── */
 .chat-item {
+  position: relative;
   display: flex;
   align-items: center;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: transform 0.2s ease-out, background 0.15s ease;
-  position: relative;
-  background: #ffffff;
-  z-index: 1;
-  width: calc(100% + 2px);
-  margin-right: -2px;
-  box-sizing: border-box;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  background: #0e0e11;
 }
 
 .chat-item:hover {
-  background: #f1f5f9;
+  background: #1b1b1e;
 }
 
+/* Selected row: bg-surface-container + border-outline-variant/30 */
 .chat-item.active {
-  background: #e2e8f0;
+  background: #1f1f22;
+  border: 1px solid rgba(68, 71, 72, 0.3);
 }
 
-.chat-item.ai-item:hover,
-.chat-item.ai-item.active {
-  background: var(--ai-coral-soft);
+/* Selected row reads brighter: semibold name, white time, on-surface preview. */
+.chat-item.active .chat-name {
+  font-weight: 600;
 }
 
+.chat-item.active .chat-time {
+  color: #ffffff;
+}
+
+.chat-item.active .last-message {
+  color: #e4e1e6;
+}
+
+.chat-item.active .presence-dot {
+  box-shadow: 0 0 0 2px #1f1f22;
+}
+
+/* ── Avatar ─────────────────────────────────────────────── */
 .chat-avatar {
   position: relative;
-  margin-right: 12px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
 }
 
-.avatar-img {
-  border-radius: 50%;
+.avatar-frame {
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(14, 14, 17, 1);
 }
 
-.avatar-img :deep(.el-avatar) {
-  border-radius: 50%;
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(100%) contrast(1.1);
+}
+
+.avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  background: #2a2a2d;
 }
 
 .ai-avatar {
-  position: relative;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 34% 30%, #d9ecfd 0%, #7db8f5 46%, #3b78dd 100%);
-  box-shadow:
-    inset 0 -3px 7px rgba(59, 120, 221, 0.4),
-    inset 2px 3px 6px rgba(255, 255, 255, 0.4),
-    0 6px 18px -8px rgba(59, 120, 221, 0.55);
-  overflow: hidden;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
-.ai-avatar::after {
-  content: '';
-  position: absolute;
-  top: 7px;
-  left: 9px;
-  width: 13px;
-  height: 9px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.55);
-  transform: rotate(-26deg);
+.ai-avatar .material-symbols-outlined {
+  font-size: 20px;
 }
 
-.online-badge {
+.presence-dot {
   position: absolute;
-  bottom: 0;
   right: 0;
-  width: 12px;
-  height: 12px;
-  background: var(--tg-online);
-  border: 2px solid #ffffff;
-  border-radius: 50%;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: rgba(196, 199, 200, 0.4);
+  box-shadow: 0 0 0 2px #0e0e11;
+}
+
+.presence-dot.online {
+  background: #ffffff;
 }
 
 .group-badge {
   position: absolute;
-  bottom: -2px;
   right: -2px;
-  width: 18px;
-  height: 18px;
-  background: #3b82f6;
-  border: 2px solid #ffffff;
-  border-radius: 50%;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #353438;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 0 0 2px #0e0e11;
 }
 
-.group-badge .material-icons-round {
+.group-badge .material-symbols-outlined {
   font-size: 11px;
-  color: white;
+  color: #c4c7c8;
 }
 
-.unread-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  background: var(--tg-unread);
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 0 5px;
-  height: 18px;
-  min-width: 18px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid #ffffff;
-}
-
+/* ── Text block ─────────────────────────────────────────── */
 .chat-content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  overflow: hidden;
-  min-width: 0;
+  gap: 2px;
 }
 
 .chat-top {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .chat-name {
-  font-weight: 600;
   font-size: 13px;
-  color: #1e293b;
+  line-height: 18px;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .chat-time {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
-  color: #94a3b8;
+  letter-spacing: 0.02em;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: rgba(196, 199, 200, 0.7);
   flex-shrink: 0;
-  margin-left: 8px;
 }
 
 .chat-bottom {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 4px;
 }
 
 .last-message {
-  font-size: 12px;
-  color: #64748b;
+  font-size: 14px;
+  line-height: 24px;
+  color: #c4c7c8;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
 }
 
-.pin-indicator {
-  color: #4f8ef0;
-  margin-left: 8px;
+.unread-badge {
   flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.pin-indicator .material-icons-round {
-  font-size: 16px;
-}
-
-/* Desktop hover actions — refined pill buttons, replace the swipe colour bars on pointer devices */
-.chat-hover-actions {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: #ffffff;
+  color: #2f3131;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 0 10px 0 32px;
-  border-radius: 0 16px 16px 0;
-  opacity: 0;
-  transform: translateX(8px);
-  pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease;
-  z-index: 3;
-  background: linear-gradient(to right, rgba(241, 245, 249, 0) 0%, #f1f5f9 32px);
+  justify-content: center;
+}
+
+/* ── Pin + hover actions ────────────────────────────────── */
+.pin-indicator {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: rgba(196, 199, 200, 0.8);
+}
+
+.chat-hover-actions {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: none;
+  gap: 2px;
+  background: #1b1b1e;
+  border-radius: 4px;
+  padding: 2px;
 }
 
 .chat-item:hover .chat-hover-actions {
-  opacity: 1;
-  transform: translateX(0);
-  pointer-events: auto;
-}
-
-/* Fade the meta (time / pin marker) out on hover so the actions get clean space */
-.chat-time,
-.pin-indicator {
-  transition: opacity 0.18s ease;
+  display: flex;
 }
 
 .chat-item:hover .chat-time,
@@ -681,193 +713,33 @@ const formatTime = (time) => {
 }
 
 .hover-action-btn {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 9px;
-  background: #ffffff;
-  color: #64748b;
+  background: transparent;
+  color: #8e9192;
+  border-radius: 4px;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
-  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition: all 0.15s ease;
 }
 
 .hover-action-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px -2px rgba(15, 23, 42, 0.18);
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
-.hover-action-btn:active {
-  transform: translateY(0) scale(0.92);
-}
-
-.hover-action-btn.pin:hover,
 .hover-action-btn.pin.active {
-  background: #e8f1fd;
-  color: #4f8ef0;
+  color: #ffffff;
 }
 
 .hover-action-btn.danger:hover {
-  background: #fee2e2;
-  color: #ef4444;
+  color: #ffb4ab;
 }
 
-.hover-action-btn .material-icons-round {
-  font-size: 17px;
-}
-
-/* On pointer/hover devices use the hover actions and hide the swipe colour bars entirely */
-@media (hover: hover) and (pointer: fine) {
-  .swipe-actions {
-    display: none;
-  }
-}
-
-/* Touch devices keep using swipe gestures, no hover actions */
-@media (hover: none) {
-  .chat-hover-actions {
-    display: none;
-  }
-}
-
-/* Dark mode hover actions */
-[data-theme="dark"] .chat-hover-actions {
-  background: linear-gradient(to right, rgba(51, 65, 85, 0) 0%, #334155 32px);
-}
-
-[data-theme="dark"] .hover-action-btn {
-  background: #1e293b;
-  color: #94a3b8;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-}
-
-[data-theme="dark"] .hover-action-btn.pin:hover,
-[data-theme="dark"] .hover-action-btn.pin.active {
-  background: rgba(79, 142, 240, 0.2);
-  color: #9cc6f8;
-}
-
-[data-theme="dark"] .hover-action-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.22);
-  color: #f87171;
-}
-
-/* Swiped state */
-.chat-item-wrapper.swiped {
-  background: #4f8ef0;
-}
-
-.chat-item-wrapper.swiped .chat-item {
-  transition: none;
-}
-
-/* Dark Mode */
-[data-theme="dark"] .chat-item {
-  background: #1e293b;
-}
-
-[data-theme="dark"] .chat-item:hover {
-  background: #334155;
-}
-
-[data-theme="dark"] .chat-item.active {
-  background: #475569;
-}
-
-[data-theme="dark"] .chat-item.ai-item:hover,
-[data-theme="dark"] .chat-item.ai-item.active {
-  background: rgba(79, 142, 240, 0.16);
-}
-
-[data-theme="dark"] .online-badge {
-  border-color: #1e293b;
-}
-
-[data-theme="dark"] .group-badge {
-  border-color: #1e293b;
-  background: #3b82f6;
-}
-
-[data-theme="dark"] .unread-badge {
-  border-color: #1e293b;
-}
-
-[data-theme="dark"] .chat-name {
-  color: #f1f5f9;
-}
-
-[data-theme="dark"] .chat-time {
-  color: #64748b;
-}
-
-[data-theme="dark"] .last-message {
-  color: #94a3b8;
-}
-
-[data-theme="dark"] .pin-indicator {
-  color: #38bdf8;
-}
-
-[data-theme="dark"] .pin-btn {
-  background: #4f8ef0;
-}
-
-[data-theme="dark"] .delete-btn {
-  background: #dc2626;
-}
-
-[data-theme="dark"] .chat-item-wrapper.swiped {
-  background: #4f8ef0;
-}
-
-/* Mobile Responsive Styles */
-@media (max-width: 768px) {
-  .chat-item-wrapper {
-    margin: 0 4px;
-    border-radius: 14px;
-  }
-
-  .chat-item {
-    padding: 12px 10px;
-  }
-
-  .chat-avatar {
-    margin-right: 10px;
-  }
-
-  .avatar-img :deep(.el-avatar) {
-    width: 48px !important;
-    height: 48px !important;
-  }
-
-  .chat-name {
-    font-size: 14px;
-  }
-
-  .chat-time {
-    font-size: 10px;
-  }
-
-  .last-message {
-    font-size: 13px;
-  }
-
-  .unread-badge {
-    font-size: 9px;
-    height: 16px;
-    min-width: 16px;
-    padding: 0 4px;
-  }
-
-  .action-btn {
-    width: 56px;
-  }
-
-  .action-text {
-    font-size: 9px;
-  }
+.hover-action-btn .material-symbols-outlined {
+  font-size: 15px;
 }
 </style>

@@ -1,13 +1,20 @@
 <template>
   <div class="main-layout">
     <NavRail class="panel-nav" />
-    <LeftPanel class="panel-left" />
-    <MiddlePanel
-      class="panel-middle"
-      :class="{ 'mobile-active': isMobile && chatStore.activeChat }"
-      @open-new-chat="handleOpenNewChat"
-    />
-    <RightPanel class="panel-right" :class="{ 'collapsed': !showRightPanel || isAiChat }" />
+
+    <!-- Prism shell: fixed 56px workspace bar above the three panes. -->
+    <div class="shell-column">
+      <TopBar @open-command="openPalette" />
+      <div class="shell-panes">
+        <LeftPanel class="panel-left" />
+        <MiddlePanel
+          class="panel-middle"
+          :class="{ 'mobile-active': isMobile && chatStore.activeChat }"
+          @open-new-chat="handleOpenNewChat"
+        />
+        <RightPanel class="panel-right" :class="{ 'collapsed': !showRightPanel || isAiChat }" />
+      </div>
+    </div>
 
     <!-- Companion 3D avatar + panel -->
     <CompanionAvatar3D
@@ -16,6 +23,12 @@
       @open="showCompanion = true"
     />
     <CompanionPanel v-model="showCompanion" />
+
+    <!-- Prism c5: ⌘K command palette (global, overlays whatever is beneath). -->
+    <CommandPalette v-model="paletteOpen" @action="handlePaletteAction" />
+
+    <!-- Creator's Eye: fullscreen transition played when entering the AI section -->
+    <CreatorEyeWarp />
 
     <!-- Mobile overlay for right panel -->
     <div
@@ -33,8 +46,9 @@
 </template>
 
 <script setup>
-import { ref, provide, onMounted, onUnmounted, computed } from 'vue'
+import { ref, provide, onMounted, onUnmounted, computed, watch } from 'vue'
 import NavRail from '@/components/layout/NavRail.vue'
+import TopBar from '@/components/layout/TopBar.vue'
 import LeftPanel from '@/components/layout/LeftPanel.vue'
 import MiddlePanel from '@/components/layout/MiddlePanel.vue'
 import RightPanel from '@/components/layout/RightPanel.vue'
@@ -44,12 +58,17 @@ import CallView from '@/components/call/CallView.vue'
 import CallEndModal from '@/components/call/CallEndModal.vue'
 import CompanionAvatar3D from '@/components/companion/CompanionAvatar3D.vue'
 import CompanionPanel from '@/components/companion/CompanionPanel.vue'
+import CommandPalette from '@/components/layout/CommandPalette.vue'
+import CreatorEyeWarp from '@/components/warp/CreatorEyeWarp.vue'
+import { useCreatorWarp, WARP_PHASE } from '@/composables/useCreatorWarp'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
-import { useCallStore } from '@/stores/call'
+import { useCallStore, CallStatus } from '@/stores/call'
 import { useCompanionStore } from '@/stores/companion'
+import { useAgentStore } from '@/stores/agent'
+import { ElMessage } from 'element-plus'
 import websocket from '@/services/websocket'
 import syncService from '@/services/syncService'
 
@@ -59,18 +78,62 @@ const chatStore = useChatStore()
 const messageStore = useMessageStore()
 const callStore = useCallStore()
 const companionStore = useCompanionStore()
+const agentStore = useAgentStore()
+const creatorWarp = useCreatorWarp()
 
 const showRightPanel = ref(false)
 const showCompanion = ref(false)
+const paletteOpen = ref(false)
 
 // Active left-nav view, driven by the NavRail and consumed by the LeftPanel.
 const activeView = ref('chats')
-const setActiveView = (view) => {
+const applyActiveView = (view) => {
   activeView.value = view
+  // The AI section is a single canvas: opening it shows the assistant right away.
+  // On phones the session list stays in front until one is picked.
+  if (view !== 'ai' || isMobile.value) return
+  chatStore.setActiveChat(chatStore.sortedChats.find((c) => c.id === 'ai-assistant'))
+}
+
+const setActiveView = (view) => {
+  if (view === 'ai') enterAi(() => applyActiveView('ai'))
+  else applyActiveView(view)
 }
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
 const isAiChat = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
+
+// ── Entering the AI section ──────────────────────────────────────────────────
+// Every way into AI goes through here. Coming from outside, the Creator's Eye plays
+// first and `commit` (the caller's own way of opening AI) only runs once the user
+// confirms on the arrival stage; ESC backs out and nothing changes. Already inside
+// AI, `commit` runs straight away.
+let enteringAi = false
+const enterAi = (commit) => {
+  if (enteringAi || activeView.value === 'ai' || isAiChat.value) {
+    commit()
+    return
+  }
+  if (creatorWarp.state.phase !== WARP_PHASE.IDLE) return
+  creatorWarp.trigger({
+    onEnter: () => {
+      enteringAi = true
+      try {
+        commit()
+      } finally {
+        enteringAi = false
+      }
+    }
+  })
+}
+
+// A call must never ring behind the stage: the warp yields to it immediately.
+watch(
+  () => callStore.callStatus,
+  (status) => {
+    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) creatorWarp.cancel()
+  }
+)
 
 // Mobile detection
 const isMobile = ref(window.innerWidth <= 768)
@@ -84,6 +147,96 @@ const handleOpenNewChat = () => {
   setActiveView('contacts')
 }
 
+// ── Prism c5: command palette ────────────────────────────────────────────────
+const openPalette = () => {
+  paletteOpen.value = true
+}
+
+const openAiAssistant = () => enterAi(() => {
+  activeView.value = 'ai'
+  // AI 助手是 sortedChats 里的虚拟条目，不在 chats 数组里
+  chatStore.setActiveChat(chatStore.sortedChats.find((c) => c.id === 'ai-assistant'))
+})
+
+const markAllRead = () => {
+  ;(chatStore.chats || []).forEach((c) => { c.unreadCount = 0 })
+}
+
+const handlePaletteAction = (command) => {
+  switch (command) {
+    case 'search':
+      // Focus the left-pane search field the palette points at.
+      setActiveView('chats')
+      setTimeout(() => {
+        document.querySelector('.left-panel input[type="text"]')?.focus()
+      }, 60)
+      break
+    case 'new-chat':
+      handleOpenNewChat()
+      break
+    case 'new-group':
+      requestCreateGroup()
+      break
+    case 'mark-read':
+      markAllRead()
+      break
+    case 'ai':
+      openAiAssistant()
+      break
+    case 'nav-1':
+      setActiveView('chats')
+      break
+    case 'nav-2':
+      setActiveView('contacts')
+      break
+    case 'nav-3':
+      setActiveView('groups')
+      break
+    case 'nav-4':
+      setActiveView('ai')
+      break
+    case 'help':
+    case 'palette':
+      paletteOpen.value = true
+      break
+    default:
+      break
+  }
+}
+
+// Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
+const handleGlobalKeydown = (event) => {
+  const mod = event.metaKey || event.ctrlKey
+  if (!mod) return
+  const key = event.key.toLowerCase()
+
+  if (key === 'k') {
+    event.preventDefault()
+    paletteOpen.value = !paletteOpen.value
+    return
+  }
+  // While the palette is open it owns the keyboard.
+  if (paletteOpen.value) return
+
+  if (key === 'n') {
+    event.preventDefault()
+    if (activeView.value !== 'ai') return handleOpenNewChat()
+    agentStore.newSession().catch((err) => ElMessage.error(err.message))
+  } else if (key === 'g') {
+    event.preventDefault()
+    setActiveView('groups')
+  } else if (key === 'j') {
+    event.preventDefault()
+    openAiAssistant()
+  } else if (key === '/') {
+    event.preventDefault()
+    paletteOpen.value = true
+  } else if (['1', '2', '3', '4'].includes(key)) {
+    event.preventDefault()
+    handlePaletteAction(`nav-${key}`)
+  }
+}
+
 // Provide global state for panels
 const toggleRightPanel = () => {
   showRightPanel.value = !showRightPanel.value
@@ -93,6 +246,39 @@ provide('showRightPanel', showRightPanel)
 provide('isMobile', isMobile)
 provide('activeView', activeView)
 provide('setActiveView', setActiveView)
+provide('enterAi', enterAi)
+provide('openPalette', openPalette)
+
+// A tiny event counter used by the standby screen to ask the left pane to open
+// its create-group dialog (the dialog instance lives inside LeftPanel).
+const createGroupSignal = ref(0)
+provide('createGroupSignal', createGroupSignal)
+const requestCreateGroup = () => {
+  setActiveView('groups')
+  createGroupSignal.value += 1
+}
+provide('requestCreateGroup', requestCreateGroup)
+
+// Which contact / group the directory panes have selected. The middle pane
+// shows that record's detail card (Prism c2 / c3); null keeps the old view.
+const selectedContactId = ref(null)
+const selectedGroupId = ref(null)
+provide('selectedContactId', selectedContactId)
+provide('selectedGroupId', selectedGroupId)
+
+// "Add contact" (nav-rail button on the contacts pane) uses the same counter.
+const addContactSignal = ref(0)
+provide('addContactSignal', addContactSignal)
+provide('requestAddContact', () => {
+  setActiveView('contacts')
+  addContactSignal.value += 1
+})
+
+// Same pattern for the chat header's search button: the search dialog lives
+// inside RightPanel, so the header asks for it through a counter.
+const searchSignal = ref(0)
+provide('searchSignal', searchSignal)
+provide('requestSearch', () => { searchSignal.value += 1 })
 
 /**
  * Optimized startup flow (WeChat-style):
@@ -105,6 +291,7 @@ provide('setActiveView', setActiveView)
 onMounted(async () => {
   // Add resize listener for mobile detection
   window.addEventListener('resize', handleResize)
+  window.addEventListener('keydown', handleGlobalKeydown)
 
   // Ensure user is loaded
   if (!userStore.currentUser) {
@@ -167,6 +354,7 @@ onMounted(async () => {
 // Cleanup on unmount
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('keydown', handleGlobalKeydown)
   callStore.cleanup()
 })
 </script>
@@ -176,14 +364,29 @@ onUnmounted(() => {
   display: flex;
   width: 100vw;
   height: 100vh;
-  background:
-    radial-gradient(1100px 720px at 72% 26%, rgba(186, 212, 248, 0.55), transparent 60%),
-    radial-gradient(820px 560px at 88% 62%, rgba(196, 206, 248, 0.50), transparent 58%),
-    radial-gradient(720px 560px at 16% 82%, rgba(206, 222, 248, 0.45), transparent 60%),
-    linear-gradient(135deg, #eef3fc 0%, #e6eef9 48%, #dde8f7 100%);
+  background: #131316;
   overflow: hidden;
   position: relative;
-  transition: background 0.3s ease;
+}
+
+/* Right of the 256px rail: bar on top, panes below. */
+.shell-column {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.shell-panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  /* Containing block for the mobile overlay pane, so the sliding chat panel
+     covers only the pane area and never the nav rail. */
+  position: relative;
 }
 
 .panel-nav {
@@ -193,19 +396,16 @@ onUnmounted(() => {
 }
 
 .panel-left {
-  width: 340px;
-  min-width: 300px;
-  max-width: 400px;
-  border-right: 1px solid rgba(15, 23, 42, 0.06);
+  width: 320px;
+  min-width: 280px;
+  max-width: 380px;
+  border-right: 1px solid rgba(68, 71, 72, 0.2);
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: #0e0e11;
   z-index: 10;
   position: relative;
-  transition: all 0.3s ease;
 }
 
 .panel-middle {
@@ -213,9 +413,9 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  min-width: 400px;
+  min-width: 360px;
   position: relative;
-  background: transparent;
+  background: #131316;
   z-index: 1;
 }
 
@@ -223,12 +423,9 @@ onUnmounted(() => {
   width: 25%;
   min-width: 280px;
   max-width: 380px;
-  border-left: 1px solid rgba(15, 23, 42, 0.06);
+  border-left: 1px solid rgba(68, 71, 72, 0.2);
   height: 100%;
-  transition: all 0.3s ease;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: #131316;
   z-index: 5;
   position: relative;
 }
@@ -239,24 +436,6 @@ onUnmounted(() => {
 }
 
 /* Dark Mode */
-[data-theme="dark"] .main-layout {
-  background:
-    radial-gradient(1100px 720px at 72% 26%, rgba(79, 142, 240, 0.18), transparent 60%),
-    radial-gradient(820px 560px at 88% 62%, rgba(70, 90, 200, 0.16), transparent 58%),
-    radial-gradient(720px 560px at 16% 82%, rgba(90, 150, 230, 0.14), transparent 60%),
-    linear-gradient(135deg, #14161c 0%, #15171f 50%, #161922 100%);
-}
-
-[data-theme="dark"] .panel-left {
-  background: rgba(30, 34, 48, 0.72);
-  border-right-color: #262a34;
-}
-
-[data-theme="dark"] .panel-right {
-  background: rgba(30, 34, 48, 0.9);
-  border-left-color: #262a34;
-}
-
 /* Tablet breakpoint */
 @media (max-width: 1024px) {
   .panel-left {
@@ -289,13 +468,14 @@ onUnmounted(() => {
 
   .panel-middle {
     position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     min-width: unset;
     z-index: 20;
     transform: translateX(100%);
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    background: var(--tg-surface);
+    background: #131316;
   }
 
   .panel-middle.mobile-active {
@@ -325,8 +505,8 @@ onUnmounted(() => {
     display: flex;
   }
 
-  [data-theme="dark"] .panel-right {
-    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.4);
+  .panel-right {
+    box-shadow: none;
   }
 }
 

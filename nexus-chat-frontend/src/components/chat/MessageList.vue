@@ -1,29 +1,88 @@
 <template>
   <div class="message-list" ref="listRef">
+    <template v-for="(msg, i) in messages" :key="msg.id">
+    <div v-if="startsNewDay(i)" class="date-divider">
+      <span class="date-pill">{{ formatDayLabel(msg.timestamp) }}</span>
+    </div>
     <div
-      v-for="(msg, i) in messages"
-      :key="msg.id"
       class="message-wrapper"
       :class="{ 'sent': msg.isSelf, 'grouped': isGroupedWithPrev(i), 'picker-open': openPicker === msg.id }"
     >
-      <!-- Avatar for received messages (only the last of a group shows it) -->
+      <!-- Avatar for received messages; no portrait → monochrome initial -->
       <div v-if="!msg.isSelf" class="message-avatar">
         <el-avatar
-          v-if="!isGroupedWithNext(i)"
-          :size="36"
-          :src="msg.senderAvatar || defaultAvatar"
+          v-if="msg.senderAvatar"
+          :size="32"
+          :src="msg.senderAvatar"
           :alt="msg.senderName"
           class="clickable-avatar"
           @click="handleAvatarClick(msg.senderId)"
         />
+        <div
+          v-else
+          class="avatar-initial clickable-avatar"
+          :data-initial="(msg.senderName || '?').trim().charAt(0) || '?'"
+          @click="handleAvatarClick(msg.senderId)"
+        ></div>
       </div>
 
       <div class="message-content">
+        <div class="message-meta" :class="{ 'meta-sent': msg.isSelf }">
+          <span class="head-name">{{ msg.isSelf ? $t('group.me') : msg.senderName }}</span>
+          <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+          <button
+            v-if="msg.isEdited && !msg.isRecalled"
+            class="edited-label clickable"
+            :title="$t('chat.editHistory')"
+            @click="$emit('viewEditHistory', msg)"
+          >{{ $t('chat.editedCount', { count: msg.editCount || 1 }) }}</button>
+          <!-- Sending indicator -->
+          <span v-if="msg.isSelf && msg.status === 'sending'" class="sending-status" :title="$t('chat.sending')">
+            <el-icon :size="14" class="spin"><Loading /></el-icon>
+          </span>
+          <!-- Failed indicator (click to resend) -->
+          <button v-else-if="msg.isSelf && msg.failed" class="failed-status" :title="$t('chat.clickToResend')" @click="$emit('resend', msg)">
+            <el-icon color="#f2b8b5" :size="16"><WarningFilled /></el-icon>
+          </button>
+          <!-- Read status -->
+          <span v-else-if="msg.isSelf" class="read-status">
+            <svg v-if="msg.read" class="check-icon read" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M2 12l5 5L20 4M7 12l5 5L22 4" />
+            </svg>
+            <svg v-else class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M5 12l5 5L20 7" />
+            </svg>
+          </span>
+          <div class="message-actions">
+            <button class="inline-action" :title="$t('chat.reply')" :aria-label="$t('chat.reply')" @click="$emit('reply', msg)"><span class="material-symbols-outlined">reply</span></button>
+            <el-popover
+              placement="top"
+              trigger="manual"
+              :visible="openPicker === msg.id"
+              :width="300"
+              :show-arrow="false"
+              popper-class="emoji-popper"
+            >
+              <template #reference>
+                <button class="inline-action react-trigger" :title="$t('chat.react')" :aria-label="$t('chat.react')" @click.stop="togglePicker(msg.id)"><span class="material-symbols-outlined">add_reaction</span></button>
+              </template>
+              <div class="emoji-grid">
+                <EmojiPicker
+                  :native="true"
+                  :theme="pickerTheme"
+                  :disable-skin-tones="true"
+                  @select="(e) => pickEmoji(msg, e.i)"
+                />
+              </div>
+            </el-popover>
+            <button v-if="canEditMessage(msg)" class="inline-action" :title="$t('chat.edit')" :aria-label="$t('chat.edit')" @click="$emit('edit', msg)"><span class="material-symbols-outlined">edit</span></button>
+            <button v-if="canRecallMessage(msg)" class="inline-action danger" :title="$t('chat.recall')" :aria-label="$t('chat.recall')" @click="$emit('recall', msg)"><span class="material-symbols-outlined">undo</span></button>
+          </div>
+        </div>
         <div class="message-bubble" :class="[msg.isSelf ? 'bubble-out' : 'bubble-in', { 'grp-cont': isGroupedWithPrev(i) }]">
-          <div v-if="!msg.isSelf && !isGroupedWithPrev(i)" class="sender-name">{{ msg.senderName }}</div>
 
           <div v-if="msg.replyToMessage" class="reply-preview">
-            <span class="material-icons-round reply-icon">reply</span>
+            <span class="material-symbols-outlined reply-icon">reply</span>
             <div class="reply-body">
               <span class="reply-author">{{ msg.replyToMessage.senderNickname || msg.replyToMessage.senderName || $t('chat.unknownUser') }}</span>
               <span class="reply-text">{{ msg.replyToMessage.isRecalled ? $t('chat.messageRecalled') : msg.replyToMessage.content }}</span>
@@ -87,7 +146,7 @@
           <!-- File Message -->
           <div v-else-if="msg.type === 'FILE'" class="message-file" @click="handleFileClick(msg)">
             <div class="file-icon-wrapper">
-              <el-icon :size="28"><Document /></el-icon>
+              <span class="material-symbols-outlined">description</span>
             </div>
             <div class="file-details">
               <span class="file-name">{{ msg.fileName || msg.content }}</span>
@@ -100,7 +159,7 @@
               :title="$t('chat.download')"
               @click.stop
             >
-              <el-icon :size="20"><Download /></el-icon>
+              <span class="material-symbols-outlined">download</span>
             </a>
           </div>
         </div>
@@ -118,59 +177,9 @@
           </button>
         </div>
 
-        <div class="message-meta" :class="{ 'meta-sent': msg.isSelf }">
-          <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
-          <button
-            v-if="msg.isEdited && !msg.isRecalled"
-            class="edited-label clickable"
-            :title="$t('chat.editHistory')"
-            @click="$emit('viewEditHistory', msg)"
-          >{{ $t('chat.editedCount', { count: msg.editCount || 1 }) }}</button>
-          <!-- Sending indicator -->
-          <span v-if="msg.isSelf && msg.status === 'sending'" class="sending-status" :title="$t('chat.sending')">
-            <el-icon :size="14" class="spin"><Loading /></el-icon>
-          </span>
-          <!-- Failed indicator (click to resend) -->
-          <button v-else-if="msg.isSelf && msg.failed" class="failed-status" :title="$t('chat.clickToResend')" @click="$emit('resend', msg)">
-            <el-icon color="#ef4444" :size="16"><WarningFilled /></el-icon>
-          </button>
-          <!-- Read status -->
-          <span v-else-if="msg.isSelf" class="read-status">
-            <svg v-if="msg.read" class="check-icon read" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M2 12l5 5L20 4M7 12l5 5L22 4" />
-            </svg>
-            <svg v-else class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M5 12l5 5L20 7" />
-            </svg>
-          </span>
-          <div class="message-actions">
-            <button class="inline-action" :title="$t('chat.reply')" :aria-label="$t('chat.reply')" @click="$emit('reply', msg)"><span class="material-icons-round">reply</span></button>
-            <el-popover
-              placement="top"
-              trigger="manual"
-              :visible="openPicker === msg.id"
-              :width="300"
-              :show-arrow="false"
-              popper-class="emoji-popper"
-            >
-              <template #reference>
-                <button class="inline-action react-trigger" :title="$t('chat.react')" :aria-label="$t('chat.react')" @click.stop="togglePicker(msg.id)"><span class="material-icons-round">add_reaction</span></button>
-              </template>
-              <div class="emoji-grid">
-                <EmojiPicker
-                  :native="true"
-                  :theme="pickerTheme"
-                  :disable-skin-tones="true"
-                  @select="(e) => pickEmoji(msg, e.i)"
-                />
-              </div>
-            </el-popover>
-            <button v-if="canEditMessage(msg)" class="inline-action" :title="$t('chat.edit')" :aria-label="$t('chat.edit')" @click="$emit('edit', msg)"><span class="material-icons-round">edit</span></button>
-            <button v-if="canRecallMessage(msg)" class="inline-action danger" :title="$t('chat.recall')" :aria-label="$t('chat.recall')" @click="$emit('recall', msg)"><span class="material-icons-round">undo</span></button>
-          </div>
-        </div>
       </div>
     </div>
+    </template>
 
   </div>
 </template>
@@ -178,14 +187,16 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, onUpdated, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { WarningFilled, Download, Document, PictureFilled, Loading } from '@element-plus/icons-vue'
+import { WarningFilled, Download, PictureFilled, Loading } from '@element-plus/icons-vue'
 import { API_BASE_URL } from '@/services/runtimeConfig'
 
 import dayjs from 'dayjs'
+import { useI18n } from 'vue-i18n'
 import EmojiPicker from 'vue3-emoji-picker'
 import 'vue3-emoji-picker/css'
 
 const router = useRouter()
+const { t } = useI18n()
 
 const props = defineProps({
   messages: {
@@ -197,15 +208,11 @@ const props = defineProps({
 const emit = defineEmits(['reply', 'edit', 'recall', 'react', 'viewEditHistory', 'resend'])
 
 const listRef = ref(null)
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 
-// Emoji reaction picker open state (keyed by message id) + theme sync.
+// Emoji reaction picker open state (keyed by message id). Prism is dark-only.
 const openPicker = ref(null)
-const pickerTheme = ref('light')
-const currentTheme = () => {
-  const attr = document.documentElement.getAttribute('data-theme') || document.body.getAttribute('data-theme')
-  return attr === 'dark' ? 'dark' : 'light'
-}
+const pickerTheme = ref('dark')
+const currentTheme = () => 'dark'
 const togglePicker = (id) => {
   if (openPicker.value === id) {
     openPicker.value = null
@@ -260,14 +267,6 @@ const isGroupedWithPrev = (i) => {
   return (messageCreatedMs(cur) - messageCreatedMs(prev)) < GROUP_GAP_MS
 }
 
-const isGroupedWithNext = (i) => {
-  const cur = props.messages[i]
-  const next = props.messages[i + 1]
-  if (!cur || !next) return false
-  if (next.senderId !== cur.senderId) return false
-  return (messageCreatedMs(next) - messageCreatedMs(cur)) < GROUP_GAP_MS
-}
-
 const canEditMessage = (msg) => {
   if (!msg || !msg.isSelf || msg.isRecalled) return false
   if (msg.type !== 'TEXT') return false
@@ -298,6 +297,21 @@ onUpdated(() => {
 watch(() => props.messages, () => {
   scrollToBottom()
 }, { deep: true })
+
+// A day pill opens every calendar day in the stream ("今天 14:10").
+const startsNewDay = (i) => {
+  const cur = props.messages[i]
+  if (!cur?.timestamp) return false
+  if (i === 0) return true
+  const prev = props.messages[i - 1]
+  return !prev?.timestamp || !dayjs(cur.timestamp).isSame(dayjs(prev.timestamp), 'day')
+}
+
+const formatDayLabel = (time) => {
+  const d = dayjs(time)
+  const day = d.isSame(dayjs(), 'day') ? t('chat.today') : d.format('YYYY-MM-DD')
+  return `${day} ${d.format('HH:mm')}`
+}
 
 const formatTime = (time) => {
   return dayjs(time).format('HH:mm')
@@ -356,7 +370,7 @@ const handleAvatarClick = (senderId) => {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 20px;
+  padding: 16px 24px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -371,27 +385,51 @@ const handleAvatarClick = (senderId) => {
   display: none;
 }
 
-.message-wrapper {
+/* ── Row ────────────────────────────────────────────────── */
+.date-divider {
   display: flex;
-  gap: 8px;
-  max-width: 70%;
-  margin-top: 10px;
-  animation: fadeInUp 0.3s ease-out;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 0;
 }
 
-.message-wrapper.grouped {
-  margin-top: 2px;
+.date-divider + .message-wrapper {
+  margin-top: 16px;
+}
+
+.message-wrapper + .date-divider {
+  margin-top: 20px;
+}
+
+.date-pill {
+  padding: 4px 12px;
+  border-radius: 9999px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.2);
+  color: rgba(196, 199, 200, 0.7);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.message-wrapper {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 75%;
+  margin-top: 16px;
+  animation: fadeInUp 0.2s ease-out;
+}
+
+.message-list > .message-wrapper:first-child {
+  margin-top: 0;
 }
 
 @keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .message-wrapper.sent {
@@ -401,145 +439,143 @@ const handleAvatarClick = (senderId) => {
 
 .message-avatar {
   flex-shrink: 0;
-  align-self: flex-end;
-  margin-bottom: 18px;
-  width: 36px;
+  align-self: flex-start;
+  margin-top: 2px;
+  width: 32px;
 }
 
 .message-avatar .el-avatar {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3);
+  filter: grayscale(100%) contrast(1.1);
 }
 
-[data-theme="dark"] .message-avatar .el-avatar {
-  border-color: rgba(255, 255, 255, 0.12);
+.avatar-initial {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3);
 }
 
 .clickable-avatar {
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: opacity 0.15s ease;
 }
 
 .clickable-avatar:hover {
-  transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0.8;
 }
 
 .message-content {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
+  min-width: 0;
 }
 
 .message-wrapper.sent .message-content {
   align-items: flex-end;
 }
 
+/* ── Bubbles ──────────────────────────────────────────────
+   Received: rounded-xl rounded-tl-none bg-surface-container-low/90 + border.
+   Sent:     rounded-xl rounded-tr-none bg-white text-zinc-900. */
 .message-bubble {
-  padding: 10px 14px;
+  padding: 16px;
   position: relative;
-  transition: box-shadow 0.25s ease;
+  max-width: 100%;
+  transition: border-color 0.15s ease;
 }
 
-/* Received message bubble */
 .bubble-in {
-  background: var(--tg-message-in);
-  border-radius: 18px 18px 18px 4px;
-  border: 1px solid rgba(226, 232, 240, 0.7);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  background: rgba(27, 27, 30, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 0 12px 12px 12px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
 .bubble-in:hover {
-  box-shadow: 0 6px 16px -6px rgba(16, 24, 40, 0.18);
+  border-color: rgba(68, 71, 72, 0.5);
+}
+
+.bubble-out {
+  background: #ffffff;
+  border-radius: 12px 0 12px 12px;
+  color: #18181b;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+.bubble-out ::selection {
+  background: #d4d4d8;
+  color: #09090b;
 }
 
 .bubble-in .message-text {
-  color: var(--tg-text-primary);
-}
-
-.bubble-in .sender-name {
-  color: var(--tg-primary);
-}
-
-[data-theme="dark"] .bubble-in {
-  border: 1px solid rgba(51, 65, 85, 0.5);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-
-[data-theme="dark"] .bubble-in:hover {
-  box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.5);
-}
-
-/* Sent message bubble */
-.bubble-out {
-  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 100%);
-  border-radius: 18px 18px 4px 18px;
-  color: #FFFFFF;
-  box-shadow: 0 4px 14px -5px rgba(79, 142, 240, 0.5);
-}
-
-.bubble-out:hover {
-  box-shadow: 0 8px 20px -6px rgba(79, 142, 240, 0.62);
-}
-
-/* Grouped continuation: flatten the corner that connects to the message above */
-.bubble-in.grp-cont {
-  border-top-left-radius: 4px;
-}
-
-.bubble-out.grp-cont {
-  border-top-right-radius: 4px;
+  color: #e4e1e6;
 }
 
 .bubble-out .message-text {
-  color: #FFFFFF;
+  color: #18181b;
 }
 
 .bubble-out .reply-author {
-  color: #FFFFFF;
+  color: #2f3131;
 }
 
 .bubble-out .message-recalled {
-  color: rgba(255, 255, 255, 0.75);
-}
-
-.sender-name {
-  font-size: 12px;
-  color: var(--tg-primary);
-  font-weight: 700;
-  margin-bottom: 2px;
+  color: rgba(19, 19, 22, 0.6);
 }
 
 .message-text {
-  font-size: 15px;
-  line-height: 1.5;
-  color: var(--tg-text-primary);
+  font-size: 16px;
+  line-height: 1.625;
+  letter-spacing: -0.005em;
   word-wrap: break-word;
+  white-space: pre-wrap;
 }
 
 .message-recalled {
-  font-size: 14px;
+  font-size: 13px;
   font-style: italic;
-  color: var(--tg-text-tertiary);
+  color: #6f7274;
 }
 
+/* ── Reply quote ────────────────────────────────────────── */
 .reply-preview {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 8px;
   margin-bottom: 6px;
-  background: rgba(15, 23, 42, 0.06);
-  border-radius: 12px;
-  max-width: 280px;
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 2px solid rgba(255, 255, 255, 0.4);
+  border-radius: 3px;
+  max-width: 260px;
   overflow: hidden;
 }
 
+.bubble-out .reply-preview {
+  background: rgba(19, 19, 22, 0.06);
+  border-left-color: rgba(19, 19, 22, 0.4);
+}
+
 .reply-icon {
-  font-size: 16px;
-  color: var(--tg-primary);
-  opacity: 0.85;
+  font-size: 14px;
+  color: #8e9192;
   flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.bubble-out .reply-icon {
+  color: rgba(19, 19, 22, 0.55);
 }
 
 .reply-body {
@@ -549,38 +585,26 @@ const handleAvatarClick = (senderId) => {
   min-width: 0;
 }
 
-.bubble-out .reply-preview {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.bubble-out .reply-icon {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-[data-theme="dark"] .reply-preview {
-  background: rgba(255, 255, 255, 0.07);
-}
-
 .reply-author {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--tg-primary);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .reply-text {
-  font-size: 12px;
+  font-size: 11px;
   color: inherit;
-  opacity: 0.8;
+  opacity: 0.75;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* ── Reactions ──────────────────────────────────────────── */
 .reaction-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 3px;
+  margin-top: 3px;
 }
 
 .reaction-row.reaction-sent {
@@ -591,26 +615,32 @@ const handleAvatarClick = (senderId) => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: var(--tg-surface);
+  padding: 1px 6px;
+  border: 1px solid rgba(68, 71, 72, 0.4);
+  background: #16161a;
   border-radius: 999px;
-  padding: 2px 7px;
-  font-size: 12px;
-  color: var(--tg-text-secondary);
+  font-size: 11px;
+  color: #c4c7c8;
   cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.reaction-pill:hover {
+  border-color: rgba(68, 71, 72, 0.7);
 }
 
 .reaction-pill.active {
-  border-color: var(--tg-primary);
-  color: var(--tg-primary);
-  background: rgba(79, 142, 240, 0.08);
+  border-color: #ffffff;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
 }
 
-/* Image message */
+/* ── Attachments ────────────────────────────────────────── */
 .message-image {
   max-width: 300px;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
+  filter: grayscale(100%) contrast(1.05);
 }
 
 .image-content {
@@ -626,11 +656,10 @@ const handleAvatarClick = (senderId) => {
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: var(--tg-text-tertiary);
+  color: #6f7274;
   font-size: 12px;
 }
 
-/* Video message */
 .message-video {
   max-width: 320px;
 }
@@ -638,18 +667,19 @@ const handleAvatarClick = (senderId) => {
 .video-content {
   width: 100%;
   max-height: 240px;
-  border-radius: 12px;
-  background: #000;
+  border-radius: 8px;
+  background: #0e0e11;
+  filter: grayscale(100%) contrast(1.05);
 }
 
-/* Audio message */
 .message-audio {
   min-width: 240px;
 }
 
 .audio-content {
   width: 100%;
-  height: 36px;
+  height: 34px;
+  filter: grayscale(100%);
 }
 
 .file-name-row {
@@ -661,8 +691,8 @@ const handleAvatarClick = (senderId) => {
 }
 
 .file-label {
-  font-size: 12px;
-  color: var(--tg-text-secondary);
+  font-size: 11px;
+  color: #8e9192;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -670,191 +700,223 @@ const handleAvatarClick = (senderId) => {
 }
 
 .bubble-out .file-label {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(19, 19, 22, 0.65);
 }
 
 .download-link {
-  color: var(--tg-text-secondary);
+  color: #8e9192;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  transition: color 0.2s;
+  transition: color 0.15s ease;
 }
 
 .download-link:hover {
-  color: var(--tg-primary);
+  color: #ffffff;
 }
 
 .bubble-out .download-link {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(19, 19, 22, 0.6);
 }
 
 .bubble-out .download-link:hover {
-  color: #FFFFFF;
+  color: #2f3131;
 }
 
-/* File message */
 .message-file {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 0;
+  gap: 16px;
   cursor: pointer;
-  min-width: 220px;
+  min-width: 286px;
 }
 
 .file-icon-wrapper {
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 12px;
-  color: var(--tg-primary);
+  background: #2a2a2d;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 8px;
+  color: #ffffff;
   flex-shrink: 0;
 }
 
+.file-icon-wrapper .material-symbols-outlined {
+  font-size: 22px;
+}
+
 .bubble-out .file-icon-wrapper {
-  background: rgba(255, 255, 255, 0.2);
-  color: #FFFFFF;
+  background: rgba(19, 19, 22, 0.06);
+  border-color: rgba(19, 19, 22, 0.12);
+  color: #2f3131;
 }
 
 .file-details {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
   min-width: 0;
 }
 
 .file-name {
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0.01em;
   font-weight: 500;
-  color: var(--tg-text-primary);
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .bubble-out .file-name {
-  color: #FFFFFF;
+  color: #2f3131;
 }
 
 .file-meta {
   font-size: 12px;
-  color: var(--tg-text-tertiary);
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(196, 199, 200, 0.7);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 .bubble-out .file-meta {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(19, 19, 22, 0.55);
 }
 
 .file-download-btn {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--tg-primary);
-  transition: all 0.2s;
+  border-radius: 4px;
+  background: #2a2a2d;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #ffffff;
+  transition: all 0.15s ease;
   flex-shrink: 0;
   text-decoration: none;
 }
 
 .file-download-btn:hover {
-  background: rgba(0, 0, 0, 0.1);
-  transform: scale(1.1);
+  background: #39393c;
+  color: #ffffff;
+}
+
+.file-download-btn .material-symbols-outlined {
+  font-size: 18px;
 }
 
 .bubble-out .file-download-btn {
-  background: rgba(255, 255, 255, 0.2);
-  color: #FFFFFF;
+  background: rgba(19, 19, 22, 0.06);
+  border-color: rgba(19, 19, 22, 0.12);
+  color: rgba(19, 19, 22, 0.7);
 }
 
 .bubble-out .file-download-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(19, 19, 22, 0.08);
+  color: #2f3131;
 }
 
+/* ── Head row: name + time above the bubble ─────────────── */
 .message-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding-left: 4px;
+  gap: 4px;
+  min-height: 16px;
 }
 
 .message-meta.meta-sent {
-  padding-right: 4px;
-  padding-left: 0;
+  justify-content: flex-end;
+}
+
+.head-name {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #c4c7c8;
+}
+
+/* Sent rows read "14:20 我": status → time → name */
+.meta-sent .head-name {
+  order: 3;
+  color: #ffffff;
+}
+
+.meta-sent .message-time {
+  order: 2;
 }
 
 .message-time {
-  font-size: 11px;
-  color: var(--tg-text-tertiary);
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(196, 199, 200, 0.6);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 .edited-label {
-  font-size: 11px;
-  color: var(--tg-text-tertiary);
+  font-size: 10px;
+  color: #6f7274;
 }
 
 .edited-label.clickable {
   border: none;
   background: transparent;
-  padding: 0 2px;
+  padding: 0;
   cursor: pointer;
-  font-weight: 600;
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
 
 .edited-label.clickable:hover {
-  color: var(--tg-primary);
+  color: #c4c7c8;
 }
 
 .message-actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 .inline-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
-  color: var(--tg-text-tertiary);
-  border-radius: 7px;
+  color: #6f7274;
+  border-radius: 4px;
   cursor: pointer;
   padding: 0;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
 .inline-action:hover {
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--tg-primary);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
 .inline-action.danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
+  background: rgba(255, 180, 171, 0.12);
+  color: #ffb4ab;
 }
 
-.inline-action .material-icons-round {
-  font-size: 17px;
+.inline-action .material-symbols-outlined {
+  font-size: 16px;
 }
 
-[data-theme="dark"] .inline-action:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-/* Desktop: float the action toolbar beside the bubble so the resting row stays clean */
+/* Desktop: float the action toolbar beside the bubble */
 @media (hover: hover) and (pointer: fine) {
   .message-content {
     position: relative;
@@ -864,11 +926,10 @@ const handleAvatarClick = (senderId) => {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    padding: 3px;
-    background: #ffffff;
-    border: 1px solid rgba(15, 23, 42, 0.06);
-    border-radius: 12px;
-    box-shadow: 0 6px 18px -6px rgba(15, 23, 42, 0.22);
+    padding: 2px;
+    background: #1b1b1e;
+    border: 1px solid rgba(68, 71, 72, 0.4);
+    border-radius: 6px;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s ease;
@@ -889,8 +950,6 @@ const handleAvatarClick = (senderId) => {
     pointer-events: auto;
   }
 
-  /* Transparent bridge across the gap so moving the cursor from the bubble to
-     the toolbar doesn't drop :hover (which would hide it before a click lands). */
   .message-actions::before {
     content: '';
     position: absolute;
@@ -906,27 +965,22 @@ const handleAvatarClick = (senderId) => {
   .message-wrapper.sent .message-actions::before {
     right: -14px;
   }
-
-  [data-theme="dark"] .message-actions {
-    background: #1e293b;
-    border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
-  }
 }
 
+/* ── Delivery status ────────────────────────────────────── */
 .read-status {
   display: flex;
   align-items: center;
 }
 
 .check-icon {
-  width: 16px;
-  height: 16px;
-  color: var(--tg-text-tertiary);
+  width: 14px;
+  height: 14px;
+  color: #6f7274;
 }
 
 .check-icon.read {
-  color: var(--tg-primary);
+  color: #ffffff;
 }
 
 .failed-status {
@@ -941,7 +995,7 @@ const handleAvatarClick = (senderId) => {
 .sending-status {
   display: flex;
   align-items: center;
-  color: var(--tg-text-tertiary);
+  color: #6f7274;
 }
 
 .sending-status .spin {
@@ -952,44 +1006,32 @@ const handleAvatarClick = (senderId) => {
   to { transform: rotate(360deg); }
 }
 
-/* Mobile Responsive Styles */
+/* ── Mobile ─────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .message-list {
     padding: 10px 12px;
   }
 
   .message-wrapper {
-    max-width: 85%;
+    max-width: 88%;
   }
 
   .message-avatar {
-    margin-bottom: 16px;
+    width: 28px;
   }
 
   .message-avatar .el-avatar {
-    width: 32px !important;
-    height: 32px !important;
+    width: 28px !important;
+    height: 28px !important;
   }
 
   .message-bubble {
-    padding: 10px 12px;
-  }
-
-  .bubble-in {
-    border-radius: 16px 16px 16px 4px;
-  }
-
-  .bubble-out {
-    border-radius: 16px 16px 4px 16px;
-  }
-
-  .sender-name {
-    font-size: 11px;
+    padding: 7px 10px;
   }
 
   .message-text {
     font-size: 14px;
-    line-height: 1.4;
+    line-height: 1.45;
   }
 
   .message-image {
@@ -1005,43 +1047,13 @@ const handleAvatarClick = (senderId) => {
   }
 
   .message-file {
-    min-width: 180px;
-    gap: 10px;
-  }
-
-  .file-icon-wrapper {
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-  }
-
-  .file-name {
-    font-size: 13px;
-  }
-
-  .file-meta {
-    font-size: 11px;
-  }
-
-  .file-download-btn {
-    width: 32px;
-    height: 32px;
-  }
-
-  .message-time {
-    font-size: 10px;
-  }
-
-  .check-icon {
-    width: 14px;
-    height: 14px;
+    min-width: 170px;
   }
 }
 
-/* Small phones */
 @media (max-width: 375px) {
   .message-wrapper {
-    max-width: 88%;
+    max-width: 90%;
   }
 
   .message-list {
@@ -1051,9 +1063,7 @@ const handleAvatarClick = (senderId) => {
 </style>
 
 <style>
-/* Emoji picker popover (teleported to body, so it can't be scoped).
-   The popover acts as a transparent wrapper; vue3-emoji-picker provides its own
-   themed container. */
+/* Emoji picker popover is teleported to body, so it can't be scoped. */
 .emoji-popper.el-popper {
   padding: 0 !important;
   border: none !important;
@@ -1064,11 +1074,7 @@ const handleAvatarClick = (senderId) => {
 
 .emoji-popper .v3-emoji-picker {
   width: 100% !important;
-  border-radius: 14px !important;
-  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.28) !important;
-}
-
-[data-theme="dark"] .emoji-popper .v3-emoji-picker {
-  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 16px 32px -12px rgba(0, 0, 0, 0.7) !important;
 }
 </style>

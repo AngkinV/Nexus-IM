@@ -31,7 +31,7 @@
             :on-change="handleAvatarChange"
           >
             <div class="avatar-box">
-              <el-avatar :size="100" :src="form.avatar || defaultAvatar" class="modal-avatar" />
+              <div class="modal-avatar"><img v-if="form.avatar" class="modal-avatar-img" :src="form.avatar" alt="" /><span v-else class="modal-avatar-fallback">{{ (form.nickname || form.username || "?").charAt(0) }}</span></div>
               <div class="avatar-edit-overlay">
                 <el-icon><Camera /></el-icon>
               </div>
@@ -97,21 +97,21 @@
             <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showOnlineStatus') }}</span>
             </div>
-            <el-switch v-model="form.showOnlineStatus" active-color="#4f8ef0" />
+            <el-switch v-model="form.showOnlineStatus" active-color="#ffffff" />
           </div>
 
           <div class="toggle-item">
              <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showPhone') }}</span>
             </div>
-            <el-switch v-model="form.showPhone" active-color="#4f8ef0" />
+            <el-switch v-model="form.showPhone" active-color="#ffffff" />
           </div>
 
            <div class="toggle-item">
              <div class="toggle-info">
               <span class="toggle-title">{{ $t('profile.showEmail') }}</span>
             </div>
-            <el-switch v-model="form.showEmail" active-color="#4f8ef0" />
+            <el-switch v-model="form.showEmail" active-color="#ffffff" />
           </div>
         </div>
 
@@ -196,14 +196,14 @@ const bgFileInput = ref(null)
 
 // Presets
 const presetGradients = [
-  { style: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' },
-  { style: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)' },
-  { style: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' },
-  { style: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)' },
-  { style: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)' },
-  { style: 'linear-gradient(135deg, #30cfd0 0%, #330867 100%)' },
-  { style: 'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)' },
-  { style: 'linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%)' },
+  { style: 'linear-gradient(135deg, #2a2a2d 0%, #131316 100%)' },
+  { style: 'linear-gradient(135deg, #3a3a3e 0%, #1b1b1e 100%)' },
+  { style: 'linear-gradient(135deg, #444748 0%, #222225 100%)' },
+  { style: 'linear-gradient(135deg, #1b1b1e 0%, #353438 100%)' },
+  { style: 'linear-gradient(135deg, #353438 0%, #0e0e11 100%)' },
+  { style: 'linear-gradient(135deg, #6f7274 0%, #131316 100%)' },
+  { style: 'linear-gradient(135deg, #8e9192 0%, #222225 100%)' },
+  { style: 'linear-gradient(135deg, #c4c7c8 0%, #2a2a2d 100%)' },
 ]
 
 const form = ref({
@@ -237,7 +237,7 @@ const heroStyle = computed(() => {
   } else if (bg) {
     return { background: bg }
   }
-  return { background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }
+  return { background: 'linear-gradient(135deg, #2a2a2d 0%, #131316 100%)' }
 })
 
 watch(() => props.visible, (val) => {
@@ -254,7 +254,7 @@ watch(() => props.visible, (val) => {
       showLastSeen: u.showLastSeen ?? true,
       showPhone: u.showPhone ?? false,
       showEmail: u.showEmail ?? false,
-      profileBackground: u.profileBackground || 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+      profileBackground: u.profileBackground || 'linear-gradient(135deg, #2a2a2d 0%, #131316 100%)'
     }
   }
 })
@@ -389,81 +389,104 @@ const saveProfile = async () => {
 
 /* HERO */
 .modal-hero {
-  height: 120px;
+  height: 112px;
   position: relative;
   background-size: cover;
   background-position: center;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.25);
 }
 
 .hero-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.1), rgba(0,0,0,0.4));
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.5));
 }
 
 .edit-cover-btn {
   position: absolute;
   top: 10px;
   right: 10px;
-  width: 32px;
-  height: 32px;
-  background: rgba(0,0,0,0.4);
-  backdrop-filter: blur(4px);
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.3);
+  width: 28px;
+  height: 28px;
+  background: rgba(14, 14, 17, 0.7);
+  border-radius: 4px;
+  border: 1px solid rgba(142, 145, 146, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: #e4e1e6;
   cursor: pointer;
   z-index: 10;
-  transition: all 0.2s;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
+
 .edit-cover-btn:hover {
-  background: rgba(0,0,0,0.6);
-  transform: scale(1.05);
+  background: rgba(14, 14, 17, 0.9);
+  border-color: rgba(196, 199, 200, 0.6);
+}
+
+.edit-cover-btn :deep(.el-icon) {
+  font-size: 14px;
 }
 
 .modal-avatar-wrapper {
   position: absolute;
-  bottom: -40px;
+  bottom: -38px;
   left: 20px;
   z-index: 20;
 }
 
 .avatar-box {
-  width: 100px;
-  height: 100px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   padding: 3px;
-  background: white;
+  background: #131316;
   position: relative;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.35);
   cursor: pointer;
   overflow: hidden;
-}
-[data-theme='dark'] .avatar-box {
-  background: #1f2937;
 }
 
 .modal-avatar {
   width: 100%;
   height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+}
+
+.modal-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(100%) contrast(1.1);
+}
+
+.modal-avatar-fallback {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 26px;
+  color: #c4c7c8;
+  text-transform: uppercase;
 }
 
 .avatar-edit-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(6, 6, 8, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: #ffffff;
   opacity: 0;
   border-radius: 50%;
-  transition: opacity 0.2s;
-  font-size: 24px;
+  transition: opacity 0.15s ease;
+  font-size: 20px;
 }
+
 .avatar-box:hover .avatar-edit-overlay {
   opacity: 1;
 }
@@ -471,167 +494,224 @@ const saveProfile = async () => {
 .remove-avatar-btn {
   position: absolute;
   top: 0;
-  right: -5px;
-  background: #ef4444;
-  color: white;
-  width: 24px;
-  height: 24px;
+  right: -4px;
+  background: #1b1b1e;
+  color: #f2b8b5;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
-  border: 2px solid white;
+  border: 1px solid rgba(68, 71, 72, 0.5);
+}
+
+.remove-avatar-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
 /* FORM */
 .nexus-form {
-  padding: 50px 24px 20px;
+  padding: 48px 20px 18px;
 }
 
 .form-row {
   display: flex;
-  gap: 16px;
+  gap: 12px;
 }
+
 .half-width {
   flex: 1;
 }
 
 .section-label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   text-transform: uppercase;
-  color: #6b7280;
-  margin: 20px 0 12px;
-  letter-spacing: 0.5px;
+  color: #6f7274;
+  margin: 18px 0 10px;
+  letter-spacing: 0.06em;
 }
 
-/* Custom Input Styling Hacks specific to this form to make it "clean" */
-.nexus-form :deep(.el-input__wrapper) {
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+.nexus-form :deep(.el-form-item__label) {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #8e9192;
+  letter-spacing: 0.04em;
+  padding-bottom: 4px;
+}
+
+.nexus-form :deep(.el-input__wrapper),
+.nexus-form :deep(.el-textarea__inner) {
+  background: #16161a;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
   border-radius: 8px;
   padding-left: 12px;
 }
+
+.nexus-form :deep(.el-input__wrapper.is-focus),
+.nexus-form :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
+}
+
+.nexus-form :deep(.el-input.is-disabled .el-input__wrapper) {
+  background: #1b1b1e;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.2) inset;
+}
+
 .nexus-form :deep(.el-input__prefix-inner) {
-  color: #9ca3af;
+  color: #6f7274;
+}
+
+.nexus-form :deep(.el-input__count) {
+  background: transparent;
+  color: #6f7274;
+  font-size: 10px;
+}
+
+.input-icon {
+  display: none;
 }
 
 /* Privacy Toggles */
 .privacy-block {
-  background: #f9fafb;
-  border-radius: 12px;
-  padding: 16px;
-  border: 1px solid #f3f4f6;
-}
-[data-theme='dark'] .privacy-block {
-  background: #111827; /* Darker than dialog bg */
-  border-color: #374151;
+  background: #16161a;
+  border-radius: 8px;
+  padding: 4px 14px;
+  border: 1px solid rgba(68, 71, 72, 0.25);
 }
 
 .toggle-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 10px 0;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.2);
 }
-[data-theme='dark'] .toggle-item {
-  border-color: #374151;
-}
+
 .toggle-item:last-child {
   border-bottom: none;
 }
 
 .toggle-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #374151;
-}
-[data-theme='dark'] .toggle-title {
-  color: #d1d5db;
+  font-size: 13px;
+  color: #c4c7c8;
 }
 
 /* Dialog Footer */
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
 }
+
+.cancel-btn {
+  background: transparent;
+  border: 1px solid rgba(68, 71, 72, 0.5);
+  color: #c4c7c8;
+}
+
+.cancel-btn:hover {
+  background: #2a2a2d;
+  border-color: rgba(142, 145, 146, 0.6);
+  color: #ffffff;
+}
+
 .save-btn {
-  background: #3390ec;
+  background: #ffffff;
   border: none;
-  font-weight: 600;
-  padding: 8px 24px;
+  color: #2f3131;
+  font-weight: 500;
+  padding: 8px 22px;
 }
+
 .save-btn:hover {
-  background: #287fd6;
+  background: #e2e2e2;
+  color: #2f3131;
 }
 
 /* BG Options Sub-Dialog */
 .bg-options-content {
-  padding: 20px;
+  padding: 18px;
 }
 
 .bg-upload-area {
-  border: 2px dashed #e5e7eb;
-  border-radius: 12px;
-  padding: 20px;
+  border: 1px dashed rgba(68, 71, 72, 0.6);
+  border-radius: 8px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: #6b7280;
+  gap: 6px;
+  color: #8e9192;
+  font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
-  background: #f9fafb;
+  transition: border-color 0.15s ease, color 0.15s ease;
+  background: #16161a;
 }
+
 .bg-upload-area:hover {
-  border-color: #3390ec;
-  color: #3390ec;
-  background: #eff6ff;
+  border-color: rgba(196, 199, 200, 0.7);
+  color: #e4e1e6;
 }
+
 .upload-icon {
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .gradient-section {
-  margin-top: 20px;
+  margin-top: 18px;
 }
+
 .sub-label {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #374151;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+  color: #6f7274;
 }
 
 .gradient-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 10px;
 }
 
 .gradient-swatch {
   aspect-ratio: 1;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   position: relative;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-}
-.gradient-swatch:hover {
-  transform: scale(1.05);
-}
-.gradient-swatch.active {
-  box-shadow: 0 0 0 2px white, 0 0 0 4px #3390ec;
+  color: #ffffff;
+  transition: transform 0.15s ease;
 }
 
-/* Scrollbar */
-.custom-scrollbar::-webkit-scrollbar { width: 4px; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+.gradient-swatch:hover {
+  transform: scale(1.04);
+}
+
+.gradient-swatch.active {
+  box-shadow: 0 0 0 1px #131316, 0 0 0 2px #ffffff;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(142, 145, 146, 0.3);
+  border-radius: 2px;
+}
 </style>

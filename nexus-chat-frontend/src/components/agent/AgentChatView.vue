@@ -1,36 +1,51 @@
 <template>
-  <div class="agent-chat-view">
-    <!-- Header -->
-    <header class="agent-header">
-      <div class="agent-header-left">
-        <button v-if="isMobile" class="mobile-back-btn" @click="handleMobileBack">
-          <el-icon :size="22"><ArrowLeft /></el-icon>
+  <!-- Prism AI canvas: header with model switcher, holographic stage,
+       message stream, floating composer dock. -->
+  <section class="agent-chat-view flex-1 flex flex-col h-full min-h-0 bg-surface relative overflow-hidden">
+    <div
+      class="absolute inset-0 pointer-events-none opacity-[0.03] bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:24px_24px]"
+    ></div>
+
+    <header
+      class="h-14 px-space-md md:px-space-lg flex items-center justify-between gap-space-md bg-surface-container-lowest/80 backdrop-blur-md border-b border-outline-variant/30 z-20 shrink-0"
+    >
+      <div class="flex items-center gap-space-sm md:gap-space-md min-w-0">
+        <button
+          v-if="isMobile"
+          class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors shrink-0"
+          type="button"
+          :aria-label="$t('common.back')"
+          @click="handleMobileBack"
+        >
+          <span class="material-symbols-outlined text-[18px]">arrow_back</span>
         </button>
-        <div class="agent-avatar">
-          <span class="material-icons-round">auto_awesome</span>
+        <div
+          class="w-8 h-8 rounded bg-surface-container-high border border-outline-variant/40 flex items-center justify-center text-primary shrink-0"
+        >
+          <span class="material-symbols-outlined text-[18px]">auto_awesome</span>
         </div>
-        <div class="agent-meta">
-          <div class="agent-name-row">
-            <span class="agent-name">{{ $t('agent.title') }}</span>
-            <span class="agent-online">{{ $t('agent.online') }}</span>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <h2 class="font-headline-md text-headline-md text-primary font-medium tracking-tight truncate">
+              {{ agentStore.activeSession?.title || $t('agent.title') }}
+            </h2>
+            <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0"></span>
+            <span class="font-code text-label-sm text-on-surface-variant/70 shrink-0">{{ $t('agent.online') }}</span>
           </div>
-          <span class="agent-subtitle">{{ $t('agent.subtitle') }}</span>
+          <div class="font-code text-[11px] text-on-surface-variant/60 truncate">{{ $t('agent.subtitle') }}</div>
         </div>
       </div>
 
-      <div class="agent-header-actions">
-        <!-- History sessions dropdown -->
-        <AgentSessionDropdown />
-
-        <!-- Knowledge base selector (Module B) -->
-        <KnowledgeBaseSelector @manage="kbDialogVisible = true" />
-
-        <!-- Model switcher -->
+      <div class="flex items-center gap-space-sm shrink-0">
         <el-dropdown trigger="click" @command="onSelectProvider">
-          <button class="model-switcher" :title="$t('agent.providers.title')">
-            <span class="material-icons-round">memory</span>
-            <span class="model-text">{{ activeProviderLabel }}</span>
-            <el-icon><ArrowDown /></el-icon>
+          <button
+            class="flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/40 text-primary font-label-md text-label-md hover:bg-surface-container hover:border-outline-variant transition-colors"
+            type="button"
+            :title="$t('agent.providers.title')"
+          >
+            <span class="material-symbols-outlined text-[16px] text-primary">memory</span>
+            <span class="hidden xl:inline max-w-[220px] truncate">{{ activeProviderLabel }}</span>
+            <span class="material-symbols-outlined text-[16px] text-on-surface-variant">expand_more</span>
           </button>
           <template #dropdown>
             <el-dropdown-menu>
@@ -40,192 +55,322 @@
                 :command="p.id"
                 :disabled="!p.hasApiKey"
               >
-                <div class="provider-row">
-                  <strong>{{ p.displayName || p.provider }}</strong>
-                  <span class="provider-model">{{ p.defaultModel || '—' }}</span>
-                  <el-tag v-if="agentStore.activeProviderId === p.id" type="success" size="small" effect="light">
-                    {{ $t('agent.providers.using') }}
-                  </el-tag>
+                <div class="flex items-center gap-2 min-w-[220px]">
+                  <strong class="font-medium">{{ p.displayName || p.provider }}</strong>
+                  <span class="ml-auto font-code text-[12px] text-on-surface-variant">{{ p.defaultModel || '—' }}</span>
+                  <span
+                    v-if="agentStore.activeProviderId === p.id"
+                    class="font-code text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high border border-outline-variant/30 text-primary"
+                  >{{ $t('agent.providers.using') }}</span>
                 </div>
               </el-dropdown-item>
               <el-dropdown-item v-if="!providersStore.providers.length" disabled>
                 {{ $t('agent.providers.empty') }}
               </el-dropdown-item>
               <el-dropdown-item divided command="__settings__">
-                <el-icon><Setting /></el-icon>
+                <span class="material-symbols-outlined text-[16px] mr-1.5">tune</span>
                 <span>{{ $t('agent.providers.manage') }}</span>
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
 
-        <el-tooltip :content="$t('agent.knowledge.manage')" placement="bottom">
-          <button class="action-btn" @click="kbDialogVisible = true">
-            <el-icon :size="20"><FolderOpened /></el-icon>
-          </button>
-        </el-tooltip>
-
-        <el-tooltip :content="$t('agent.clearMemory')" placement="bottom">
-          <button class="action-btn" @click="onClear" :disabled="agentStore.streaming">
-            <el-icon :size="20"><Delete /></el-icon>
-          </button>
-        </el-tooltip>
+        <button
+          class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          type="button"
+          :title="$t('agent.clearMemory')"
+          :disabled="agentStore.streaming"
+          @click="onClear"
+        >
+          <span class="material-symbols-outlined text-[18px]">restart_alt</span>
+        </button>
+        <button
+          class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors"
+          type="button"
+          :title="$t('agent.knowledge.manage')"
+          @click="kbDialogVisible = true"
+        >
+          <span class="material-symbols-outlined text-[18px]">folder_open</span>
+        </button>
+        <button
+          class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors"
+          type="button"
+          :title="$t('agent.providers.manage')"
+          @click="providerDialogVisible = true"
+        >
+          <span class="material-symbols-outlined text-[18px]">tune</span>
+        </button>
       </div>
     </header>
 
     <AgentProviderSettings v-model:visible="providerDialogVisible" />
     <KnowledgeBaseManager v-model:visible="kbDialogVisible" />
 
-    <!-- Message stream -->
-    <div ref="scrollEl" class="agent-messages">
-      <div v-if="!agentStore.hasMessages" class="agent-empty">
-        <div class="hero-top">
-          <div class="hero-copy">
-            <h2 class="hero-title">
-              {{ $t('agent.welcomeTitlePre') }}<span class="hero-brand">{{ $t('agent.welcomeBrand') }}</span>
-            </h2>
-            <p class="hero-sub">{{ $t('agent.welcomeBody') }}</p>
+    <!-- Holographic stage -->
+    <div class="agent-stage px-space-md md:px-space-xl pt-3 pb-1 shrink-0 z-20 flex justify-center w-full">
+      <div
+        class="w-full max-w-xl relative rounded-xl border border-outline-variant/40 bg-surface-container-lowest/80 backdrop-blur-md shadow-2xl overflow-hidden"
+      >
+        <div
+          class="absolute inset-0 pointer-events-none opacity-[0.06] bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:16px_16px]"
+        ></div>
+        <div
+          class="absolute -top-12 left-1/2 -translate-x-1/2 w-72 h-16 bg-white/10 blur-2xl pointer-events-none rounded-full"
+        ></div>
+
+        <div
+          class="relative z-10 px-3.5 py-2 flex items-center justify-between gap-2 border-b border-outline-variant/20 bg-surface-container-low/40"
+        >
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-2 h-2 rounded-full bg-primary animate-ping opacity-75 shrink-0"></span>
+            <span class="font-headline-md text-[13px] text-primary font-medium tracking-tight truncate">{{ $t('agent.title') }}</span>
+            <span
+              class="hidden sm:inline shrink-0 font-code text-[10px] text-on-surface-variant/70 border border-outline-variant/30 px-1.5 rounded bg-surface-container-lowest"
+            >HOLOGRAPHIC // 3D</span>
           </div>
-          <div class="hero-art" aria-hidden="true">
-            <svg class="art-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="aiOrbGrad" cx="0.36" cy="0.30" r="0.78">
-                  <stop offset="0" stop-color="#D9ECFD" />
-                  <stop offset="0.45" stop-color="#7DB8F5" />
-                  <stop offset="1" stop-color="#3B78DD" />
-                </radialGradient>
-                <radialGradient id="aiHaloGrad" cx="0.5" cy="0.5" r="0.5">
-                  <stop stop-color="#4F8EF0" stop-opacity="0.22" />
-                  <stop offset="1" stop-color="#4F8EF0" stop-opacity="0" />
-                </radialGradient>
-              </defs>
-
-              <circle cx="120" cy="102" r="98" fill="url(#aiHaloGrad)" />
-              <ellipse cx="120" cy="166" rx="44" ry="9" fill="#3B78DD" fill-opacity="0.14" />
-
-              <g transform="translate(48,58)"><g class="art-spark art-spark--1">
-                <path d="M0 -7C1.2 -1.5 1.5 -1.2 7 0C1.5 1.2 1.2 1.5 0 7C-1.2 1.5 -1.5 1.2 -7 0C-1.5 -1.2 -1.2 -1.5 0 -7Z" fill="#7DB8F5" />
-              </g></g>
-              <g transform="translate(198,76)"><g class="art-spark art-spark--2">
-                <path d="M0 -6C1 -1.3 1.3 -1 6 0C1.3 1 1 1.3 0 6C-1 1.3 -1.3 1 -6 0C-1.3 -1 -1 -1.3 0 -6Z" fill="#A9D2FA" />
-              </g></g>
-              <g transform="translate(64,150)"><g class="art-spark art-spark--3">
-                <circle r="4" fill="#8FC0F8" />
-              </g></g>
-
-              <g class="art-orb">
-                <circle cx="120" cy="104" r="52" fill="url(#aiOrbGrad)" />
-                <ellipse cx="102" cy="86" rx="16" ry="10.5" fill="#FFFFFF" fill-opacity="0.45" transform="rotate(-28 102 86)" />
-                <circle cx="108" cy="82" r="3.6" fill="#FFFFFF" fill-opacity="0.7" />
-              </g>
-            </svg>
+          <div class="flex items-center gap-2 font-code text-[11px] text-on-surface-variant shrink-0">
+            <span class="inline-flex items-center gap-1 text-primary">
+              <span class="material-symbols-outlined text-[13px]">air</span>
+              <span>{{ agentStore.streaming ? $t('agent.thinking') : $t('agent.stage.idle') }}</span>
+            </span>
+            <span class="text-outline-variant/50">|</span>
+            <span>{{ $t('agent.history.messageCount', { n: agentStore.messages.length }) }}</span>
           </div>
         </div>
 
-        <div class="hero-cards">
+        <div ref="stageHost" class="relative w-full h-[180px] overflow-hidden"></div>
+        <div
+          class="absolute inset-x-0 bottom-0 h-10 pointer-events-none bg-gradient-to-t from-surface-container-lowest to-transparent opacity-80"
+        ></div>
+
+        <div
+          class="relative z-10 px-3.5 py-1.5 flex items-center justify-between gap-2 border-t border-outline-variant/20 bg-surface-container-lowest/60 text-on-surface-variant font-code text-[11px]"
+        >
+          <span
+            class="px-2 py-0.5 rounded bg-surface-container border border-outline-variant/30 text-primary truncate"
+          >{{ activeProviderLabel }}</span>
+          <div class="hidden sm:flex items-center gap-1.5 text-on-surface-variant/60 text-[10px] shrink-0">
+            <span class="material-symbols-outlined text-[13px] text-primary">touch_app</span>
+            <span>{{ $t('agent.stage.hint') }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Message stream -->
+    <div
+      ref="scrollEl"
+      class="agent-messages flex-1 min-h-0 overflow-y-auto px-space-md md:px-space-xl py-space-lg space-y-space-lg relative z-10"
+    >
+      <div v-if="agentStore.hasMessages" class="flex items-center justify-center gap-3 my-2">
+        <div class="h-px w-16 bg-outline-variant/30"></div>
+        <span class="font-code text-label-sm text-on-surface-variant/60 tracking-widest uppercase truncate">
+          {{ $t('agent.sessionAnchor', { title: agentStore.activeSession?.title || $t('agent.history.untitled') }) }}
+        </span>
+        <div class="h-px w-16 bg-outline-variant/30"></div>
+      </div>
+
+      <div v-else class="max-w-3xl flex flex-col gap-space-sm">
+        <h2 class="font-headline-lg-mobile text-headline-lg-mobile text-primary">{{ $t('agent.welcomeTitle') }}</h2>
+        <p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">{{ $t('agent.welcomeBody') }}</p>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="font-code text-[11px] text-on-surface-variant/70 px-1 flex items-center gap-1">
+            <span class="material-symbols-outlined text-[13px] text-primary">lightbulb</span>
+            {{ $t('agent.suggestions') }}
+          </span>
           <button
-            v-for="(card, idx) in welcomeCards"
+            v-for="card in welcomeCards"
             :key="card.key"
-            class="hero-card"
-            :style="{ '--i': idx }"
+            class="px-3 py-1 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-md hover:bg-surface-container hover:text-primary transition-colors flex items-center gap-1"
+            type="button"
+            :title="card.desc"
             @click="prefill(card.prompt)"
           >
-            <span class="hero-card-icon" :class="`ic-${card.key}`">
-              <span class="material-icons-round">{{ card.icon }}</span>
-            </span>
-            <span class="hero-card-text">
-              <span class="hero-card-title">{{ card.title }}</span>
-              <span class="hero-card-desc">{{ card.desc }}</span>
-            </span>
+            <span>{{ card.title }}</span>
+            <span class="material-symbols-outlined text-[13px]">arrow_forward</span>
           </button>
         </div>
       </div>
 
-      <div
-        v-for="msg in agentStore.messages"
-        :key="msg.id"
-        class="agent-msg"
-        :class="msg.role === 'user' ? 'msg-user' : 'msg-assistant'"
-      >
-        <div class="msg-bubble">
-          <!-- Tool call chips (assistant only) -->
-          <div v-if="msg.toolCalls && msg.toolCalls.length" class="tool-calls">
-            <span
-              v-for="(tc, i) in msg.toolCalls"
-              :key="i"
-              class="tool-chip"
-              :class="`tool-${(tc.status || 'running').toLowerCase()}`"
-            >
-              <span class="material-icons-round">build</span>
-              <span class="tool-name">{{ tc.toolName }}</span>
-              <span v-if="tc.status === 'running'" class="tool-spinner" />
-              <span v-else-if="tc.latencyMs != null" class="tool-latency">{{ tc.latencyMs }}ms</span>
-            </span>
+      <template v-for="msg in agentStore.messages" :key="msg.id">
+        <!-- User prompt -->
+        <div v-if="msg.role === 'user'" class="flex justify-end items-start gap-3 pl-8 md:pl-16">
+          <div class="flex flex-col items-end max-w-2xl min-w-0">
+            <div class="flex items-center gap-2 mb-1 px-1">
+              <span class="font-label-sm text-label-sm text-on-surface-variant">{{ $t('agent.you') }}</span>
+              <span v-if="msg.createdAt" class="font-code text-[11px] text-on-surface-variant/60">{{ dayjs(msg.createdAt).format('HH:mm') }}</span>
+            </div>
+            <div class="p-space-md rounded-xl bg-surface-container-high border border-outline-variant/40 text-primary max-w-full">
+              <p class="font-body-lg text-body-lg text-primary leading-relaxed whitespace-pre-wrap break-words">{{ msg.content }}</p>
+            </div>
           </div>
+          <div
+            class="w-8 h-8 rounded-full bg-surface-container-high border border-outline-variant/40 flex items-center justify-center shrink-0 mt-5 overflow-hidden"
+          >
+            <img
+              v-if="userStore.currentUser?.avatar"
+              class="w-full h-full object-cover grayscale"
+              :src="userStore.currentUser.avatar"
+              alt=""
+            />
+            <span v-else class="material-symbols-outlined text-primary text-[18px]">person</span>
+          </div>
+        </div>
 
-          <!-- Content -->
-          <div class="msg-text" v-text="msg.content"></div>
+        <!-- AI response -->
+        <div v-else class="flex justify-start items-start gap-3 pr-4 md:pr-12">
+          <div
+            class="w-8 h-8 rounded bg-surface-container-high border border-outline-variant/40 flex items-center justify-center shrink-0 text-primary mt-1"
+          >
+            <span class="material-symbols-outlined text-[18px]">auto_awesome</span>
+          </div>
+          <div class="flex-1 max-w-3xl min-w-0 flex flex-col">
+            <div class="flex items-center gap-2 mb-1.5 px-1">
+              <span class="font-headline-md text-headline-md text-primary font-medium">{{ $t('agent.title') }}</span>
+              <span
+                v-if="msg.status === 'streaming'"
+                class="font-code text-[10px] px-1.5 py-0.5 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface-variant"
+              >{{ $t('agent.thinking') }}</span>
+              <span v-if="msg.createdAt" class="font-code text-[10px] text-on-surface-variant/50 ml-auto">{{ dayjs(msg.createdAt).format('HH:mm:ss') }}</span>
+            </div>
+            <div
+              class="rounded-xl bg-surface-container-lowest/90 border border-outline-variant/40 p-space-md md:p-space-lg text-on-surface space-y-space-md shadow-lg"
+            >
+              <div
+                v-if="msg.toolCalls && msg.toolCalls.length"
+                class="p-space-md rounded-lg bg-surface-container-low/70 border border-outline-variant/30 space-y-2"
+              >
+                <div class="flex items-center gap-2 font-label-md text-label-md text-primary font-medium">
+                  <span class="material-symbols-outlined text-[18px]">build</span>
+                  <span>{{ $t('agent.toolCall') }}</span>
+                </div>
+                <div class="flex flex-wrap gap-1.5 font-code text-[11px]">
+                  <span
+                    v-for="(tc, i) in msg.toolCalls"
+                    :key="i"
+                    class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high border border-outline-variant/30"
+                    :class="['FAILED', 'TIMEOUT'].includes(tc.status) ? 'text-error' : 'text-primary'"
+                  >
+                    <span>{{ tc.toolName }}</span>
+                    <span
+                      v-if="tc.status === 'running'"
+                      class="material-symbols-outlined text-[13px] animate-spin"
+                    >progress_activity</span>
+                    <span v-else-if="tc.latencyMs != null" class="text-on-surface-variant">{{ tc.latencyMs }}ms</span>
+                  </span>
+                </div>
+              </div>
 
-          <!-- Streaming caret -->
-          <span v-if="msg.role === 'assistant' && msg.status === 'streaming'" class="caret" />
+              <div
+                v-if="msg.status === 'streaming' && !msg.content"
+                class="flex items-center gap-2 font-code text-[12px]"
+              >
+                <span class="material-symbols-outlined text-[16px] animate-spin text-primary">progress_activity</span>
+                <span class="text-on-surface-variant">{{ $t('agent.thinking') }}</span>
+              </div>
+              <p
+                v-else
+                class="font-body-lg text-body-lg leading-relaxed whitespace-pre-wrap break-words"
+                :class="msg.status === 'error' ? 'text-error' : 'text-on-surface'"
+              >{{ msg.content }}<span v-if="msg.status === 'streaming'" class="caret"></span></p>
 
-          <!-- Footer (errors / usage on assistant msgs) -->
-          <div v-if="msg.role === 'assistant' && msg.status === 'error'" class="msg-error">
-            {{ msg.error?.message || $t('agent.error') }}
+              <div
+                v-if="msg.status !== 'streaming'"
+                class="pt-3 border-t border-outline-variant/20 flex flex-wrap items-center justify-between gap-2"
+              >
+                <button
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-md hover:bg-surface-container hover:text-primary transition-colors"
+                  type="button"
+                  @click="onCopy(msg)"
+                >
+                  <span class="material-symbols-outlined text-[15px]">content_copy</span>
+                  <span>{{ $t('agent.copy') }}</span>
+                </button>
+                <span v-if="msg.usage?.totalTokens" class="font-code text-[10px] text-on-surface-variant/60">
+                  {{ $t('agent.tokens', { n: msg.usage.totalTokens }) }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Composer dock -->
+    <footer class="p-space-md md:p-space-lg pt-0 md:pt-0 relative z-20 shrink-0">
+      <div
+        class="relative w-full rounded-xl bg-surface-container-lowest/90 backdrop-blur-md border border-outline-variant/40 p-2.5 shadow-xl transition-all focus-within:border-outline"
+      >
+        <div
+          class="px-1.5 py-1 flex items-center justify-between gap-2 text-on-surface-variant border-b border-outline-variant/20 mb-1.5"
+        >
+          <div class="flex items-center gap-1.5 min-w-0">
+            <div
+              class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container border border-outline-variant/30 text-primary font-code text-[11px] shrink-0"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+              <span>{{ $t('agent.contextCount', { n: agentStore.messages.length }) }}</span>
+            </div>
+            <KnowledgeBaseSelector @manage="kbDialogVisible = true" />
+          </div>
+        </div>
+
+        <div class="flex items-end gap-2">
+          <div class="flex-1 min-w-0">
+            <textarea
+              ref="inputEl"
+              v-model="draft"
+              class="agent-input block w-full bg-transparent text-primary font-body-lg text-body-lg placeholder:text-on-surface-variant/40 focus:outline-none resize-none py-1 px-1.5 max-h-32 leading-relaxed"
+              :placeholder="$t('agent.placeholder')"
+              :disabled="agentStore.streaming"
+              rows="1"
+              @keydown.enter="onEnter"
+            ></textarea>
+          </div>
+          <div class="flex items-center gap-1.5 pb-0.5">
+            <button
+              v-if="!agentStore.streaming"
+              class="group px-4 py-2 rounded-lg bg-primary text-on-primary hover:bg-primary-container active:scale-95 font-label-md text-label-md font-medium flex items-center gap-1.5 transition-all shadow disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100"
+              type="button"
+              :disabled="!draft.trim()"
+              @click="onSend"
+            >
+              <span>{{ $t('agent.send') }}</span>
+              <span class="material-symbols-outlined text-[16px] transition-transform group-hover:translate-x-0.5">send</span>
+            </button>
+            <button
+              v-else
+              class="px-4 py-2 rounded-lg bg-[#b3261e] text-primary active:scale-95 font-label-md text-label-md font-medium flex items-center gap-1.5 transition-all shadow"
+              type="button"
+              @click="agentStore.cancelStream()"
+            >
+              <span>{{ $t('agent.stop') }}</span>
+              <span class="material-symbols-outlined text-[16px]">stop</span>
+            </button>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Input -->
-    <div class="agent-input-area">
-      <div class="agent-input-wrapper">
-        <el-input
-          v-model="draft"
-          type="textarea"
-          :autosize="{ minRows: 1, maxRows: 4 }"
-          :placeholder="$t('agent.placeholder')"
-          resize="none"
-          class="agent-textarea"
-          :disabled="agentStore.streaming"
-          @keydown.enter.prevent="onEnter"
-        />
-        <button
-          v-if="!agentStore.streaming"
-          class="agent-send"
-          :disabled="!draft.trim()"
-          @click="onSend"
-          :title="$t('agent.send')"
-        >
-          <el-icon :size="20"><Promotion /></el-icon>
-        </button>
-        <button
-          v-else
-          class="agent-send agent-stop"
-          @click="agentStore.cancelStream()"
-          :title="$t('agent.stop')"
-        >
-          <span class="material-icons-round">stop</span>
-        </button>
-      </div>
-      <div class="agent-hint">
+      <div class="w-full flex items-center justify-center gap-1 mt-2 text-center font-code text-[11px] text-on-surface-variant/60">
+        <span class="material-symbols-outlined text-[13px]">lock</span>
         <span>{{ $t('agent.inputHint') }}</span>
       </div>
-    </div>
-  </div>
+    </footer>
+  </section>
 </template>
 
 <script setup>
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { ArrowLeft, ArrowDown, Promotion, Delete, Setting, FolderOpened } from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
+import * as THREE from 'three'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent'
 import { useAgentProvidersStore } from '@/stores/agentProviders'
 import { useChatStore } from '@/stores/chat'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useUserStore } from '@/stores/user'
 import AgentProviderSettings from '@/components/agent/AgentProviderSettings.vue'
-import AgentSessionDropdown from '@/components/agent/AgentSessionDropdown.vue'
 import KnowledgeBaseManager from '@/components/agent/KnowledgeBaseManager.vue'
 import KnowledgeBaseSelector from '@/components/agent/KnowledgeBaseSelector.vue'
 
@@ -234,31 +379,32 @@ const agentStore = useAgentStore()
 const providersStore = useAgentProvidersStore()
 const chatStore = useChatStore()
 const knowledgeStore = useKnowledgeStore()
+const userStore = useUserStore()
 const isMobile = inject('isMobile', { value: false })
 
 const draft = ref('')
 const scrollEl = ref(null)
+const inputEl = ref(null)
+const stageHost = ref(null)
+let stageTeardown = null
 const providerDialogVisible = ref(false)
 const kbDialogVisible = ref(false)
 
 const welcomeCards = computed(() => [
   {
     key: 'summary',
-    icon: 'summarize',
     title: t('agent.cards.summary.title'),
     desc: t('agent.cards.summary.desc'),
     prompt: t('agent.examples.summarize')
   },
   {
     key: 'report',
-    icon: 'event_note',
     title: t('agent.cards.report.title'),
     desc: t('agent.cards.report.desc'),
     prompt: t('agent.examples.weeklyReport')
   },
   {
     key: 'reply',
-    icon: 'quickreply',
     title: t('agent.cards.reply.title'),
     desc: t('agent.cards.reply.desc'),
     prompt: t('agent.examples.quickReply')
@@ -289,11 +435,137 @@ onMounted(async () => {
   // Track whether the user is currently parked near the bottom. This drives
   // the sticky-bottom auto-scroll below.
   scrollEl.value?.addEventListener('scroll', onUserScroll, { passive: true })
+  mountStage()
 })
 
 onUnmounted(() => {
   scrollEl.value?.removeEventListener('scroll', onUserScroll)
+  stageTeardown?.()
 })
+
+// Holographic stage: a wireframe bust that breathes and follows the cursor.
+function mountStage() {
+  const container = stageHost.value
+  const width = container.clientWidth || 360
+  const height = container.clientHeight || 180
+
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100)
+  camera.position.set(0, 0, 5.2)
+
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
+  renderer.setSize(width, height)
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  container.appendChild(renderer.domElement)
+
+  const figure = new THREE.Group()
+  scene.add(figure)
+
+  const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65 })
+  const dimLineMaterial = new THREE.LineBasicMaterial({ color: 0x8e9192, transparent: true, opacity: 0.35 })
+
+  const headGeometry = new THREE.IcosahedronGeometry(0.72, 2)
+  const head = new THREE.LineSegments(new THREE.WireframeGeometry(headGeometry), lineMaterial)
+  head.position.set(0, 0.55, 0)
+  figure.add(head)
+
+  const headPoints = new THREE.Points(
+    headGeometry,
+    new THREE.PointsMaterial({ color: 0xffffff, size: 0.035, transparent: true, opacity: 0.75 })
+  )
+  headPoints.position.set(0, 0.55, 0)
+  headPoints.scale.set(0.96, 0.96, 0.96)
+  figure.add(headPoints)
+
+  const halo = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.TorusGeometry(1.05, 0.008, 16, 64)),
+    dimLineMaterial
+  )
+  halo.position.set(0, 0.55, -0.2)
+  halo.rotation.x = Math.PI * 0.1
+  figure.add(halo)
+
+  const neck = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.CylinderGeometry(0.24, 0.32, 0.45, 12, 2, true)),
+    dimLineMaterial
+  )
+  neck.position.set(0, -0.05, 0)
+  figure.add(neck)
+
+  const cloakGeometry = new THREE.ConeGeometry(1.45, 1.1, 16, 4, true)
+  cloakGeometry.scale(1.2, 0.9, 0.7)
+  const cloak = new THREE.LineSegments(new THREE.WireframeGeometry(cloakGeometry), lineMaterial)
+  cloak.position.set(0, -0.75, 0)
+  cloak.rotation.y = Math.PI
+  figure.add(cloak)
+
+  const dustPositions = new Float32Array(120 * 3)
+  for (let i = 0; i < 120; i++) {
+    dustPositions[i * 3] = (Math.random() - 0.5) * 4.5
+    dustPositions[i * 3 + 1] = (Math.random() - 0.5) * 3.5
+    dustPositions[i * 3 + 2] = (Math.random() - 0.5) * 2.5
+  }
+  const dustGeometry = new THREE.BufferGeometry()
+  dustGeometry.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3))
+  const dust = new THREE.Points(
+    dustGeometry,
+    new THREE.PointsMaterial({ color: 0xc4c7c8, size: 0.02, transparent: true, opacity: 0.5 })
+  )
+  scene.add(dust)
+
+  let mouseX = 0
+  let mouseY = 0
+  let targetX = 0
+  let targetY = 0
+  const onMouseMove = (event) => {
+    const rect = container.getBoundingClientRect()
+    // Hidden on short windows: a zero-size rect would turn the gaze into Infinity.
+    if (!rect.width) return
+    targetX = (((event.clientX - rect.left) / rect.width) * 2 - 1) * 0.45
+    targetY = -(((event.clientY - rect.top) / rect.height) * 2 - 1) * 0.35
+  }
+  window.addEventListener('mousemove', onMouseMove)
+
+  const resizeObserver = new ResizeObserver(() => {
+    const w = container.clientWidth
+    const h = container.clientHeight
+    if (!w || !h) return
+    camera.aspect = w / h
+    camera.updateProjectionMatrix()
+    renderer.setSize(w, h)
+  })
+  resizeObserver.observe(container)
+
+  const clock = new THREE.Clock()
+  let frame = 0
+  const animate = () => {
+    frame = requestAnimationFrame(animate)
+    // Hidden on short windows: keep the loop alive but draw nothing.
+    if (!container.clientWidth) return
+    const time = clock.getElapsedTime()
+    mouseX += (targetX - mouseX) * 0.06
+    mouseY += (targetY - mouseY) * 0.06
+    figure.position.y = Math.sin(time * 1.5) * 0.06 - 0.1
+    figure.rotation.y = mouseX * 0.9 + Math.sin(time * 0.6) * 0.05
+    figure.rotation.x = -mouseY * 0.6 + Math.cos(time * 0.8) * 0.03
+    halo.rotation.z = time * 0.15
+    dust.rotation.y = time * 0.04
+    renderer.render(scene, camera)
+  }
+  animate()
+
+  stageTeardown = () => {
+    cancelAnimationFrame(frame)
+    window.removeEventListener('mousemove', onMouseMove)
+    resizeObserver.disconnect()
+    scene.traverse((node) => {
+      node.geometry?.dispose()
+      node.material?.dispose()
+    })
+    renderer.dispose()
+    renderer.domElement.remove()
+  }
+}
 
 // "Stuck to bottom" pattern: only auto-scroll on streaming deltas if the user
 // is already parked near the bottom; otherwise leave their scroll alone so
@@ -342,12 +614,27 @@ async function onSend() {
   }
 }
 
+// Enter sends; Shift+Enter breaks the line. Enter that only confirms an IME
+// candidate (Chinese / Japanese input) must not send.
 function onEnter(e) {
-  if (e.shiftKey) {
-    draft.value += '\n'
-    return
-  }
+  if (e.isComposing || e.shiftKey) return
+  e.preventDefault()
   onSend()
+}
+
+watch(draft, async () => {
+  await nextTick()
+  inputEl.value.style.height = 'auto'
+  inputEl.value.style.height = `${inputEl.value.scrollHeight}px`
+})
+
+async function onCopy(msg) {
+  try {
+    await navigator.clipboard.writeText(msg.content)
+    ElMessage.success(t('agent.copied'))
+  } catch {
+    ElMessage.error(t('common.failed'))
+  }
 }
 
 async function onClear() {
@@ -365,7 +652,7 @@ async function onClear() {
 }
 
 function handleMobileBack() {
-  chatStore.activeChat = null
+  chatStore.clearActiveChat()
 }
 
 // Auto-scroll on new messages / streaming deltas — but only when the user is
@@ -392,538 +679,41 @@ watch(
 </script>
 
 <style scoped>
-.agent-chat-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: var(--tg-surface);
-}
-
-.agent-header {
-  height: 80px;
-  padding: 0 32px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(226, 232, 240, 0.5);
-  z-index: 10;
-}
-
-[data-theme="dark"] .agent-header {
-  background: rgba(30, 41, 59, 0.9);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
-}
-
-.agent-header-left {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.mobile-back-btn {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: transparent;
-  border-radius: 50%;
-  color: var(--tg-text-secondary);
-  cursor: pointer;
-}
-
-.agent-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--ai-coral-grad);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  box-shadow: 0 6px 18px -6px rgba(59, 120, 221, 0.5);
-}
-
-.agent-avatar .material-icons-round {
-  font-size: 24px;
-}
-
-.agent-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.agent-name {
-  font-weight: 700;
-  font-size: 17px;
-  color: var(--tg-text-primary);
-}
-
-.agent-online {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--tg-radius-full);
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
-  letter-spacing: 0.5px;
-}
-
-.agent-subtitle {
-  font-size: 13px;
-  color: var(--tg-text-secondary);
-}
-
-.agent-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.action-btn {
-  width: 38px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  border-radius: 50%;
-  color: var(--tg-text-secondary);
-  cursor: pointer;
-  transition: var(--tg-transition);
-}
-
-.action-btn:hover:not(:disabled) {
-  background: var(--ai-coral-soft);
-  color: var(--ai-coral);
-}
-
-.action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.model-switcher {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--ai-coral-border);
-  background: var(--ai-coral-soft);
-  color: var(--ai-coral);
-  font-size: 13px;
-  cursor: pointer;
-  max-width: 240px;
-  transition: var(--tg-transition);
-}
-
-.model-switcher:hover {
-  background: var(--ai-coral-soft-hover);
-}
-
-.model-switcher .model-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 160px;
-  font-weight: 600;
-}
-
-.model-switcher .material-icons-round {
-  font-size: 16px;
-}
-
-.provider-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 220px;
-}
-.provider-row strong {
-  flex: 0 0 auto;
-}
-.provider-row .provider-model {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  color: var(--tg-text-secondary);
-  margin-left: auto;
+/* Short windows fall back to the stage-less layout so the stream keeps its room. */
+@media (max-height: 719px) {
+  .agent-stage {
+    display: none;
+  }
 }
 
 .agent-messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  /* Prevent overscroll from chaining to the parent layout — without this,
-     reaching the bottom on macOS/iOS momentum scroll can ripple up the page
-     and snap the view back to the top. */
+  /* Reaching the bottom on momentum scroll must not ripple up the page. */
   overscroll-behavior: contain;
-  /* Avoid the browser's "scroll anchoring" feature shifting the viewport
-     when streaming deltas mutate the DOM near the bottom. */
+  /* Streaming deltas mutate the DOM near the bottom; no scroll anchoring. */
   overflow-anchor: none;
-  padding: 24px 28px;
-  background: var(--ai-hero-bg);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
 }
 
-.agent-empty {
-  margin: auto;
-  width: 100%;
-  max-width: 760px;
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
-  padding: 10px 4px;
+.agent-messages::-webkit-scrollbar {
+  width: 6px;
 }
 
-.hero-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 28px;
-}
-
-.hero-copy {
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: left;
-  animation: aiRise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.hero-title {
-  margin: 0 0 12px;
-  font-size: clamp(24px, 3vw, 32px);
-  font-weight: 800;
-  line-height: 1.2;
-  letter-spacing: -0.4px;
-  color: var(--tg-text-primary);
-}
-
-.hero-brand {
-  background: var(--ai-coral-grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.hero-sub {
-  margin: 0;
-  max-width: 440px;
-  font-size: 14px;
-  line-height: 1.65;
-  color: var(--tg-text-secondary);
-}
-
-.hero-art {
-  flex: 0 0 auto;
-  width: 200px;
-  animation: aiRise 0.6s 0.08s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.art-svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.art-orb {
-  animation: float 6s ease-in-out infinite;
-}
-
-.art-spark {
-  animation: aiTwinkle 2.6s ease-in-out infinite;
-}
-
-.art-spark--2 { animation-delay: 0.7s; }
-.art-spark--3 { animation-delay: 1.3s; }
-
-.hero-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-.hero-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px;
-  text-align: left;
-  font-family: inherit;
-  border-radius: 16px;
-  background: var(--ai-card-bg);
-  border: 1px solid var(--ai-card-border);
-  box-shadow: 0 4px 16px -10px rgba(15, 23, 42, 0.2);
-  cursor: pointer;
-  transition: box-shadow 0.25s ease, border-color 0.25s ease, background 0.2s ease;
-  animation: aiRise 0.55s both;
-  animation-delay: calc(0.18s + var(--i) * 0.09s);
-}
-
-.hero-card:hover {
-  border-color: var(--ai-coral-border);
-  background: var(--ai-coral-soft);
-  box-shadow: 0 14px 28px -16px rgba(59, 120, 221, 0.5);
-}
-
-.hero-card-icon {
-  flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.hero-card:hover .hero-card-icon {
-  transform: scale(1.1) rotate(-4deg);
-}
-
-.hero-card-icon .material-icons-round {
-  font-size: 20px;
-}
-
-.ic-summary { background: rgba(79, 142, 240, 0.14); color: #4f8ef0; }
-.ic-report { background: rgba(245, 158, 11, 0.14); color: #f59e0b; }
-.ic-reply { background: rgba(20, 184, 166, 0.14); color: #14b8a6; }
-
-.hero-card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.hero-card-title {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--tg-text-primary);
-}
-
-.hero-card-desc {
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--tg-text-secondary);
-}
-
-@keyframes aiRise {
-  from { opacity: 0; transform: translateY(22px) scale(0.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes aiTwinkle {
-  0%, 100% { opacity: 0.4; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.12); }
-}
-
-.agent-msg {
-  display: flex;
-}
-
-.msg-user {
-  justify-content: flex-end;
-}
-
-.msg-assistant {
-  justify-content: flex-start;
-}
-
-.msg-bubble {
-  max-width: 72%;
-  padding: 12px 16px;
-  border-radius: 18px;
-  font-size: 14.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  position: relative;
-}
-
-.msg-user .msg-bubble {
-  background: var(--ai-coral-grad);
-  color: #fff;
-  border-bottom-right-radius: 6px;
-}
-
-.msg-assistant .msg-bubble {
-  background: rgba(255, 255, 255, 0.95);
-  color: var(--tg-text-primary);
-  border: 1px solid rgba(226, 232, 240, 0.6);
-  border-bottom-left-radius: 6px;
-}
-
-[data-theme="dark"] .msg-assistant .msg-bubble {
-  background: rgba(30, 41, 59, 0.85);
-  border-color: rgba(51, 65, 85, 0.6);
-  color: var(--tg-text-primary);
-}
-
-.tool-calls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.tool-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  background: var(--ai-coral-soft);
-  color: var(--ai-coral);
-  border: 1px solid var(--ai-coral-border);
-}
-
-.tool-chip .material-icons-round {
-  font-size: 14px;
-}
-
-.tool-success {
-  background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
-  border-color: rgba(16, 185, 129, 0.25);
-}
-
-.tool-failed,
-.tool-timeout {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.25);
-}
-
-.tool-spinner {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--ai-coral-border);
-  border-top-color: var(--ai-coral);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.tool-latency {
-  font-size: 11px;
-  opacity: 0.75;
-}
-
-.msg-text {
-  white-space: pre-wrap;
+.agent-messages::-webkit-scrollbar-thumb {
+  background: #353438;
+  border-radius: 9999px;
 }
 
 .caret {
   display: inline-block;
-  width: 6px;
-  height: 14px;
+  width: 5px;
+  height: 1em;
   margin-left: 2px;
-  background: var(--ai-coral);
-  vertical-align: middle;
+  background: #ffffff;
+  vertical-align: text-bottom;
   border-radius: 1px;
   animation: blink 1s steps(2) infinite;
 }
 
 @keyframes blink {
   50% { opacity: 0; }
-}
-
-.msg-error {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #ef4444;
-}
-
-.agent-input-area {
-  padding: 16px 24px 14px;
-  border-top: 1px solid rgba(226, 232, 240, 0.5);
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
-}
-
-[data-theme="dark"] .agent-input-area {
-  background: rgba(30, 41, 59, 0.85);
-  border-top-color: rgba(51, 65, 85, 0.5);
-}
-
-.agent-input-wrapper {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-}
-
-.agent-textarea :deep(.el-textarea__inner) {
-  border-radius: 14px;
-  padding: 12px 14px;
-  font-size: 14.5px;
-  border-color: rgba(226, 232, 240, 0.8);
-  resize: none;
-}
-
-.agent-textarea :deep(.el-textarea__inner):focus {
-  border-color: var(--ai-coral);
-  box-shadow: 0 0 0 2px var(--ai-coral-soft);
-}
-
-.agent-send {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: none;
-  background: var(--ai-coral-grad);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  box-shadow: var(--ai-coral-shadow);
-  transition: var(--tg-transition);
-}
-
-.agent-send:hover:not(:disabled) {
-  transform: translateY(-1px) scale(1.03);
-}
-
-.agent-send:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.agent-stop {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-}
-
-.agent-hint {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--tg-text-secondary);
-  text-align: center;
-}
-
-@media (max-width: 768px) {
-  .mobile-back-btn { display: flex; }
-  .agent-header { height: 64px; padding: 0 12px; }
-  .agent-messages { padding: 16px; }
-  .msg-bubble { max-width: 85%; }
-  .hero-top { flex-direction: column; align-items: center; text-align: center; }
-  .hero-copy { text-align: center; }
-  .hero-sub { margin-left: auto; margin-right: auto; }
-  .hero-art { width: 150px; order: -1; }
-  .hero-cards { grid-template-columns: 1fr; }
 }
 </style>

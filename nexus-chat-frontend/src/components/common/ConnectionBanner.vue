@@ -30,18 +30,18 @@ const connectionStore = useConnectionStore()
   justify-content: center;
   gap: 8px;
   padding: 7px 16px;
-  background: #b45309;
-  color: #fff;
+  background: #222225;
+  color: #e4e1e6;
   font-size: 13px;
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  border-bottom: 1px solid rgba(68, 71, 72, 0.4);
 }
 
 .conn-spinner {
   width: 13px;
   height: 13px;
   border: 2px solid rgba(255, 255, 255, 0.4);
-  border-top-color: #fff;
+  border-top-color: #e4e1e6;
   border-radius: 50%;
   animation: conn-spin 0.8s linear infinite;
   flex-shrink: 0;

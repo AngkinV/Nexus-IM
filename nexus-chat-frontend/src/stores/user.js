@@ -32,7 +32,7 @@ export const useUserStore = defineStore('user', () => {
                 showLastSeen: true,
                 showPhone: false,
                 showEmail: false,
-                profileBackground: profileBackground || 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                profileBackground: profileBackground || 'linear-gradient(135deg, #2a2a2d 0%, #131316 100%)'
             }
             token.value = authToken
 
@@ -66,7 +66,7 @@ export const useUserStore = defineStore('user', () => {
                 showLastSeen: true,
                 showPhone: false,
                 showEmail: false,
-                profileBackground: profileBackground || 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                profileBackground: profileBackground || 'linear-gradient(135deg, #2a2a2d 0%, #131316 100%)'
             }
             token.value = authToken
 
@@ -174,7 +174,8 @@ export const useUserStore = defineStore('user', () => {
             showOnlineStatus: settings.showOnlineStatus,
             showLastSeen: settings.showLastSeen,
             showPhone: settings.showPhone,
-            showEmail: settings.showEmail
+            showEmail: settings.showEmail,
+            friendRequestMode: settings.friendRequestMode ?? currentUser.value.friendRequestMode
         }
         localStorage.setItem('user', JSON.stringify(currentUser.value))
     }

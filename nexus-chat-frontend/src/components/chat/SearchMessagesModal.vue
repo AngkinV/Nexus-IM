@@ -34,7 +34,7 @@
               @click="handleMessageClick(message)"
             >
               <div class="message-avatar">
-                <el-avatar :size="36" :src="message.senderAvatar || defaultAvatar" />
+                <div class="avatar-frame"><img v-if="message.senderAvatar" class="avatar-img" :src="message.senderAvatar" alt="" /><div v-else class="avatar-fallback">{{ (message.senderName || "?").charAt(0) }}</div></div>
               </div>
               <div class="message-content">
                 <div class="message-header">
@@ -49,13 +49,13 @@
 
         <!-- Empty State -->
         <div v-else-if="searchQuery && !loading" class="empty-state">
-          <span class="material-icons-round">search_off</span>
+          <span class="material-symbols-outlined">search_off</span>
           <p>{{ $t('group.noMessagesFound') }}</p>
         </div>
 
         <!-- Initial State -->
         <div v-else-if="!searchQuery" class="initial-state">
-          <span class="material-icons-round">manage_search</span>
+          <span class="material-symbols-outlined">manage_search</span>
           <p>{{ $t('group.enterKeyword') }}</p>
         </div>
       </div>
@@ -179,7 +179,17 @@ const handleClose = () => {
 }
 
 .search-box {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.search-box :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  background: #16161a;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
+}
+
+.search-box :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
 }
 
 .results-container {
@@ -190,38 +200,66 @@ const handleClose = () => {
 }
 
 .results-header {
-  font-size: 12px;
-  font-weight: 600;
-  color: #64748b;
-  margin-bottom: 12px;
-  padding: 0 4px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #6f7274;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+  padding: 0 2px;
 }
 
 .results-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .message-item {
   display: flex;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.15s ease;
 }
 
 .message-item:hover {
-  background: #f5f7fa;
-}
-
-[data-theme="dark"] .message-item:hover {
-  background: #2a2d30;
+  background: #222225;
 }
 
 .message-avatar {
   flex-shrink: 0;
+}
+
+.avatar-frame {
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  object-fit: cover;
+  filter: grayscale(100%) contrast(1.1);
+}
+
+.avatar-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
 .message-content {
@@ -233,28 +271,26 @@ const handleClose = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  gap: 8px;
+  margin-bottom: 2px;
 }
 
 .sender-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-[data-theme="dark"] .sender-name {
-  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e4e1e6;
 }
 
 .message-time {
-  font-size: 11px;
-  color: #94a3b8;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #6f7274;
 }
 
 .message-text {
-  font-size: 13px;
-  color: #64748b;
-  line-height: 1.4;
+  font-size: 12px;
+  color: #8e9192;
+  line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -263,8 +299,8 @@ const handleClose = () => {
 }
 
 .message-text :deep(mark) {
-  background: rgba(0, 191, 165, 0.3);
-  color: inherit;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
   padding: 0 2px;
   border-radius: 2px;
 }
@@ -275,24 +311,23 @@ const handleClose = () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
-  color: #9ca3af;
+  padding: 56px 20px;
+  color: #8e9192;
 }
 
-.empty-state .material-icons-round,
-.initial-state .material-icons-round {
-  font-size: 56px;
-  margin-bottom: 16px;
-  opacity: 0.4;
+.empty-state .material-symbols-outlined,
+.initial-state .material-symbols-outlined {
+  font-size: 32px;
+  margin-bottom: 12px;
+  color: #6f7274;
 }
 
 .empty-state p,
 .initial-state p {
   margin: 0;
-  font-size: 14px;
+  font-size: 12px;
 }
 
-/* Scrollbar */
 .results-container::-webkit-scrollbar {
   width: 4px;
 }
@@ -302,7 +337,7 @@ const handleClose = () => {
 }
 
 .results-container::-webkit-scrollbar-thumb {
-  background: rgba(156, 163, 175, 0.3);
+  background: rgba(142, 145, 146, 0.25);
   border-radius: 20px;
 }
 </style>

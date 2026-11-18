@@ -321,7 +321,7 @@ onUnmounted(() => {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: #000;
+  background: #0e0e11;
   z-index: 9998;
   display: flex;
   flex-direction: column;
@@ -364,19 +364,19 @@ onUnmounted(() => {
 .call-quality {
   display: flex;
   align-items: center;
-  color: #4caf50;
+  color: #ffffff;
 }
 
 .call-quality.good {
-  color: #4caf50;
+  color: #ffffff;
 }
 
 .call-quality.medium {
-  color: #ff9800;
+  color: #c4c7c8;
 }
 
 .call-quality.poor {
-  color: #f44336;
+  color: #f2b8b5;
 }
 
 .call-status-text {
@@ -414,7 +414,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  background: #131316;
 }
 
 .placeholder-avatar {
@@ -429,7 +429,7 @@ onUnmounted(() => {
   width: 120px;
   height: 120px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #444748 0%, #222225 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -465,7 +465,7 @@ onUnmounted(() => {
 }
 
 .local-video-wrapper.video-off {
-  background: #333;
+  background: #222225;
 }
 
 .local-video-off {
@@ -489,7 +489,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  background: #131316;
 }
 
 .audio-avatar-container {
@@ -509,7 +509,7 @@ onUnmounted(() => {
   width: 150px;
   height: 150px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #444748 0%, #222225 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -531,7 +531,7 @@ onUnmounted(() => {
 
 .audio-wave span {
   width: 4px;
-  background: #4caf50;
+  background: #ffffff;
   border-radius: 2px;
   animation: wave 1s ease-in-out infinite;
 }
@@ -611,8 +611,8 @@ onUnmounted(() => {
 }
 
 .control-btn.active .btn-icon {
-  background: #fff;
-  color: #333;
+  background: #ffffff;
+  color: #2f3131;
 }
 
 .control-btn .btn-label {
@@ -624,14 +624,14 @@ onUnmounted(() => {
   width: 70px;
   height: 70px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+  background: #b3261e;
   border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 4px 20px rgba(255, 65, 108, 0.4);
+  box-shadow: none;
   transition: transform 0.2s, box-shadow 0.2s;
   transform: rotate(135deg);
 }

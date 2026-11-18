@@ -20,14 +20,14 @@
     class="provider-settings-dialog"
   >
     <el-tabs v-model="activeTab" class="purpose-tabs">
-      <el-tab-pane :label="$t('agent.providers.tabChat') || '对话模型'" name="chat" />
-      <el-tab-pane :label="$t('agent.providers.tabEmbedding') || '向量 Embedding'" name="embedding" />
+      <el-tab-pane :label="$t('agent.providers.tabChat')" name="chat" />
+      <el-tab-pane :label="$t('agent.providers.tabEmbedding')" name="embedding" />
     </el-tabs>
 
     <div class="provider-toolbar">
       <p class="provider-help">
         {{ activeTab === 'embedding'
-          ? ($t('agent.providers.embeddingHelp') || '为知识库选择支持 /embeddings 的服务商；与对话模型独立配置。')
+          ? ($t('agent.providers.embeddingHelp'))
           : $t('agent.providers.help') }}
       </p>
       <el-button type="primary" @click="openCreate">
@@ -68,7 +68,7 @@
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
           <el-button link size="small" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-          <el-button link type="success" size="small" :disabled="row.isDefault" @click="setDefault(row)">
+          <el-button link size="small" :disabled="row.isDefault" @click="setDefault(row)">
             {{ $t('agent.providers.setDefault') }}
           </el-button>
           <el-button link type="danger" size="small" @click="removeOne(row)">{{ $t('common.delete') }}</el-button>
@@ -92,7 +92,7 @@
     <el-form :model="form" label-width="110px" label-position="left" ref="formRef">
       <el-form-item :label="$t('agent.providers.preset')">
         <el-select v-model="form.preset" placeholder="OpenAI / DeepSeek / ..." @change="applyPreset">
-          <el-option v-for="p in presetsForActiveTab" :key="p.key" :label="p.label" :value="p.key" />
+          <el-option v-for="p in presetsForActiveTab" :key="p.key" :label="presetLabel(p)" :value="p.key" />
         </el-select>
       </el-form-item>
 
@@ -102,7 +102,7 @@
       </el-form-item>
 
       <el-form-item :label="$t('agent.providers.fieldDisplay')">
-        <el-input v-model="form.displayName" placeholder="OpenAI 主账号" />
+        <el-input v-model="form.displayName" :placeholder="$t('agent.providers.displayPlaceholder')" />
       </el-form-item>
 
       <el-form-item :label="$t('agent.providers.fieldBaseUrl')">
@@ -159,6 +159,7 @@ import {
   useAgentProvidersStore,
   PROVIDER_PRESETS,
   EMBEDDING_PRESETS,
+  presetLabel,
   PROVIDER_PURPOSE
 } from '@/stores/agentProviders'
 import { useAgentStore } from '@/stores/agent'
@@ -265,7 +266,7 @@ function applyPreset(key) {
   if (!preset) return
   if (!form.value.id) {
     form.value.provider = preset.key
-    form.value.displayName = preset.label
+    form.value.displayName = presetLabel(preset)
   }
   if (preset.baseUrl) form.value.baseUrl = preset.baseUrl
   if (preset.suggestedModels?.length && !form.value.defaultModel) {
@@ -412,14 +413,14 @@ async function testFromForm() {
   font-size: 12.5px;
 }
 .key-mask {
-  background: rgba(79, 142, 240, 0.1);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--tg-primary);
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 12px;
 }
 .missing {
-  color: #ef4444;
+  color: #f2b8b5;
   font-size: 12px;
 }
 .form-hint {

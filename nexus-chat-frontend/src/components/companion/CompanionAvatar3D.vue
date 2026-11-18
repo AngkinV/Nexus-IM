@@ -1180,8 +1180,8 @@ watch([modelSource, modelType], loadModel)
   width: 160px;
   height: 160px;
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #ffe8e8, #fca5a5 45%, #fb7185 75%);
-  box-shadow: inset 0 -8px 12px rgba(255, 255, 255, 0.6), 0 12px 24px rgba(15, 23, 42, 0.2);
+  background: radial-gradient(circle at 30% 30%, #e4e1e6, #8e9192 45%, #2a2a2d 75%);
+  box-shadow: inset 0 -8px 12px rgba(255, 255, 255, 0.12), 0 24px 48px -24px rgba(0, 0, 0, 0.8);
 }
 
 .avatar-body {
@@ -1203,13 +1203,13 @@ watch([modelSource, modelType], loadModel)
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 11px;
-  background: rgba(15, 23, 42, 0.75);
-  color: #e2e8f0;
+  background: rgba(14, 14, 17, 0.85);
+  color: #c4c7c8;
   backdrop-filter: blur(6px);
 }
 
 .loading-badge.error {
-  background: rgba(239, 68, 68, 0.85);
+  background: rgba(179, 38, 30, 0.85);
 }
 
 
@@ -1229,63 +1229,47 @@ watch([modelSource, modelType], loadModel)
 
 .motion-menu {
   position: fixed;
-  min-width: 120px;
-  padding: 6px 0;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  min-width: 132px;
+  padding: 4px;
+  background: rgba(27, 27, 30, 0.96);
+  border: 1px solid #2c2c30;
+  border-radius: 8px;
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
   backdrop-filter: blur(12px);
 }
 
 .motion-menu-title {
-  padding: 6px 14px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #94a3b8;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #6f7274;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 .motion-menu-item {
   display: block;
   width: 100%;
-  padding: 8px 14px;
+  padding: 7px 10px;
   border: none;
+  border-radius: 4px;
   background: transparent;
   text-align: left;
-  font-size: 13px;
-  color: #0f172a;
+  font-size: 12px;
+  color: #c4c7c8;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .motion-menu-item:hover {
-  background: #f1f5f9;
+  background: #2a2a2d;
+  color: #e4e1e6;
 }
 
 .motion-menu-item.active {
-  color: #0ea5e9;
-  font-weight: 600;
-  background: rgba(14, 165, 233, 0.08);
-}
-
-[data-theme="dark"] .motion-menu {
-  background: rgba(24, 27, 33, 0.96);
-  border-color: #2a2f39;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-}
-
-[data-theme="dark"] .motion-menu-item {
-  color: #e2e8f0;
-}
-
-[data-theme="dark"] .motion-menu-item:hover {
-  background: #1e293b;
-}
-
-[data-theme="dark"] .motion-menu-item.active {
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.1);
+  color: #ffffff;
+  font-weight: 500;
+  background: #2a2a2d;
 }
 </style>

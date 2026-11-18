@@ -35,12 +35,12 @@
           <svg viewBox="0 0 240 64" preserveAspectRatio="none" width="100%" height="56">
             <defs>
               <linearGradient id="fcFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#22c55e" stop-opacity="0.22" />
-                <stop offset="100%" stop-color="#22c55e" stop-opacity="0" />
+                <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22" />
+                <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
               </linearGradient>
             </defs>
             <path d="M0,50 C28,46 46,30 70,30 C98,30 110,42 138,35 C168,27 196,14 240,9 L240,64 L0,64 Z" fill="url(#fcFill)" />
-            <path d="M0,50 C28,46 46,30 70,30 C98,30 110,42 138,35 C168,27 196,14 240,9" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" />
+            <path d="M0,50 C28,46 46,30 70,30 C98,30 110,42 138,35 C168,27 196,14 240,9" fill="none" stroke="#c4c7c8" stroke-width="2.5" stroke-linecap="round" />
           </svg>
         </div>
         <button class="panel-link foot" @click="goContacts">
@@ -312,7 +312,8 @@ const savePreferences = async () => {
       showOnlineStatus: prefShowOnline.value,
       showLastSeen: prefShowLastSeen.value,
       showEmail: userStore.currentUser?.showEmail,
-      showPhone: userStore.currentUser?.showPhone
+      showPhone: userStore.currentUser?.showPhone,
+      friendRequestMode: settings.friendRequestMode
     })
     snapshotPrefs()
     ElMessage.success(t('profile.updateSuccess'))
@@ -409,13 +410,13 @@ onMounted(async () => {
   font-size: 26px;
   font-weight: 800;
   letter-spacing: -0.4px;
-  color: #1f2430;
+  color: #e4e1e6;
 }
 
 .sec-sub {
   margin: 6px 0 0;
   font-size: 14px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .so-quote {
@@ -426,7 +427,7 @@ onMounted(async () => {
   font-size: 13px;
   font-style: italic;
   line-height: 1.5;
-  color: #aab2c0;
+  color: #6f7274;
   text-align: right;
   flex-shrink: 0;
 }
@@ -437,7 +438,7 @@ onMounted(async () => {
   font-size: 30px;
   font-style: normal;
   line-height: 1;
-  color: #d7deea;
+  color: #353438;
 }
 
 .so-quote::before { content: "\201C"; left: 0; top: -6px; }
@@ -461,17 +462,17 @@ onMounted(async () => {
 .panel {
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  border: 1px solid #eef0f4;
-  border-radius: 16px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 12px;
   padding: 20px 22px;
-  box-shadow: 0 2px 12px rgba(20, 30, 60, 0.04);
+  box-shadow: none;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .panel:hover {
   transform: translateY(-2px);
-  box-shadow: 0 10px 24px -10px rgba(30, 45, 90, 0.18);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .panel-head {
@@ -502,7 +503,7 @@ onMounted(async () => {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
-  color: #1f2430;
+  color: #e4e1e6;
 }
 
 .panel-link {
@@ -512,7 +513,7 @@ onMounted(async () => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #4f8ef0;
+  color: #ffffff;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -528,12 +529,12 @@ onMounted(async () => {
 }
 
 /* ===== Icon tones ===== */
-.blue { background: #e8f1fd; color: #3b82f6; }
-.green { background: #e7f8ef; color: #22c55e; }
-.purple { background: #f1ecfe; color: #8b5cf6; }
-.orange { background: #fff2e3; color: #f59e0b; }
-.teal { background: #e6f7f4; color: #14b8a6; }
-.red { background: #fdecec; color: #ef4444; }
+.blue { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.green { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
+.purple { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.orange { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.teal { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.red { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 /* ===== Friend count ===== */
 .fc-stat {
@@ -546,12 +547,12 @@ onMounted(async () => {
   font-size: 38px;
   font-weight: 800;
   line-height: 1;
-  color: #1f2430;
+  color: #e4e1e6;
 }
 
 .dm-count-label {
   font-size: 13px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .fc-delta {
@@ -561,13 +562,13 @@ onMounted(async () => {
   margin-top: 6px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #aab2c0;
+  color: #6f7274;
 }
 
 .fc-delta .el-icon { font-size: 12px; }
-.fc-delta.up { color: #22c55e; }
-.fc-delta.down { color: #ef4444; }
-.fc-delta.flat { color: #aab2c0; }
+.fc-delta.up { color: #ffffff; }
+.fc-delta.down { color: #f2b8b5; }
+.fc-delta.flat { color: #6f7274; }
 
 .fc-spark {
   margin-top: 12px;
@@ -585,7 +586,7 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   padding: 11px 0;
-  border-bottom: 1px solid #f1f3f7;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.18);
 }
 
 .row:last-child { border-bottom: none; }
@@ -599,7 +600,7 @@ onMounted(async () => {
   border-radius: 8px;
 }
 
-.row.clickable:hover { background: #f7f9fd; }
+.row.clickable:hover { background: #222225; }
 
 .row-main {
   flex: 1;
@@ -612,7 +613,7 @@ onMounted(async () => {
 .row-name {
   font-size: 13.5px;
   font-weight: 600;
-  color: #1f2430;
+  color: #e4e1e6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -620,18 +621,18 @@ onMounted(async () => {
 
 .row-sub {
   font-size: 12px;
-  color: #8a93a5;
+  color: #8e9192;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.row-sub.ok { color: #22c55e; }
+.row-sub.ok { color: #ffffff; }
 
 .list-empty {
   padding: 18px 4px;
   font-size: 13px;
-  color: #aab2c0;
+  color: #6f7274;
 }
 
 .list-empty.tall { padding: 32px 4px; text-align: center; }
@@ -646,13 +647,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: #fff2e3;
-  color: #f59e0b;
+  background: rgba(255, 255, 255, 0.06);
+  color: #c4c7c8;
   font-size: 12px;
   font-weight: 700;
 }
 
-.req-count.red { background: #fdecec; color: #ef4444; }
+.req-count.red { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 .req-actions {
   display: flex;
@@ -675,22 +676,22 @@ onMounted(async () => {
 
 .req-btn:disabled { opacity: 0.5; cursor: default; }
 .req-btn:not(:disabled):hover { transform: scale(1.06); }
-.req-btn.accept { background: #e7f8ef; color: #22c55e; }
-.req-btn.reject { background: #fdecec; color: #ef4444; }
+.req-btn.accept { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
+.req-btn.reject { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 /* ===== Row action (unblock) ===== */
 .row-action {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #aab2c0;
+  color: #6f7274;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: color 0.2s ease;
 }
 
-.row-action:hover { color: #ef4444; }
+.row-action:hover { color: #f2b8b5; }
 .row-action:disabled { opacity: 0.5; cursor: default; }
 
 /* ===== Recent interactions ===== */
@@ -707,48 +708,14 @@ onMounted(async () => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #c2c9d6;
-  border: 2px solid #ffffff;
+  background: #6f7274;
+  border: 2px solid #131316;
 }
 
-.online-dot.on { background: #22c55e; }
+.online-dot.on { background: #ffffff; }
 
 /* ===== Preferences ===== */
 .row.pref { align-items: center; }
-
-/* ===== Dark mode ===== */
-[data-theme="dark"] .sec-title { color: #eef1f6; }
-[data-theme="dark"] .sec-sub { color: #aab2c0; }
-[data-theme="dark"] .so-quote { color: #8a93a5; }
-[data-theme="dark"] .so-quote::before,
-[data-theme="dark"] .so-quote::after { color: #3a4150; }
-
-[data-theme="dark"] .panel {
-  background: #1e2230;
-  border-color: #262a34;
-  box-shadow: none;
-}
-
-[data-theme="dark"] .panel-title,
-[data-theme="dark"] .dm-count,
-[data-theme="dark"] .row-name { color: #eef1f6; }
-
-[data-theme="dark"] .row { border-bottom-color: #262a34; }
-[data-theme="dark"] .row.clickable:hover { background: #232733; }
-[data-theme="dark"] .panel-link { color: #9cc6f8; }
-
-[data-theme="dark"] .blue { background: rgba(59, 130, 246, 0.16); color: #7eb0ff; }
-[data-theme="dark"] .green { background: rgba(34, 197, 94, 0.16); color: #5ee19a; }
-[data-theme="dark"] .purple { background: rgba(139, 92, 246, 0.16); color: #b69bff; }
-[data-theme="dark"] .orange { background: rgba(245, 158, 11, 0.16); color: #ffc35c; }
-[data-theme="dark"] .teal { background: rgba(20, 184, 166, 0.18); color: #4fd6c4; }
-[data-theme="dark"] .red { background: rgba(239, 68, 68, 0.16); color: #ff9b9b; }
-
-[data-theme="dark"] .req-count { background: rgba(245, 158, 11, 0.16); color: #ffc35c; }
-[data-theme="dark"] .req-count.red { background: rgba(239, 68, 68, 0.16); color: #ff9b9b; }
-[data-theme="dark"] .req-btn.accept { background: rgba(34, 197, 94, 0.16); color: #5ee19a; }
-[data-theme="dark"] .req-btn.reject { background: rgba(239, 68, 68, 0.16); color: #ff9b9b; }
-[data-theme="dark"] .online-dot { border-color: #1e2230; }
 
 /* ===== Responsive ===== */
 @media (max-width: 1080px) {

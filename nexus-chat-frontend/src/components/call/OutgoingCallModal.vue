@@ -126,7 +126,7 @@ function handleCancel() {
   left: 50%;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 2px solid rgba(76, 175, 80, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.18);
   animation: ripple-out 2s ease-out infinite;
 }
 
@@ -175,23 +175,23 @@ function handleCancel() {
   height: 120px;
   border-radius: 50%;
   object-fit: cover;
-  border: 4px solid #fff;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  box-shadow: none;
 }
 
 .callee-avatar-placeholder {
   width: 120px;
   height: 120px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #444748 0%, #222225 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 48px;
   font-weight: 600;
   color: #fff;
-  border: 4px solid #fff;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  box-shadow: none;
 }
 
 .callee-info {
@@ -220,7 +220,7 @@ function handleCancel() {
   display: inline-block;
   width: 8px;
   height: 8px;
-  background: #4caf50;
+  background: #ffffff;
   border-radius: 50%;
   animation: status-blink 1s ease-in-out infinite;
 }
@@ -270,12 +270,12 @@ function handleCancel() {
 }
 
 .cancel-btn .btn-icon {
-  background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
-  box-shadow: 0 4px 20px rgba(255, 65, 108, 0.4);
+  background: #b3261e;
+  box-shadow: none;
 }
 
 .cancel-btn:hover .btn-icon {
-  box-shadow: 0 6px 30px rgba(255, 65, 108, 0.6);
+  box-shadow: 0 0 0 1px rgba(242, 184, 181, 0.35);
 }
 
 .btn-label {

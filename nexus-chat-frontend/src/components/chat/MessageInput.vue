@@ -1,66 +1,76 @@
 <template>
   <div class="input-container">
     <div v-if="replyTo" class="replying-bar">
-      <div>
+      <div class="replying-body">
         <span class="replying-label">{{ $t('chat.replyingTo', { name: replyTo.senderName || $t('chat.unknownUser') }) }}</span>
         <span class="replying-text">{{ replyTo.content }}</span>
       </div>
-      <button class="replying-close" @click="$emit('cancelReply')" :title="$t('chat.cancelReply')">×</button>
-    </div>
-    <div class="input-wrapper">
-      <button class="input-btn attach-btn" @click="triggerUpload" :title="$t('chat.attachFile')" :aria-label="$t('chat.attachFile')">
-        <el-icon :size="24"><Plus /></el-icon>
+      <button class="replying-close" @click="$emit('cancelReply')" :title="$t('chat.cancelReply')">
+        <span class="material-symbols-outlined">close</span>
       </button>
+    </div>
 
-      <div class="input-field">
-        <el-input
-          v-model="content"
-          type="textarea"
-          :autosize="{ minRows: 1, maxRows: 4 }"
-          :placeholder="$t('chat.typeMessage')"
-          resize="none"
-          class="custom-textarea"
-          @keydown.enter.prevent="handleEnter"
-        />
+    <div class="composer">
+      <!-- Toolbar -->
+      <div class="composer-toolbar">
+        <div class="toolbar-left">
+          <el-popover
+            placement="top-start"
+            trigger="click"
+            :width="320"
+            :show-arrow="false"
+            popper-class="emoji-popper"
+          >
+            <template #reference>
+              <button class="tool-btn" :title="$t('chat.emoji')" :aria-label="$t('chat.emoji')" @click="pickerTheme = currentTheme()">
+                <span class="material-symbols-outlined">sentiment_satisfied</span>
+              </button>
+            </template>
+            <EmojiPicker
+              :native="true"
+              :theme="pickerTheme"
+              :disable-skin-tones="true"
+              @select="onEmoji"
+            />
+          </el-popover>
+          <button class="tool-btn" @click="triggerUpload" :title="$t('chat.attachFile')" :aria-label="$t('chat.attachFile')">
+            <span class="material-symbols-outlined">attach_file</span>
+          </button>
+
+          <button class="tool-btn" @click="triggerUpload" :title="$t('chat.image')" :aria-label="$t('chat.image')">
+            <span class="material-symbols-outlined">image</span>
+          </button>
+          <button class="tool-btn" :title="$t('chat.voiceMessage')" :aria-label="$t('chat.voiceMessage')" @click="showComingSoon">
+            <span class="material-symbols-outlined">mic</span>
+          </button>
+        </div>
       </div>
 
-      <div class="input-actions">
-        <el-popover
-          placement="top-end"
-          trigger="click"
-          :width="320"
-          :show-arrow="false"
-          popper-class="emoji-popper"
-        >
-          <template #reference>
-            <button class="input-btn emoji-btn" :title="$t('chat.emoji')" :aria-label="$t('chat.emoji')" @click="pickerTheme = currentTheme()">
-              <el-icon :size="22"><Sunny /></el-icon>
-            </button>
-          </template>
-          <EmojiPicker
-            :native="true"
-            :theme="pickerTheme"
-            :disable-skin-tones="true"
-            @select="onEmoji"
+      <!-- Input + send -->
+      <div class="composer-row">
+        <div class="input-field">
+          <el-input
+            v-model="content"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+            :placeholder="$t('chat.composerPlaceholder')"
+            resize="none"
+            class="custom-textarea"
+            @keydown.enter.prevent="handleEnter"
           />
-        </el-popover>
-        <button v-if="!content.trim()" class="input-btn mic-btn" :title="$t('chat.voiceMessage')" :aria-label="$t('chat.voiceMessage')" @click="showComingSoon">
-          <el-icon :size="22"><Microphone /></el-icon>
-        </button>
+        </div>
+
         <button
-          v-else
           class="send-btn"
+          type="button"
           @click="sendMessage"
           :title="$t('chat.sendMessage')"
           :aria-label="$t('chat.sendMessage')"
         >
-          <el-icon :size="22"><Promotion /></el-icon>
+          <span class="send-label">{{ $t('chat.send') }}</span>
+          <span class="material-symbols-outlined">send</span>
         </button>
       </div>
-    </div>
-
-    <div class="input-hint">
-      <span>{{ $t('chat.enterToSend') }} <strong>{{ $t('chat.enterKey') }}</strong> {{ $t('chat.toSend') }}</span>
     </div>
 
     <FileUpload
@@ -75,7 +85,6 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus, Sunny, Microphone, Promotion } from '@element-plus/icons-vue'
 import FileUpload from '@/components/common/FileUpload.vue'
 import EmojiPicker from 'vue3-emoji-picker'
 import 'vue3-emoji-picker/css'
@@ -93,12 +102,9 @@ defineProps({
 const content = ref('')
 const fileUploadRef = ref(null)
 
-// Emoji picker theme follows the app's light/dark setting.
-const pickerTheme = ref('light')
-const currentTheme = () => {
-  const attr = document.documentElement.getAttribute('data-theme') || document.body.getAttribute('data-theme')
-  return attr === 'dark' ? 'dark' : 'light'
-}
+// Prism is dark-only, so the emoji picker always renders in dark mode.
+const pickerTheme = ref('dark')
+const currentTheme = () => 'dark'
 const onEmoji = (e) => {
   content.value += e.i
 }
@@ -152,250 +158,207 @@ const handleUploadError = (error) => {
 
 <style scoped>
 .input-container {
-  padding: 8px 0;
+  width: 100%;
 }
 
+/* ── Reply banner ───────────────────────────────────────── */
 .replying-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 8px 8px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--tg-primary);
-  background: rgba(79, 142, 240, 0.08);
-  border-radius: 8px;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: #16161a;
+  border-left: 2px solid #ffffff;
+  border-radius: 3px;
 }
 
-.replying-label,
+.replying-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.replying-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
 .replying-text {
-  display: block;
-  max-width: 520px;
+  font-size: 11px;
+  color: #8e9192;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.replying-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--tg-primary);
-}
-
-.replying-text {
-  font-size: 12px;
-  color: var(--tg-text-secondary);
-}
-
 .replying-close {
-  border: none;
-  background: transparent;
-  color: var(--tg-text-secondary);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.input-wrapper {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 8px 8px 12px;
-  background: #ffffff;
-  border-radius: 9999px;
-  box-shadow: var(--tg-shadow-lg);
-  border: 1px solid rgba(226, 232, 240, 0.5);
-  transition: var(--tg-transition-slow);
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6f7274;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.input-wrapper:focus-within {
-  box-shadow: var(--tg-shadow-lg), 0 0 0 4px rgba(79, 142, 240, 0.1);
-  border-color: rgba(79, 142, 240, 0.3);
+.replying-close .material-symbols-outlined {
+  font-size: 15px;
 }
 
-[data-theme="dark"] .input-wrapper {
-  background: var(--tg-surface);
-  border: 1px solid rgba(51, 65, 85, 0.5);
+.replying-close:hover {
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
-.input-btn {
-  width: 44px;
-  height: 44px;
+/* ── Composer shell ─────────────────────────────────────── */
+/* Composer card — mirrors the exported screen:
+   rounded-xl bg-surface-container-low border-outline-variant/30 p-space-sm gap-space-xs */
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 12px;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.composer:focus-within {
+  border-color: rgba(68, 71, 72, 0.6);
+  background: #1f1f22;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tool-btn {
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
   background: transparent;
-  border-radius: 50%;
-  color: var(--tg-text-secondary);
+  border-radius: 4px;
+  color: #c4c7c8;
   cursor: pointer;
-  transition: var(--tg-transition);
-  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
 }
 
-.attach-btn:hover {
-  background: rgba(59, 130, 246, 0.1);
-  color: var(--tg-secondary);
+.tool-btn .material-symbols-outlined {
+  font-size: 18px;
 }
 
-.emoji-btn:hover {
-  background: rgba(251, 191, 36, 0.1);
-  color: #F59E0B;
+.tool-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
-.mic-btn:hover {
-  background: rgba(79, 142, 240, 0.1);
-  color: var(--tg-primary);
+.tool-btn:active {
+  transform: scale(0.95);
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0 4px;
 }
 
 .input-field {
   flex: 1;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
+  min-width: 0;
 }
 
 .custom-textarea :deep(.el-textarea__inner) {
-  background: transparent;
-  box-shadow: none;
+  min-height: 44px !important;
+  max-height: 112px;
+  padding: 0;
   border: none;
-  padding: 10px 0;
-  max-height: 150px;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--tg-text-primary);
-  line-height: 1.5;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.625;
+  letter-spacing: -0.005em;
+  resize: none;
+}
+
+.custom-textarea :deep(.el-textarea__inner):focus {
+  box-shadow: none;
 }
 
 .custom-textarea :deep(.el-textarea__inner)::placeholder {
-  color: var(--tg-text-tertiary);
-}
-
-.input-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  color: rgba(196, 199, 200, 0.4);
 }
 
 .send-btn {
-  width: 48px;
-  height: 48px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 16px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
   border: none;
-  background: rgba(79, 142, 240, 0.1);
-  border-radius: 50%;
-  color: #4f8ef0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #2f3131;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0.01em;
+  font-weight: 500;
   cursor: pointer;
-  transition: var(--tg-transition);
-  flex-shrink: 0;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.send-btn .material-symbols-outlined {
+  font-size: 16px;
 }
 
 .send-btn:hover {
-  background: rgba(79, 142, 240, 0.2);
-  transform: scale(1.05);
+  background: #e2e2e2;
 }
 
 .send-btn:active {
   transform: scale(0.95);
 }
 
-.send-btn .el-icon {
-  margin-left: 2px;
-}
-
-.input-hint {
-  text-align: center;
-  margin-top: 12px;
-}
-
-.input-hint span {
-  font-size: 11px;
-  color: var(--tg-text-tertiary);
-  font-weight: 500;
-}
-
-.input-hint strong {
-  color: var(--tg-text-secondary);
-  font-weight: 700;
-}
-
-/* Mobile Responsive Styles */
 @media (max-width: 768px) {
-  .input-container {
-    padding: 6px 0;
+  .composer {
+    padding: 6px;
   }
 
-  .input-wrapper {
-    gap: 4px;
-    padding: 6px 6px 6px 10px;
-  }
-
-  .input-btn {
-    width: 40px;
-    height: 40px;
-  }
-
-  .input-field {
-    min-height: 40px;
-  }
-
-  .custom-textarea :deep(.el-textarea__inner) {
-    padding: 8px 0;
-    font-size: 16px; /* Prevent iOS zoom */
+  .send-label {
+    display: none;
   }
 
   .send-btn {
-    width: 44px;
-    height: 44px;
+    width: 32px;
+    padding: 0;
+    justify-content: center;
   }
-
-  .input-hint {
-    margin-top: 8px;
-    display: none; /* Hide on mobile */
-  }
-
-  .input-actions {
-    gap: 2px;
-  }
-}
-
-/* Small phones */
-@media (max-width: 375px) {
-  .input-wrapper {
-    padding: 4px 4px 4px 8px;
-  }
-
-  .input-btn {
-    width: 36px;
-    height: 36px;
-  }
-
-  .send-btn {
-    width: 40px;
-    height: 40px;
-  }
-}
-</style>
-
-<style>
-/* Emoji picker popover (teleported to body, so it can't be scoped) */
-.emoji-popper.el-popper {
-  padding: 0 !important;
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  min-width: unset !important;
-}
-
-.emoji-popper .v3-emoji-picker {
-  width: 100% !important;
-  border-radius: 14px !important;
-  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.28) !important;
-}
-
-[data-theme="dark"] .emoji-popper .v3-emoji-picker {
-  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6) !important;
 }
 </style>

@@ -134,20 +134,23 @@ const duration = computed(() => {
 }
 
 .end-icon.success {
-  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+  background: #ffffff;
+  color: #2f3131;
   transform: rotate(135deg);
 }
 
 .end-icon.warning {
-  background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+  background: #c4c7c8;
+  color: #131316;
 }
 
 .end-icon.busy {
-  background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+  background: #8e9192;
+  color: #131316;
 }
 
 .end-icon.error {
-  background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+  background: #b3261e;
 }
 
 .end-title {

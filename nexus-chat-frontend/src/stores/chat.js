@@ -218,8 +218,12 @@ export const useChatStore = defineStore('chat', () => {
             // Same pinned status, sort by last message time
             return new Date(b.lastMessageTime || 0) - new Date(a.lastMessageTime || 0)
         })
-        // Always pin the virtual AI assistant entry to the very top
-        return [buildAiAssistantChatItem(), ...realChats]
+        // Always pin the virtual AI assistant entry to the very top.
+        // Touch the locale ref first so this computed re-runs when the user
+        // switches language — otherwise the entry keeps the strings it was
+        // first built with and the English UI shows a Chinese AI row.
+        void i18n.global.locale.value
+        return [buildAiAssistantChatItem(i18n.global.t), ...realChats]
     })
 
     // Update chat properties
@@ -304,6 +308,10 @@ export const useChatStore = defineStore('chat', () => {
                 chats.value[chatIndex].unreadCount = 0
             }
         }
+    }
+
+    const clearActiveChat = () => {
+        activeChat.value = null
     }
 
     // Toggle chat: if same chat is clicked, close it; otherwise open the new chat
@@ -690,6 +698,7 @@ export const useChatStore = defineStore('chat', () => {
         fetchChats,
         retryFetchChats,
         setActiveChat,
+        clearActiveChat,
         toggleActiveChat,
         sendMessage,
         createGroup,

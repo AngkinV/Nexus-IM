@@ -396,10 +396,9 @@ onMounted(() => {
   top: 48px;
   left: 24px;
   z-index: 100;
-  background: rgba(255, 255, 255, 0.9) !important;
-  backdrop-filter: blur(10px);
-  border: none !important;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  background: #1b1b1e !important;
+  border: 1px solid rgba(68, 71, 72, 0.3) !important;
+  box-shadow: none;
 }
 
 .back-btn:hover {
@@ -407,13 +406,13 @@ onMounted(() => {
 }
 
 [data-theme="dark"] .back-btn {
-  background: rgba(30, 41, 59, 0.9) !important;
+  background: #1b1b1e !important;
 }
 
 /* Cover section */
 .cover-section {
   height: 180px;
-  border-radius: 20px;
+  border-radius: 16px;
   background-size: cover;
   background-position: center;
   position: relative;
@@ -421,14 +420,14 @@ onMounted(() => {
 }
 
 .default-gradient {
-  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 50%, #3b78dd 100%);
+  background: linear-gradient(135deg, #353438 0%, #222225 50%, #131316 100%);
 }
 
 .cover-overlay {
   position: absolute;
   inset: 0;
   background: linear-gradient(to bottom, transparent 40%, rgba(0, 0, 0, 0.4));
-  border-radius: 20px;
+  border-radius: 16px;
 }
 
 /* User card */
@@ -436,7 +435,7 @@ onMounted(() => {
   position: relative;
   padding: 70px 32px 32px;
   text-align: center;
-  border-radius: 20px;
+  border-radius: 16px;
   margin-bottom: 20px;
 }
 
@@ -459,12 +458,12 @@ onMounted(() => {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #9ca3af;
+  background: #6f7274;
   border: 3px solid var(--tg-surface);
 }
 
 .status-dot.online {
-  background: #22c55e;
+  background: #ffffff;
 }
 
 .user-info {
@@ -500,7 +499,7 @@ onMounted(() => {
 }
 
 .online-text {
-  color: #22c55e;
+  color: #ffffff;
   font-weight: 600;
 }
 
@@ -526,7 +525,7 @@ onMounted(() => {
 /* Details section */
 .details-section,
 .social-section {
-  border-radius: 20px;
+  border-radius: 16px;
   padding: 24px;
   margin-bottom: 20px;
 }

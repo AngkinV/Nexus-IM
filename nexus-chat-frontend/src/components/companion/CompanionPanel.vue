@@ -90,9 +90,9 @@
               <div class="memory-pane">
                 <div class="memory-new">
                   <el-select v-model="newMemoryType" size="small" class="memory-select" popper-class="companion-popper">
-                    <el-option label="短期" value="short_term" />
-                    <el-option label="中期" value="mid" />
-                    <el-option label="长期" value="long_term" />
+                    <el-option :label="$t('companion.shortTerm')" value="short_term" />
+                    <el-option :label="$t('companion.midTerm')" value="mid" />
+                    <el-option :label="$t('companion.longTerm')" value="long_term" />
                   </el-select>
                   <el-input v-model="newMemoryContent" :placeholder="$t('companion.memoryPlaceholder')" />
                   <el-button type="primary" size="small" @click="handleAddMemory">
@@ -926,28 +926,28 @@ fetchServerModels()
 <style scoped>
 /* ── CSS Variables ── */
 .cp-window {
-  --cp-bg: #f7f8f6;
-  --cp-surface: #ffffff;
-  --cp-surface-muted: #f1f5f1;
-  --cp-border: #e2e8f0;
-  --cp-text: #0f172a;
-  --cp-muted: #64748b;
-  --cp-primary: #a9c4ff;
-  --cp-primary-strong: #7aa0f5;
-  --cp-primary-ink: #08322e;
-  --cp-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
-  --el-color-primary: #a9c4ff;
-  --el-color-primary-light-3: rgba(79, 142, 240, 0.55);
-  --el-color-primary-light-5: rgba(79, 142, 240, 0.35);
-  --el-color-primary-light-7: rgba(79, 142, 240, 0.2);
-  --el-color-primary-light-8: rgba(79, 142, 240, 0.16);
-  --el-color-primary-light-9: rgba(79, 142, 240, 0.12);
-  --el-color-primary-dark-2: #7aa0f5;
-  --el-text-color-primary: #0f172a;
-  --el-border-color: #e2e8f0;
-  --el-border-color-light: #e2e8f0;
-  --el-fill-color-light: rgba(79, 142, 240, 0.15);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --cp-bg: #131316;
+  --cp-surface: #1b1b1e;
+  --cp-surface-muted: #16161a;
+  --cp-border: #2c2c30;
+  --cp-text: #e4e1e6;
+  --cp-muted: #8e9192;
+  --cp-primary: #ffffff;
+  --cp-primary-strong: #e2e2e2;
+  --cp-primary-ink: #2f3131;
+  --cp-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+  --el-color-primary: #ffffff;
+  --el-color-primary-light-3: rgba(255, 255, 255, 0.55);
+  --el-color-primary-light-5: rgba(255, 255, 255, 0.35);
+  --el-color-primary-light-7: rgba(255, 255, 255, 0.2);
+  --el-color-primary-light-8: rgba(255, 255, 255, 0.16);
+  --el-color-primary-light-9: rgba(255, 255, 255, 0.12);
+  --el-color-primary-dark-2: #e2e2e2;
+  --el-text-color-primary: #e4e1e6;
+  --el-border-color: #2c2c30;
+  --el-border-color-light: #2c2c30;
+  --el-fill-color-light: rgba(255, 255, 255, 0.08);
+  font-family: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 /* ── Backdrop ── */
@@ -955,7 +955,7 @@ fetchServerModels()
   position: fixed;
   inset: 0;
   z-index: 1999;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(6, 6, 8, 0.72);
   backdrop-filter: blur(2px);
 }
 
@@ -1010,7 +1010,7 @@ fetchServerModels()
 }
 
 .badge {
-  background: rgba(79, 142, 240, 0.35);
+  background: rgba(255, 255, 255, 0.35);
   color: var(--cp-primary-ink);
   font-size: 10px;
   font-weight: 700;
@@ -1018,7 +1018,7 @@ fetchServerModels()
   border-radius: 999px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  border: 1px solid rgba(79, 142, 240, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.7);
   flex-shrink: 0;
 }
 
@@ -1046,8 +1046,8 @@ fetchServerModels()
 }
 
 .cp-close-btn:hover {
-  border-color: #f87171;
-  color: #ef4444;
+  border-color: rgba(242, 184, 181, 0.5);
+  color: #f2b8b5;
   background: rgba(239, 68, 68, 0.08);
 }
 
@@ -1077,7 +1077,7 @@ fetchServerModels()
   background: var(--cp-primary);
   border-color: var(--cp-primary);
   color: var(--cp-primary-ink);
-  box-shadow: 0 6px 14px rgba(79, 142, 240, 0.35);
+  box-shadow: 0 6px 14px rgba(255, 255, 255, 0.35);
 }
 
 .role-btn:hover {
@@ -1136,18 +1136,18 @@ fetchServerModels()
   border-radius: 14px;
   border: 1px solid var(--cp-border);
   background: var(--cp-surface);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .status-avatar {
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  background: rgba(79, 142, 240, 0.35);
+  background: rgba(255, 255, 255, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(79, 142, 240, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   flex-shrink: 0;
 }
 
@@ -1183,7 +1183,7 @@ fetchServerModels()
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: #22c55e;
+  background: #ffffff;
   box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.15);
 }
 
@@ -1268,7 +1268,7 @@ fetchServerModels()
   border-radius: 14px;
   padding: 12px;
   background: var(--cp-surface);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .chat-bubble {
@@ -1295,7 +1295,7 @@ fetchServerModels()
 .bubble-tag {
   margin-top: 6px;
   font-size: 11px;
-  color: #b45309;
+  color: #c4c7c8;
 }
 
 .chat-input {
@@ -1336,7 +1336,7 @@ fetchServerModels()
   border-radius: 12px;
   padding: 12px;
   background: var(--cp-surface);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .memory-meta {
@@ -1348,7 +1348,7 @@ fetchServerModels()
 }
 
 .tag.confirmed {
-  color: #16a34a;
+  color: #e4e1e6;
 }
 
 .memory-actions {
@@ -1385,7 +1385,7 @@ fetchServerModels()
   border: 1px solid var(--cp-border);
   border-radius: 14px;
   padding: 14px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .model-title {
@@ -1460,7 +1460,7 @@ fetchServerModels()
 
 .local-motion-item.active {
   border-color: var(--cp-primary-strong);
-  background: rgba(79, 142, 240, 0.2);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .local-motion-name {
@@ -1482,7 +1482,7 @@ fetchServerModels()
   background: var(--cp-surface);
   color: var(--cp-text);
   outline: none;
-  box-shadow: 0 0 0 2px rgba(79, 142, 240, 0.35);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35);
   font-family: inherit;
 }
 
@@ -1526,30 +1526,6 @@ fetchServerModels()
   background: rgba(0, 0, 0, 0.35);
 }
 
-[data-theme="dark"] .cp-window {
-  --cp-bg: #14161c;
-  --cp-surface: #1e2230;
-  --cp-surface-muted: #1f242c;
-  --cp-border: #2a2f38;
-  --cp-text: #f1f5f9;
-  --cp-muted: #8b8d91;
-  --cp-primary: #a9c4ff;
-  --cp-primary-strong: #c9d8ff;
-  --cp-primary-ink: #062a26;
-  --cp-shadow: 0 18px 40px rgba(3, 8, 4, 0.6);
-  --el-color-primary: #a9c4ff;
-  --el-color-primary-light-3: rgba(79, 142, 240, 0.55);
-  --el-color-primary-light-5: rgba(79, 142, 240, 0.35);
-  --el-color-primary-light-7: rgba(79, 142, 240, 0.22);
-  --el-color-primary-light-8: rgba(79, 142, 240, 0.18);
-  --el-color-primary-light-9: rgba(79, 142, 240, 0.14);
-  --el-color-primary-dark-2: #7aa0f5;
-  --el-text-color-primary: #f1f5f9;
-  --el-border-color: #2a2f38;
-  --el-border-color-light: #2a2f38;
-  --el-fill-color-light: rgba(79, 142, 240, 0.18);
-}
-
 /* ── Element Plus overrides ── */
 .cp-window :deep(.el-button) {
   border-color: var(--cp-border);
@@ -1561,7 +1537,7 @@ fetchServerModels()
 }
 
 .cp-window :deep(.el-button:hover) {
-  background: rgba(79, 142, 240, 0.15);
+  background: rgba(255, 255, 255, 0.15);
   border-color: var(--cp-primary);
   color: var(--cp-text);
 }
@@ -1570,7 +1546,7 @@ fetchServerModels()
   background: var(--cp-primary);
   border-color: var(--cp-primary);
   color: var(--cp-primary-ink);
-  box-shadow: 0 10px 20px rgba(79, 142, 240, 0.3);
+  box-shadow: 0 10px 20px rgba(255, 255, 255, 0.3);
 }
 
 .cp-window :deep(.el-button--primary:hover) {
@@ -1584,7 +1560,7 @@ fetchServerModels()
 
 .cp-window :deep(.el-button.is-text:hover) {
   color: var(--cp-text);
-  background: rgba(79, 142, 240, 0.12);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .cp-window :deep(.el-input__wrapper),
@@ -1598,7 +1574,7 @@ fetchServerModels()
 
 .cp-window :deep(.el-input__wrapper.is-focus),
 .cp-window :deep(.el-select__wrapper.is-focus) {
-  box-shadow: inset 0 0 0 1px var(--cp-primary-strong), 0 0 0 3px rgba(79, 142, 240, 0.35);
+  box-shadow: inset 0 0 0 1px var(--cp-primary-strong), 0 0 0 3px rgba(255, 255, 255, 0.35);
 }
 
 .cp-window :deep(.el-progress-bar__inner) {
@@ -1613,19 +1589,27 @@ fetchServerModels()
 <style>
 /* Global styles for popper (not scoped) */
 .companion-popper {
-  --el-color-primary: #a9c4ff;
-  --el-color-primary-light-9: rgba(79, 142, 240, 0.15);
-  --el-text-color-primary: #0f172a;
-  --el-border-color-light: #e2e8f0;
-  --el-bg-color-overlay: #ffffff;
+  --el-color-primary: #ffffff;
+  --el-color-primary-light-9: rgba(255, 255, 255, 0.08);
+  --el-text-color-primary: #e4e1e6;
+  --el-border-color-light: #2c2c30;
+  --el-bg-color-overlay: #1f1f22;
+  --el-bg-color: #1b1b1e;
+  --el-fill-color-light: rgba(255, 255, 255, 0.08);
+  --el-text-color-regular: #c4c7c8;
+  --el-border-color: #353438;
+}
+
+.companion-popper .el-select-dropdown__item {
+  color: #c4c7c8;
 }
 
 .companion-popper .el-select-dropdown__item.is-selected {
-  color: #08322e;
-  font-weight: 600;
+  color: #ffffff;
+  font-weight: 500;
 }
 
 .companion-popper .el-select-dropdown__item.is-hovering {
-  background: rgba(79, 142, 240, 0.2);
+  background: rgba(255, 255, 255, 0.08);
 }
 </style>

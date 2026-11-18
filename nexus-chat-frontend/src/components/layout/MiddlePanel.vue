@@ -5,63 +5,110 @@
       <AgentChatView />
     </template>
 
+    <!-- Prism c2 / c3: directory detail cards for the selected contact / group -->
+    <ContactDetail
+      v-else-if="detailContact"
+      :contact="detailContact"
+      @message="openContactChat"
+      @call="callContact"
+      @remove="removeContact"
+      @select="selectMutual"
+      @close="selectedContactId = null"
+    />
+    <GroupDetail
+      v-else-if="detailGroup"
+      :group="detailGroup"
+      @enter="enterGroup"
+      @close="selectedGroupId = null"
+    />
+
     <template v-else-if="chatStore.activeChat">
-      <!-- Chat Header -->
+      <!-- Conversation header — Prism 56px bar -->
       <header class="chat-header">
         <div class="header-info" @click="toggleRightPanel">
-          <!-- Mobile back button -->
           <button v-if="isMobile" class="mobile-back-btn" :aria-label="$t('common.back')" @click.stop="handleMobileBack">
-            <el-icon :size="22"><ArrowLeft /></el-icon>
+            <span class="material-symbols-outlined">arrow_back</span>
           </button>
+
           <div class="avatar-wrapper">
-            <el-avatar :size="44" :src="chatStore.activeChat.avatar || defaultAvatar" class="chat-avatar" />
-            <span v-if="chatStore.activeChat.type !== 'GROUP'" class="status-dot" :class="{ online: chatStore.activeChat.status === 'online' }"></span>
+            <div class="avatar-frame">
+              <img
+                v-if="chatStore.activeChat.avatar"
+                class="chat-avatar"
+                :src="chatStore.activeChat.avatar"
+                alt=""
+              />
+              <div
+                v-else
+                class="avatar-fallback"
+                :data-initial="(chatStore.activeChat.name || '?').trim().charAt(0) || '?'"
+              ></div>
+            </div>
+            <span
+              v-if="chatStore.activeChat.type !== 'GROUP'"
+              class="status-dot"
+              :class="{ online: chatStore.activeChat.status === 'online' }"
+            ></span>
           </div>
+
           <div class="chat-meta">
             <div class="name-row">
               <span class="chat-name">{{ chatStore.activeChat.name }}</span>
-              <span v-if="chatStore.activeChat.type !== 'GROUP' && chatStore.activeChat.status === 'online'" class="online-badge">{{ $t('chat.online').toUpperCase() }}</span>
+              <span v-if="chatStore.activeChat.type === 'GROUP'" class="role-chip">
+                {{ t('chat.memberCount', { n: chatStore.activeChat.memberCount || 0 }) }}
+              </span>
             </div>
-            <span class="chat-status">
-              <template v-if="chatStore.activeChat.type === 'GROUP'">
-                <el-icon class="member-icon"><User /></el-icon>
-                <span>{{ chatStore.activeChat.memberCount || 0 }} {{ $t('group.members') }}</span>
-              </template>
-              <template v-else>
-                {{ chatStore.activeChat.status === 'online' ? $t('chat.activeNow') : $t('chat.' + (chatStore.activeChat.status || 'offline')) }}
-              </template>
-            </span>
+            <div class="status-row">
+              <span
+                class="status-pip"
+                :class="{ online: chatStore.activeChat.status === 'online' }"
+              ></span>
+              <span class="chat-status">
+                <template v-if="chatStore.activeChat.type === 'GROUP'">
+                  {{ chatStore.activeChat.memberCount || 0 }} {{ $t('group.members') }}
+                </template>
+                <template v-else>
+                  {{ chatStore.activeChat.status === 'online' ? $t('chat.activeNow') : $t('chat.' + (chatStore.activeChat.status || 'offline')) }}
+                </template>
+              </span>
+            </div>
           </div>
         </div>
+
         <div class="header-actions">
           <button class="action-btn" :title="$t('chat.audioCall')" :aria-label="$t('chat.audioCall')" @click="startAudioCall" :disabled="!canCall">
-            <el-icon :size="22"><Phone /></el-icon>
+            <span class="material-symbols-outlined">call</span>
           </button>
           <button class="action-btn" :title="$t('chat.videoCall')" :aria-label="$t('chat.videoCall')" @click="startVideoCall" :disabled="!canCall">
-            <el-icon :size="22"><VideoCamera /></el-icon>
+            <span class="material-symbols-outlined">videocam</span>
           </button>
           <div class="action-divider"></div>
+          <button class="action-btn" @click="requestSearch" :title="$t('group.searchMessages')" :aria-label="$t('group.searchMessages')">
+            <span class="material-symbols-outlined">search</span>
+          </button>
           <button class="action-btn" @click="toggleRightPanel" :title="$t('chat.moreInfo')" :aria-label="$t('chat.moreInfo')">
-            <el-icon :size="22"><MoreFilled /></el-icon>
+            <span class="material-symbols-outlined">info</span>
           </button>
         </div>
       </header>
 
-      <!-- Message List -->
+      <!-- Message stream -->
       <div class="messages-container">
+        <div class="grid-overlay"></div>
+
         <!-- Loading (cold start) -->
         <div v-if="isLoadingMessages && !currentMessages.length" class="msg-state">
           <span class="msg-spinner"></span>
         </div>
         <!-- Load error -->
         <div v-else-if="messageLoadError && !currentMessages.length" class="msg-state">
-          <el-icon :size="40" class="msg-state-icon msg-state-icon--error"><WarningFilled /></el-icon>
+          <span class="material-symbols-outlined msg-state-icon msg-state-icon--error">cloud_off</span>
           <p class="msg-state-text">{{ $t('chat.messagesLoadFailed') }}</p>
           <button class="msg-retry" @click="retryLoadMessages">{{ $t('common.retry') }}</button>
         </div>
         <!-- Empty conversation -->
         <div v-else-if="!currentMessages.length" class="msg-state">
-          <el-icon :size="46" class="msg-state-icon"><ChatDotRound /></el-icon>
+          <span class="material-symbols-outlined msg-state-icon">forum</span>
           <p class="msg-state-text">{{ $t('chat.noMessagesYet') }}</p>
         </div>
         <!-- Messages -->
@@ -77,7 +124,7 @@
         />
       </div>
 
-      <!-- Input Area -->
+      <!-- Composer -->
       <div class="input-area">
         <MessageInput
           :reply-to="replyToMessage"
@@ -87,55 +134,99 @@
       </div>
     </template>
 
+    <!-- Prism c0: standby state — cybernetic eye + action triggers + status strip. -->
     <div v-else class="empty-state">
-      <!-- Animated background decorations -->
-      <div class="bg-decorations">
-        <div class="bg-circle bg-circle-1"></div>
-        <div class="bg-circle bg-circle-2"></div>
-        <div class="bg-circle bg-circle-3"></div>
+      <div class="grid-overlay"></div>
+
+      <!-- Top alignment bar -->
+      <div class="standby-topbar">
+        <div class="standby-state">
+          <span class="material-symbols-outlined">visibility</span>
+          <span>{{ $t('chat.systemState') }}</span>
+        </div>
+        <div class="standby-telemetry">
+          <div class="standby-ping">
+            <span>{{ $t('chat.pingLabel') }}</span>
+            <span class="bright">{{ $t('chat.pingValue') }}</span>
+          </div>
+          <div class="standby-sep"></div>
+          <div>{{ $t('chat.cipherLabel') }}</div>
+        </div>
       </div>
 
-      <!-- Main content -->
-      <div class="empty-content animate-fade-in-up">
-        <div class="icon-container animate-float">
-          <img src="@/assets/images/image.jpg" alt="Nexus Logo" class="logo-img" />
+      <!-- Centerpiece visual & copy -->
+      <div class="standby-center">
+        <div class="standby-eye-wrap">
+          <div class="standby-eye-halo"></div>
+          <div class="standby-eye" ref="eyeHost" aria-hidden="true"></div>
         </div>
 
-        <h2 class="welcome-title">
-          {{ $t('chat.welcomeTo') }} <span class="text-gradient">Nexus</span>
-        </h2>
+        <div class="standby-copy">
+          <div class="standby-pill">
+            <span class="standby-dot"></span>
+            {{ $t('chat.standbyMode') }}
+          </div>
 
-        <p class="welcome-subtitle">
-          {{ $t('chat.welcomeSubtitle') }}
-        </p>
+          <h2 class="welcome-title">{{ $t('chat.standbyTitle') }}</h2>
 
-        <button class="start-chat-btn" @click="openNewChat">
-          <el-icon><ChatLineSquare /></el-icon>
-          <span>{{ $t('chat.startNewChat') }}</span>
-        </button>
+          <i18n-t keypath="chat.standbyDesc" tag="p" class="welcome-subtitle" scope="global">
+            <template #kbd><kbd class="standby-inline-kbd">⌘N</kbd></template>
+          </i18n-t>
+        </div>
+
+        <div class="standby-actions">
+          <button class="standby-btn primary" type="button" @click="openNewChat">
+            <span class="material-symbols-outlined">add</span>
+            <span class="standby-btn-label">{{ $t('chat.startPrivateChat') }}</span>
+            <span class="standby-kbd">⌘N</span>
+          </button>
+          <button class="standby-btn" type="button" @click="openNewGroup">
+            <span class="material-symbols-outlined">group_add</span>
+            <span class="standby-btn-label">{{ $t('chat.newGroup') }}</span>
+            <span class="standby-kbd dim">⌘G</span>
+          </button>
+          <button class="standby-btn" type="button" @click="wakeAi">
+            <span class="material-symbols-outlined">auto_awesome</span>
+            <span class="standby-btn-label">{{ $t('chat.wakeAi') }}</span>
+            <span class="standby-kbd dim">⌘J</span>
+          </button>
+        </div>
       </div>
 
-      <!-- Bottom encrypted label -->
-      <div class="encrypted-label">
-        <el-icon><Lock /></el-icon>
-        <span>{{ $t('chat.endToEndEncrypted') }}</span>
+      <!-- Bottom hardware-inspired status strip -->
+      <div class="standby-strip">
+        <div class="standby-rule"></div>
+        <div class="standby-meta">
+          <span class="standby-meta-item">
+            <span class="material-symbols-outlined">lock</span>
+            {{ $t('chat.encryptReady') }}
+          </span>
+          <span>·</span>
+          <span>{{ $t('chat.latencyLabel') }}</span>
+          <span>·</span>
+          <span class="bright">{{ $t('chat.monoMode') }}</span>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { inject, watch, computed, ref, h } from 'vue'
+import { inject, watch, computed, ref, h, onMounted, onUnmounted, nextTick } from 'vue'
+import * as THREE from 'three'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
 import { useUserStore } from '@/stores/user'
 import { useCallStore } from '@/stores/call'
 import { messageAPI, resolveFileUrl } from '@/services/api'
 import websocket from '@/services/websocket'
-import { Phone, MoreFilled, ChatLineSquare, Lock, VideoCamera, User, ArrowLeft, WarningFilled, ChatDotRound } from '@element-plus/icons-vue'
 import MessageList from '@/components/chat/MessageList.vue'
 import MessageInput from '@/components/chat/MessageInput.vue'
 import AgentChatView from '@/components/agent/AgentChatView.vue'
+import ContactDetail from '@/components/contact/ContactDetail.vue'
+import GroupDetail from '@/components/chat/GroupDetail.vue'
+import { useContactStore } from '@/stores/contact'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 
@@ -145,12 +236,84 @@ const userStore = useUserStore()
 const callStore = useCallStore()
 const { t } = useI18n()
 const toggleRightPanel = inject('toggleRightPanel')
+const requestSearch = inject('requestSearch', () => {})
 const isMobile = inject('isMobile', { value: false })
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 const replyToMessage = ref(null)
 
 // Detect virtual AI assistant chat — its messages flow through HTTP/SSE, not WebSocket.
 const isAiAssistant = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
+
+// ── Directory detail panes (Prism c2 / c3) ───────────────────────────────────
+// The left pane owns the selection; records are re-read from the stores so
+// presence and member counts stay live while a card is open.
+const contactStore = useContactStore()
+const router = useRouter()
+const activeView = inject('activeView', ref('chats'))
+const setActiveView = inject('setActiveView', () => {})
+const enterAi = inject('enterAi', null)
+const selectedContactId = inject('selectedContactId', ref(null))
+const selectedGroupId = inject('selectedGroupId', ref(null))
+
+const detailContact = computed(() => {
+  if (activeView.value !== 'contacts' || selectedContactId.value == null) return null
+  return contactStore.contacts.find((c) => c.id === selectedContactId.value) || null
+})
+const detailGroup = computed(() => {
+  if (activeView.value !== 'groups' || selectedGroupId.value == null) return null
+  return chatStore.groupChats.find((g) => g.id === selectedGroupId.value) || null
+})
+
+const openContactChat = async (contact) => {
+  await chatStore.createDirectChat(userStore.currentUser?.id, contact)
+  setActiveView('chats')
+}
+
+const callContact = async (contact, type) => {
+  try {
+    await callStore.initiateCall(
+      {
+        id: contact.id,
+        name: contact.nickname,
+        nickname: contact.nickname,
+        avatar: contact.avatar,
+        avatarUrl: contact.avatar
+      },
+      type
+    )
+  } catch (error) {
+    console.error('Failed to start call:', error)
+    ElMessage.error(error.message || 'Failed to start call')
+  }
+}
+
+const removeContact = async (contact) => {
+  try {
+    await ElMessageBox.confirm(
+      t('contact.confirmRemove', { name: contact.nickname }),
+      t('contact.removeContact'),
+      { confirmButtonText: t('common.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' }
+    )
+    await contactStore.removeContactRequest(userStore.currentUser?.id, contact.id)
+    selectedContactId.value = null
+    ElMessage.success(t('contact.removeSuccess'))
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('Failed to remove contact:', error)
+      ElMessage.error(t('contact.removeFailed'))
+    }
+  }
+}
+
+// A mutual contact opens in place when it is one of ours, else its profile page.
+const selectMutual = (user) => {
+  if (contactStore.contacts.some((c) => c.id === user.id)) selectedContactId.value = user.id
+  else router.push(`/user/${user.id}`)
+}
+
+const enterGroup = (group) => {
+  chatStore.setActiveChat(group)
+  setActiveView('chats')
+}
 
 // Handle mobile back - clear active chat to return to chat list
 const handleMobileBack = () => {
@@ -200,6 +363,27 @@ async function startVideoCall() {
 const emit = defineEmits(['openNewChat'])
 const openNewChat = () => {
   emit('openNewChat')
+}
+
+// ── Prism c0: standby actions ────────────────────────────────────────────────
+const requestCreateGroup = inject('requestCreateGroup', null)
+
+const openNewGroup = () => {
+  if (requestCreateGroup) {
+    requestCreateGroup()
+  } else {
+    setActiveView('groups')
+  }
+}
+const wakeAi = () => {
+  const aiChat = chatStore.sortedChats?.find((c) => c.id === 'ai-assistant')
+  const open = () => {
+    setActiveView('ai')
+    if (aiChat) chatStore.setActiveChat(aiChat)
+  }
+  // Through the Creator's Eye warp when Main provides it; the chat only opens on confirm.
+  if (enterAi) enterAi(open)
+  else open()
 }
 
 // Get messages for current chat from messageStore
@@ -453,17 +637,17 @@ const handleViewEditHistory = async (msg) => {
       key: item.id,
       style: {
         padding: '10px 0',
-        borderBottom: idx === history.length - 1 ? 'none' : '1px solid rgba(148, 163, 184, 0.25)'
+        borderBottom: idx === history.length - 1 ? 'none' : '1px solid rgba(68, 71, 72, 0.3)'
       }
     }, [
       h('div', {
-        style: { fontSize: '12px', color: '#94a3b8', marginBottom: '6px', fontWeight: '600' }
+        style: { fontSize: '12px', color: '#8e9192', marginBottom: '6px', fontWeight: '600' }
       }, `#${idx + 1} · ${formatHistoryTime(item.editedAt)}`),
       h('div', {
-        style: { fontSize: '13px', color: '#ef4444', marginBottom: '4px', wordBreak: 'break-word' }
+        style: { fontSize: '13px', color: '#f2b8b5', marginBottom: '4px', wordBreak: 'break-word' }
       }, `− ${item.previousContent || ''}`),
       h('div', {
-        style: { fontSize: '13px', color: '#10b981', wordBreak: 'break-word' }
+        style: { fontSize: '13px', color: '#ffffff', wordBreak: 'break-word' }
       }, `+ ${item.newContent || ''}`)
     ]))
     ElMessageBox.alert(
@@ -489,179 +673,403 @@ const handleReactMessage = async (msg, emoji) => {
     ElMessage.error(t('chat.reactionFailed'))
   }
 }
+
+// ── Prism c0: cybernetic "eye of the machine" on the standby screen ──────────
+const eyeHost = ref(null)
+let eyeTeardown = null
+
+const mountStandbyEye = async () => {
+  if (eyeTeardown || !eyeHost.value) return
+  const container = eyeHost.value
+  const width = container.clientWidth || 360
+  const height = container.clientHeight || 360
+
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
+  camera.position.z = 7
+
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
+  renderer.setSize(width, height)
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  container.appendChild(renderer.domElement)
+
+  const eyeGroup = new THREE.Group()
+  scene.add(eyeGroup)
+
+  // Outer orbit rings (mechanical aperture)
+  eyeGroup.add(new THREE.Mesh(
+    new THREE.RingGeometry(2.35, 2.38, 64),
+    new THREE.MeshBasicMaterial({ color: 0x52525b, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+  ))
+  const ring2 = new THREE.Mesh(
+    new THREE.RingGeometry(2.0, 2.02, 64),
+    new THREE.MeshBasicMaterial({ color: 0x71717a, side: THREE.DoubleSide, transparent: true, opacity: 0.4 })
+  )
+  eyeGroup.add(ring2)
+
+  // Segmented dashed outer ring
+  const segmentGroup = new THREE.Group()
+  const segCount = 36
+  for (let i = 0; i < segCount; i++) {
+    if (i % 3 === 0) continue
+    const angle = (i / segCount) * Math.PI * 2
+    const r = 2.2
+    const dotGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(Math.cos(angle) * r, Math.sin(angle) * r, 0),
+      new THREE.Vector3(Math.cos(angle) * (r + 0.08), Math.sin(angle) * (r + 0.08), 0)
+    ])
+    segmentGroup.add(new THREE.Line(dotGeo, new THREE.LineBasicMaterial({ color: 0xa1a1aa, transparent: true, opacity: 0.5 })))
+  }
+  eyeGroup.add(segmentGroup)
+
+  // Sclera / dark metallic sphere
+  const eyeball = new THREE.Mesh(
+    new THREE.SphereGeometry(1.6, 64, 64),
+    new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.2, metalness: 0.8 })
+  )
+  eyeGroup.add(eyeball)
+
+  // Iris: rim + spokes + pupil + glint
+  const irisGroup = new THREE.Group()
+  irisGroup.position.z = 1.35
+  eyeball.add(irisGroup)
+  irisGroup.add(new THREE.Mesh(
+    new THREE.RingGeometry(0.7, 0.74, 48),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+  ))
+  for (let j = 0; j < 16; j++) {
+    const theta = (j / 16) * Math.PI * 2
+    const spokeGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(Math.cos(theta) * 0.35, Math.sin(theta) * 0.35, 0),
+      new THREE.Vector3(Math.cos(theta) * 0.68, Math.sin(theta) * 0.68, 0)
+    ])
+    irisGroup.add(new THREE.Line(spokeGeo, new THREE.LineBasicMaterial({ color: 0x71717a, transparent: true, opacity: 0.7 })))
+  }
+  const pupil = new THREE.Mesh(
+    new THREE.CircleGeometry(0.35, 48),
+    new THREE.MeshBasicMaterial({ color: 0x09090b })
+  )
+  pupil.position.z = 0.02
+  irisGroup.add(pupil)
+  const glint = new THREE.Mesh(
+    new THREE.CircleGeometry(0.08, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  )
+  glint.position.set(0.12, 0.12, 0.03)
+  irisGroup.add(glint)
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8))
+  const dirLight = new THREE.DirectionalLight(0xffffff, 2.0)
+  dirLight.position.set(3, 4, 5)
+  scene.add(dirLight)
+  const rimLight = new THREE.DirectionalLight(0xa1a1aa, 1.2)
+  rimLight.position.set(-3, -3, 2)
+  scene.add(rimLight)
+
+  // Cursor-driven gaze, clamped so the eye never rolls unnaturally
+  let targetRotX = 0
+  let targetRotY = 0
+  const onMouseMove = (event) => {
+    const rect = container.getBoundingClientRect()
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+    const y = -(((event.clientY - rect.top) / rect.height) * 2 - 1)
+    targetRotY = Math.max(-0.65, Math.min(0.65, x * 0.7))
+    targetRotX = Math.max(-0.5, Math.min(0.5, -y * 0.55))
+  }
+  window.addEventListener('mousemove', onMouseMove)
+
+  const onResize = () => {
+    const w = container.clientWidth || width
+    const h = container.clientHeight || height
+    if (!w || !h) return
+    camera.aspect = w / h
+    camera.updateProjectionMatrix()
+    renderer.setSize(w, h)
+  }
+  onResize()
+  window.addEventListener('resize', onResize)
+  // The host is sized with vh units, so it changes without a window resize event.
+  const resizeObserver = new ResizeObserver(onResize)
+  resizeObserver.observe(container)
+
+  const clock = new THREE.Clock()
+  let frame = 0
+  const animate = () => {
+    frame = requestAnimationFrame(animate)
+    const time = clock.getElapsedTime()
+    eyeball.rotation.y += (targetRotY - eyeball.rotation.y) * 0.08
+    eyeball.rotation.x += (targetRotX - eyeball.rotation.x) * 0.08
+    ring2.rotation.z = time * 0.2
+    segmentGroup.rotation.z = time * 0.08
+    const scale = 1.0 + Math.sin(time * 1.5) * 0.015
+    eyeGroup.scale.set(scale, scale, scale)
+    renderer.render(scene, camera)
+  }
+  animate()
+
+  eyeTeardown = () => {
+    cancelAnimationFrame(frame)
+    window.removeEventListener('mousemove', onMouseMove)
+    window.removeEventListener('resize', onResize)
+    resizeObserver.disconnect()
+    renderer.dispose()
+    container.removeChild(renderer.domElement)
+  }
+}
+
+// Only mount the WebGL canvas while the standby screen is actually on screen.
+watch(
+  () => !chatStore.activeChat,
+  async (isStandby) => {
+    if (isStandby) {
+      await nextTick()
+      mountStandbyEye()
+    } else if (eyeTeardown) {
+      eyeTeardown()
+      eyeTeardown = null
+    }
+  },
+  { immediate: true }
+)
+
+onUnmounted(() => {
+  if (eyeTeardown) {
+    eyeTeardown()
+    eyeTeardown = null
+  }
+})
 </script>
+
 
 <style scoped>
 .middle-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f8fafc;
+  background: #131316;
   position: relative;
+  min-width: 0;
 }
 
-[data-theme="dark"] .middle-panel {
-  background: #0F1115;
+/* Faint monochrome dot grid used across Prism panes */
+.grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: radial-gradient(#ffffff 1px, transparent 1px);
+  background-size: 24px 24px;
+  z-index: 0;
 }
 
+/* ── Header ─────────────────────────────────────────────── */
 .chat-header {
-  height: 80px;
-  padding: 0 32px;
+  height: 56px;
+  padding: 0 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  z-index: 10;
-  position: sticky;
-  top: 0;
-}
-
-[data-theme="dark"] .chat-header {
-  background: rgba(24, 27, 33, 0.72);
-  border-bottom: 1px solid #232730;
+  gap: 16px;
+  background: rgba(14, 14, 17, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(68, 71, 72, 0.2);
+  z-index: 20;
+  flex-shrink: 0;
 }
 
 .header-info {
   display: flex;
   align-items: center;
   gap: 16px;
+  min-width: 0;
   flex: 1;
   cursor: pointer;
 }
 
 .avatar-wrapper {
   position: relative;
+  flex-shrink: 0;
+}
+
+.avatar-frame {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
+}
+
+.avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
 .chat-avatar {
-  border: 2px solid rgba(226, 232, 240, 0.5);
-  transition: var(--tg-transition);
-}
-
-.header-info:hover .chat-avatar {
-  border-color: var(--tg-primary);
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(100%) contrast(1.1);
 }
 
 .status-dot {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--tg-offline);
-  border: 3px solid var(--tg-surface);
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #8e9192;
+  box-shadow: 0 0 0 2px #0e0e11;
 }
 
 .status-dot.online {
-  background: var(--tg-online);
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  background: #ffffff;
 }
 
 .chat-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
+  min-width: 0;
 }
 
 .name-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  min-height: 28px;
+  min-width: 0;
 }
 
 .chat-name {
-  font-weight: 700;
-  font-size: 17px;
-  color: var(--tg-text-primary);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.online-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--tg-radius-full);
-  background: rgba(20, 184, 166, 0.15);
-  color: var(--tg-online);
-  letter-spacing: 0.5px;
+.role-chip {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #2a2a2d;
+  color: #c4c7c8;
+  line-height: 16px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #6f7274;
+  flex-shrink: 0;
+}
+
+.status-pip.online {
+  background: #ffffff;
 }
 
 .chat-status {
-  font-size: 13px;
-  color: var(--tg-text-secondary);
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.chat-status .member-icon {
-  font-size: 14px;
-  color: var(--tg-primary);
+  letter-spacing: 0.02em;
+  color: #c4c7c8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .action-btn {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  background: transparent;
-  border-radius: 50%;
-  color: var(--tg-text-secondary);
+  background: #1b1b1e;
+  border-radius: 4px;
+  color: #c4c7c8;
   cursor: pointer;
-  transition: var(--tg-transition);
+  transition: all 0.15s ease;
 }
 
-.action-btn:hover {
-  background: rgba(6, 182, 212, 0.1);
-  color: var(--tg-primary);
+.action-btn .material-symbols-outlined {
+  font-size: 18px;
 }
 
-.action-btn:nth-child(2):hover {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--tg-secondary);
+.action-btn:hover:not(:disabled) {
+  background: #2a2a2d;
+  color: #ffffff;
+}
+
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .action-divider {
   width: 1px;
-  height: 24px;
-  background: var(--tg-divider);
-  margin: 0 8px;
+  height: 16px;
+  background: rgba(68, 71, 72, 0.3);
+  margin: 0 4px;
 }
 
+/* ── Message stream ─────────────────────────────────────── */
 .messages-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 10px 0;
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+  padding: 0;
+  background: #131316;
   position: relative;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  z-index: 1;
 }
 
 .messages-container::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  width: 6px;
 }
 
-/* Message-area states (loading / error / empty conversation) */
+.messages-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.messages-container::-webkit-scrollbar-thumb {
+  background: #353438;
+  border-radius: 9999px;
+}
+
+.messages-container::-webkit-scrollbar-thumb:hover {
+  background: #8e9192;
+}
+
 .msg-state {
   height: 100%;
   min-height: 240px;
@@ -672,431 +1080,487 @@ const handleReactMessage = async (msg, emoji) => {
   gap: 10px;
   text-align: center;
   padding: 24px;
+  position: relative;
+  z-index: 1;
 }
 
 .msg-state-icon {
-  color: var(--tg-text-tertiary);
-  opacity: 0.6;
+  font-size: 40px;
+  color: #6f7274;
 }
 
 .msg-state-icon--error {
-  color: #ef4444;
-  opacity: 0.85;
+  color: #ffb4ab;
 }
 
 .msg-state-text {
   font-size: 13px;
-  color: var(--tg-text-secondary);
+  color: #c4c7c8;
   margin: 0;
 }
 
 .msg-retry {
   margin-top: 4px;
-  padding: 7px 20px;
-  border: none;
-  border-radius: var(--tg-radius-sm);
-  background: var(--teal-700);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 6px 16px;
+  border: 1px solid rgba(68, 71, 72, 0.6);
+  border-radius: 4px;
+  background: #1b1b1e;
+  color: #e4e1e6;
+  font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .msg-retry:hover {
-  background: #0c5e57;
+  background: #2a2a2d;
 }
 
 .msg-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--tg-surface-hover);
-  border-top-color: var(--tg-primary);
-  border-radius: 50%;
-  animation: msg-spin 0.8s linear infinite;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  border: 2px solid #2a2a2d;
+  border-top-color: #ffffff;
+  animation: spin 0.8s linear infinite;
 }
 
-@keyframes msg-spin {
+@keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-.messages-container::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  opacity: 0.3;
-  pointer-events: none;
-  background-image: radial-gradient(#E2E8F0 2px, transparent 2px);
-  background-size: 40px 40px;
-}
-
-[data-theme="dark"] .messages-container {
-  background: linear-gradient(180deg, #0f1115 0%, #14171c 100%);
-}
-
-[data-theme="dark"] .messages-container::before {
-  opacity: 0.1;
-}
-
+/* ── Composer ───────────────────────────────────────────── */
 .input-area {
-  padding: 16px 24px;
-  background: #ffffff;
+  flex-shrink: 0;
+  padding: 0 16px 16px;
+  background: #131316;
+  z-index: 20;
 }
 
-[data-theme="dark"] .input-area {
-  background: transparent;
-}
-
+/* ── Standby state (Prism c0) ─────────────────────────────
+   Values below are the exported screen's Tailwind classes resolved to CSS:
+   section = flex-col justify-between items-center px-space-lg py-space-xl. */
 .empty-state {
-  height: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
   align-items: center;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  justify-content: space-between;
   position: relative;
+  background: #131316;
   overflow: hidden;
+  padding: 40px 24px;
+}
+
+.empty-state .grid-overlay {
+  opacity: 0.03;
+}
+
+/* Top alignment bar: w-full max-w-3xl, font-code */
+.standby-topbar {
+  position: relative;
   z-index: 1;
-}
-
-/* Animated background decorations */
-.bg-decorations {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 0;
-}
-
-.bg-circle {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-}
-
-.bg-circle-1 {
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 500px;
-  height: 500px;
-  background: rgba(20, 184, 166, 0.15);
-  animation: float 6s ease-in-out infinite;
-}
-
-.bg-circle-2 {
-  top: 25%;
-  right: 25%;
-  width: 350px;
-  height: 350px;
-  background: rgba(6, 182, 212, 0.15);
-  animation: pulse-slow 4s ease-in-out infinite;
-}
-
-.bg-circle-3 {
-  bottom: 25%;
-  left: 25%;
-  width: 400px;
-  height: 400px;
-  background: rgba(16, 185, 129, 0.12);
-  animation: float 8s ease-in-out infinite reverse;
-}
-
-/* Main content */
-.empty-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  z-index: 2;
-  padding: 32px;
-  position: relative;
-}
-
-.icon-container {
-  width: 140px;
-  height: 140px;
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 40px;
-  box-shadow: 0 0 30px -5px rgba(20, 184, 166, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  cursor: pointer;
-  transition: transform 0.5s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.icon-container:hover {
-  transform: scale(1.1);
-}
-
-.logo-img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 40px;
-}
-
-.welcome-title {
-  font-size: 36px;
-  font-weight: 800;
-  color: #1e293b;
-  margin: 0 0 16px 0;
-  letter-spacing: -0.5px;
-}
-
-.text-gradient {
-  background: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.welcome-subtitle {
-  font-size: 16px;
-  color: #64748b;
-  line-height: 1.6;
-  margin: 0 0 40px 0;
-  font-weight: 500;
-}
-
-.start-chat-btn {
+  max-width: 768px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 16px 32px;
-  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
-  border: none;
-  border-radius: 16px;
-  color: white;
-  font-size: 15px;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 10px 30px -10px rgba(20, 184, 166, 0.5);
-  transition: all 0.3s ease;
+  justify-content: space-between;
+  gap: 16px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #c4c7c8;
 }
 
-.start-chat-btn:hover {
-  transform: translateY(-3px) scale(1.02);
-  box-shadow: 0 15px 40px -10px rgba(20, 184, 166, 0.6);
-}
-
-.start-chat-btn:active {
-  transform: scale(0.98);
-}
-
-.start-chat-btn .el-icon {
-  font-size: 20px;
-}
-
-/* Encrypted label */
-.encrypted-label {
-  position: absolute;
-  bottom: 32px;
-  display: inline-flex;
+.standby-state {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: rgba(100, 116, 139, 0.1);
-  backdrop-filter: blur(10px);
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  gap: 4px;
+  font-size: 13px;
+  line-height: 22px;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
-.encrypted-label .el-icon {
-  font-size: 14px;
-  color: #64748b;
-}
-
-.encrypted-label span {
-  font-size: 11px;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-/* Animations */
-@keyframes float {
-  0%, 100% { transform: translate(-50%, -50%); }
-  50% { transform: translate(-50%, calc(-50% - 15px)); }
-}
-
-@keyframes pulse-slow {
-  0%, 100% { opacity: 0.5; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.05); }
-}
-
-/* Animation class */
-.animate-fade-in-up {
-  animation: fadeInUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-}
-
-.animate-float {
-  animation: floatIcon 6s ease-in-out infinite;
-}
-
-@keyframes floatIcon {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(30px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-/* Dark mode */
-[data-theme="dark"] .empty-state {
-  background: linear-gradient(180deg, #0F1115 0%, #181B21 100%);
-}
-
-[data-theme="dark"] .bg-circle-1 {
-  background: rgba(20, 184, 166, 0.1);
-}
-
-[data-theme="dark"] .bg-circle-2 {
-  background: rgba(6, 182, 212, 0.1);
-}
-
-[data-theme="dark"] .bg-circle-3 {
-  background: rgba(16, 185, 129, 0.08);
-}
-
-[data-theme="dark"] .icon-container {
-  background: rgba(24, 27, 33, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-[data-theme="dark"] .welcome-title {
+.standby-state .material-symbols-outlined {
+  font-size: 16px;
   color: #ffffff;
 }
 
-[data-theme="dark"] .welcome-subtitle {
-  color: #94a3b8;
+.standby-telemetry {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-[data-theme="dark"] .encrypted-label {
-  background: rgba(30, 41, 59, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+.standby-ping {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-[data-theme="dark"] .encrypted-label .el-icon,
-[data-theme="dark"] .encrypted-label span {
-  color: #94a3b8;
+.standby-telemetry .bright {
+  color: #ffffff;
 }
 
-/* Mobile back button */
+.standby-sep {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(196, 199, 200, 0.3);
+}
+
+/* Centerpiece: my-auto max-w-xl */
+.standby-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin: auto 0;
+  max-width: 576px;
+}
+
+.standby-eye-wrap {
+  position: relative;
+  cursor: crosshair;
+}
+
+.standby-eye-halo {
+  position: absolute;
+  inset: -16px;
+  border-radius: 9999px;
+  background: rgba(27, 27, 30, 0.6);
+  filter: blur(24px);
+  opacity: 0.5;
+  transition: opacity 0.7s ease;
+  pointer-events: none;
+}
+
+.standby-eye-wrap:hover .standby-eye-halo {
+  opacity: 1;
+}
+
+.standby-eye {
+  --eye-size: min(360px, 70vw, 42vh);
+  width: var(--eye-size);
+  height: var(--eye-size);
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  margin: 0 auto;
+}
+
+.standby-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: -8px;
+}
+
+.standby-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  background: #1b1b1e;
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.standby-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #ffffff;
+  display: inline-block;
+}
+
+.welcome-title {
+  font-size: 32px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: #ffffff;
+  margin: 0;
+}
+
+.welcome-subtitle {
+  max-width: 448px;
+  font-size: 16px;
+  line-height: 1.625;
+  letter-spacing: -0.005em;
+  font-weight: 400;
+  color: #c4c7c8;
+  margin: 0;
+}
+
+.standby-inline-kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #2a2a2d;
+  color: #ffffff;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.standby-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+.standby-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #1f1f22;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.standby-btn-label {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.standby-btn .material-symbols-outlined {
+  font-size: 18px;
+  color: #c4c7c8;
+}
+
+.standby-btn:hover {
+  background: #2a2a2d;
+}
+
+.standby-btn:active {
+  transform: scale(0.98);
+}
+
+.standby-btn.primary {
+  background: #ffffff;
+  color: #2f3131;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+.standby-btn.primary .material-symbols-outlined {
+  color: #2f3131;
+}
+
+.standby-btn.primary:hover {
+  background: #e2e2e2;
+}
+
+.standby-kbd {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  opacity: 0.6;
+  margin-left: 2px;
+}
+
+.standby-kbd.dim {
+  color: #c4c7c8;
+  opacity: 1;
+}
+
+/* Bottom strip: w-full max-w-2xl, in flow (justify-between pins it) */
+.standby-strip {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 672px;
+}
+
+.standby-rule {
+  height: 1px;
+  width: 96px;
+  background: #353438;
+}
+
+.standby-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: rgba(196, 199, 200, 0.7);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.standby-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.standby-meta .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.standby-meta .bright {
+  color: #e4e1e6;
+}
+
+/* ── Mobile back button ─────────────────────────────────── */
 .mobile-back-btn {
-  display: none;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: #1b1b1e;
+  border-radius: 4px;
+  color: #c4c7c8;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-/* Mobile Responsive Styles */
-@media (max-width: 768px) {
-  .mobile-back-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    border: none;
-    background: transparent;
-    border-radius: 50%;
-    color: var(--tg-text-secondary);
-    cursor: pointer;
-    margin-right: 8px;
-    flex-shrink: 0;
-    transition: all 0.2s ease;
+.mobile-back-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.mobile-back-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
+}
+
+/* ── Standby: compact layouts ───────────────────────────── */
+@media (max-width: 900px) {
+  .standby-eye {
+    --eye-size: min(280px, 62vw, 30vh);
   }
 
-  .mobile-back-btn:hover {
-    background: rgba(0, 0, 0, 0.05);
-    color: var(--tg-text-primary);
-  }
-
-  .mobile-back-btn:active {
-    transform: scale(0.95);
-  }
-
-  .chat-header {
-    height: 64px;
-    padding: 0 12px;
-  }
-
-  .header-info {
-    gap: 8px;
-  }
-
-  .chat-avatar {
-    width: 40px !important;
-    height: 40px !important;
-  }
-
-  .chat-name {
-    font-size: 15px;
-  }
-
-  .chat-status {
-    font-size: 12px;
-  }
-
-  .header-actions {
-    gap: 2px;
-  }
-
-  .action-btn {
-    width: 36px;
-    height: 36px;
-  }
-
-  .action-divider {
-    margin: 0 4px;
-  }
-
-  .input-area {
-    padding: 12px 16px;
-  }
-
-  /* Empty state adjustments */
   .welcome-title {
-    font-size: 28px;
+    font-size: 24px;
   }
 
   .welcome-subtitle {
     font-size: 14px;
-    padding: 0 20px;
   }
 
-  .icon-container {
-    width: 100px;
-    height: 100px;
-    border-radius: 32px;
-    margin-bottom: 24px;
+  .standby-actions {
+    gap: 8px;
+    margin-top: 20px;
   }
 
-  .start-chat-btn {
-    padding: 14px 24px;
-    font-size: 14px;
-  }
-
-  .encrypted-label {
-    bottom: 20px;
+  .standby-btn {
+    padding: 9px 13px;
+    font-size: 12.5px;
   }
 }
 
-[data-theme="dark"] .mobile-back-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+@media (max-width: 560px) {
+  .standby-topbar {
+    display: none;
+  }
+
+  .empty-state {
+    padding: 16px;
+    justify-content: flex-start;
+    padding-top: 12px;
+  }
+
+  .standby-eye {
+    --eye-size: min(200px, 58vw, 24vh);
+    margin-bottom: -4px;
+  }
+
+  .standby-copy {
+    gap: 6px;
+  }
+
+  .welcome-title {
+    font-size: 20px;
+  }
+
+  .welcome-subtitle {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .standby-actions {
+    flex-direction: column;
+    width: 100%;
+    max-width: 260px;
+    margin-top: 16px;
+  }
+
+  .standby-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .standby-strip {
+    position: static;
+    transform: none;
+    margin-top: auto;
+    padding-top: 16px;
+    padding-bottom: 4px;
+    max-width: 100%;
+  }
+
+  .standby-meta {
+    gap: 8px;
+    font-size: 10px;
+  }
+}
+
+@media (max-height: 620px) and (min-width: 561px) {
+  .standby-topbar {
+    display: none;
+  }
+
+  .empty-state {
+    padding: 16px 24px;
+  }
+
+  .standby-eye {
+    --eye-size: min(220px, 55vw, 30vh);
+  }
+
+  .welcome-title {
+    font-size: 22px;
+  }
+
+  .standby-actions {
+    margin-top: 16px;
+  }
 }
 </style>
