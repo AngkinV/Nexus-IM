@@ -11,9 +11,9 @@
       :class="{ 'kb-switcher--active': !!store.activeKb }"
       :title="$t('agent.knowledge.headerLabel')"
     >
-      <span class="material-icons-round">menu_book</span>
+      <span class="material-symbols-outlined">menu_book</span>
       <span class="kb-text">{{ buttonLabel }}</span>
-      <el-icon><ArrowDown /></el-icon>
+      <span class="material-symbols-outlined">expand_more</span>
     </button>
 
     <template #dropdown>
@@ -33,9 +33,9 @@
           <div class="kb-row" :class="{ 'kb-row--current': store.activeKbId === kb.kbId }">
             <strong>{{ kb.name }}</strong>
             <span class="kb-row-hint">{{ kb.documentCount }} · {{ kb.chunkCount }}</span>
-            <el-tag v-if="store.activeKbId === kb.kbId" type="success" size="small" effect="light">
+            <span v-if="store.activeKbId === kb.kbId" class="kb-row-tag">
               {{ $t('agent.knowledge.selectorActive') }}
-            </el-tag>
+            </span>
           </div>
         </el-dropdown-item>
 
@@ -44,7 +44,7 @@
         </el-dropdown-item>
 
         <el-dropdown-item divided command="__manage__">
-          <el-icon><Setting /></el-icon>
+          <span class="material-symbols-outlined kb-manage-icon">tune</span>
           <span>{{ $t('agent.knowledge.manage') }}</span>
         </el-dropdown-item>
       </el-dropdown-menu>
@@ -55,7 +55,6 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, Setting } from '@element-plus/icons-vue'
 
 import { useKnowledgeStore } from '@/stores/knowledge'
 
@@ -90,39 +89,37 @@ function onSelect(command) {
 .kb-switcher {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  height: 34px;
-  background: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  color: var(--el-text-color-regular);
-  font-size: 13px;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #c4c7c8;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-  max-width: 200px;
+  transition: background 0.15s, color 0.15s;
+  min-width: 0;
+}
+
+.kb-switcher:hover,
+.kb-switcher--active {
+  color: #ffffff;
 }
 
 .kb-switcher:hover {
-  background: var(--el-fill-color);
-  border-color: var(--el-border-color);
+  background: #1f1f22;
 }
 
-.kb-switcher--active {
-  background: var(--el-color-primary-light-9);
-  border-color: var(--el-color-primary-light-5);
-  color: var(--el-color-primary);
-}
-
-.kb-switcher .material-icons-round {
-  font-size: 18px;
+.kb-switcher .material-symbols-outlined {
+  font-size: 14px;
 }
 
 .kb-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 120px;
+  max-width: 160px;
 }
 
 .kb-row {
@@ -134,6 +131,7 @@ function onSelect(command) {
 
 .kb-row strong {
   flex: 1;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -141,10 +139,25 @@ function onSelect(command) {
 
 .kb-row-hint {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #8e9192;
 }
 
 .kb-row--current strong {
-  color: var(--el-color-primary);
+  color: #ffffff;
+}
+
+.kb-row-tag {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #2a2a2d;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #ffffff;
+}
+
+.kb-manage-icon {
+  font-size: 16px;
+  margin-right: 6px;
 }
 </style>

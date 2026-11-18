@@ -2,12 +2,12 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import '@fontsource/material-icons-round'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import router from './router'
 import i18n from './locales/i18n'
 import App from './App.vue'
 import '@/styles/nexus-theme.css'
+import '@/styles/prism.css'
 
 const app = createApp(App)
 const pinia = createPinia()

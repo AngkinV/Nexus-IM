@@ -30,7 +30,7 @@
             @click="toggleSelect(contact.userId)"
           >
             <div class="contact-avatar">
-              <el-avatar :size="40" :src="contact.avatarUrl || contact.avatar || defaultAvatar" />
+              <div class="avatar-frame"><img v-if="contact.avatarUrl || contact.avatar" class="avatar-img" :src="contact.avatarUrl || contact.avatar" alt="" /><div v-else class="avatar-fallback">{{ (contact.nickname || contact.username || "?").charAt(0) }}</div></div>
               <span class="online-dot" :class="{ online: contact.isOnline }"></span>
             </div>
             <div class="contact-info">
@@ -38,13 +38,13 @@
               <span class="contact-username">@{{ contact.username }}</span>
             </div>
             <div class="check-box">
-              <span class="material-icons-round" v-if="selectedIds.has(contact.userId)">check_circle</span>
-              <span class="material-icons-round" v-else>radio_button_unchecked</span>
+              <span class="material-symbols-outlined is-on" v-if="selectedIds.has(contact.userId)">check_circle</span>
+              <span class="material-symbols-outlined" v-else>radio_button_unchecked</span>
             </div>
           </div>
         </template>
         <div v-else class="empty-state">
-          <span class="material-icons-round">group_off</span>
+          <span class="material-symbols-outlined">group_off</span>
           <p>{{ $t('group.noMoreContacts') }}</p>
         </div>
       </div>
@@ -210,7 +210,17 @@ const handleClose = () => {
 }
 
 .search-box {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.search-box :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  background: #16161a;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
+}
+
+.search-box :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
 }
 
 .contacts-list {
@@ -223,50 +233,70 @@ const handleClose = () => {
 .contact-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.15s ease;
 }
 
 .contact-item:hover {
-  background: #f5f7fa;
+  background: #222225;
 }
 
 .contact-item.selected {
-  background: rgba(16, 185, 129, 0.1);
-}
-
-[data-theme="dark"] .contact-item:hover {
-  background: #2a2d30;
-}
-
-[data-theme="dark"] .contact-item.selected {
-  background: rgba(16, 185, 129, 0.15);
+  background: #2a2a2d;
 }
 
 .contact-avatar {
   position: relative;
+  flex-shrink: 0;
+}
+
+.avatar-frame {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  object-fit: cover;
+  filter: grayscale(100%) contrast(1.1);
+}
+
+.avatar-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .online-dot {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
-  width: 10px;
-  height: 10px;
+  bottom: 0;
+  right: 0;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: #9ca3af;
-  border: 2px solid #ffffff;
+  background: #6f7274;
+  border: 2px solid #131316;
 }
 
 .online-dot.online {
-  background: #10b981;
-}
-
-[data-theme="dark"] .online-dot {
-  border-color: #1e1e1e;
+  background: #ffffff;
 }
 
 .contact-info {
@@ -274,34 +304,32 @@ const handleClose = () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 1px;
 }
 
 .contact-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  color: #1e293b;
+  color: #e4e1e6;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-theme="dark"] .contact-name {
-  color: #e2e8f0;
-}
-
 .contact-username {
-  font-size: 12px;
-  color: #64748b;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #8e9192;
 }
 
-.check-box .material-icons-round {
-  font-size: 22px;
-  color: #d1d5db;
-  transition: color 0.2s ease;
+.check-box .material-symbols-outlined {
+  font-size: 18px;
+  color: #6f7274;
+  transition: color 0.15s ease;
 }
 
-.contact-item.selected .check-box .material-icons-round {
-  color: #10B981;
+.check-box .material-symbols-outlined.is-on {
+  color: #ffffff;
 }
 
 .empty-state {
@@ -309,29 +337,30 @@ const handleClose = () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
-  color: #9ca3af;
+  padding: 36px 20px;
+  color: #8e9192;
 }
 
-.empty-state .material-icons-round {
-  font-size: 48px;
-  margin-bottom: 12px;
-  opacity: 0.5;
+.empty-state .material-symbols-outlined {
+  font-size: 32px;
+  margin-bottom: 10px;
+  color: #6f7274;
 }
 
 .empty-state p {
   margin: 0;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .selected-count {
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: rgba(16, 185, 129, 0.1);
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #10B981;
+  margin-top: 10px;
+  padding: 7px 10px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #c4c7c8;
   text-align: center;
 }
 
@@ -341,7 +370,6 @@ const handleClose = () => {
   gap: 8px;
 }
 
-/* Scrollbar */
 .contacts-list::-webkit-scrollbar {
   width: 4px;
 }
@@ -351,7 +379,7 @@ const handleClose = () => {
 }
 
 .contacts-list::-webkit-scrollbar-thumb {
-  background: rgba(156, 163, 175, 0.3);
+  background: rgba(142, 145, 146, 0.25);
   border-radius: 20px;
 }
 </style>

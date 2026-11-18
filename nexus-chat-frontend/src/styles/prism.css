@@ -1,0 +1,707 @@
+/* ─────────────────────────────────────────────────────────────
+   Prism design layer — transcribed 1:1 from the exported code.html
+   bundles (Monochrome Minimalist). Do not restyle: tokens here
+   must stay byte-comparable to the source `tailwind.config`.
+   ───────────────────────────────────────────────────────────── */
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/material-symbols-outlined/400.css';
+
+/* Geist Sans, scoped to Latin with `unicode-range` (same ranges Google Fonts
+   serves the export with). The packaged file also carries half-width glyphs
+   for full-width CJK punctuation (，！？：), which squeezed every Chinese
+   sentence; with the range in place those fall through to the system CJK
+   font and keep their full-width advance. */
+@font-face {
+  font-family: 'Geist Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-400-normal.woff2') format('woff2'),
+    url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-400-normal.woff') format('woff');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-500-normal.woff2') format('woff2'),
+    url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-500-normal.woff') format('woff');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-600-normal.woff2') format('woff2'),
+    url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-600-normal.woff') format('woff');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-700-normal.woff2') format('woff2'),
+    url('../../node_modules/@fontsource/geist-sans/files/geist-sans-latin-700-normal.woff') format('woff');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   Prism skin over the existing app tokens.
+
+   The whole app already reads its colours from `--tg-*` (nexus-theme.css),
+   so remapping those variables here re-skins every existing component —
+   message bubbles, inputs, modals, panels — without touching their logic.
+   This file is imported after nexus-theme.css, so it wins on equal
+   specificity.
+   ───────────────────────────────────────────────────────────── */
+:root,
+[data-theme="dark"],
+[data-theme="light"] {
+  --tg-primary: #ffffff;
+  --tg-primary-dark: #e2e2e2;
+  --tg-secondary: #c4c7c8;
+  --tg-background: #131316;
+  --tg-surface: #1b1b1e;
+  --tg-surface-hover: #2a2a2d;
+  --tg-background-chat: #131316;
+  --tg-divider: #2c2c30;
+  --tg-text-primary: #e4e1e6;
+  --tg-text-secondary: #c4c7c8;
+  --tg-text-tertiary: #8e9192;
+
+  /* Outgoing bubbles are solid white, incoming are raised surface. */
+  --tg-message-out: #ffffff;
+  --tg-message-in: #1f1f22;
+
+  --tg-online: #ffffff;
+  --tg-offline: #8e9192;
+  --tg-unread: #ffffff;
+
+  /* The prototype is deliberately square-ish: 4 / 8 / 12, never pill-round
+     except for avatars and count badges. */
+  --tg-radius-sm: 4px;
+  --tg-radius-md: 8px;
+  --tg-radius-lg: 12px;
+  --tg-radius-xl: 16px;
+  --tg-radius-full: 50%;
+
+  --tg-shadow-sm: none;
+  --tg-shadow-md: 0 1px 0 rgba(255, 255, 255, 0.03);
+  --tg-shadow-lg: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+  --tg-shadow-glow: none;
+  --tg-shadow-soft: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+
+  --gradient-primary: #ffffff;
+  --gradient-accent: #ffffff;
+
+  --tg-transition: all 0.15s ease;
+  --tg-transition-smooth: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  --tg-transition-slow: all 0.18s ease;
+
+  --tg-dialog-bg: #1b1b1e;
+  --tg-dialog-border: #2c2c30;
+  --tg-dialog-shadow: 0 32px 64px -32px rgba(0, 0, 0, 0.9);
+  --tg-dialog-radius: 8px;
+  --tg-dialog-scrim: rgba(6, 6, 8, 0.72);
+  --tg-dialog-close-bg: transparent;
+  --tg-dialog-close-color: #8e9192;
+  --tg-dialog-close-hover-bg: #2a2a2d;
+  --tg-dialog-close-hover-color: #ffffff;
+
+  --ai-coral: #ffffff;
+  --ai-coral-deep: #e2e2e2;
+  --ai-coral-grad: #ffffff;
+  --ai-coral-soft: rgba(255, 255, 255, 0.06);
+  --ai-coral-soft-hover: rgba(255, 255, 255, 0.1);
+  --ai-coral-border: rgba(255, 255, 255, 0.16);
+  --ai-coral-shadow: none;
+  --ai-hero-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 100%);
+  --ai-card-bg: #1f1f22;
+  --ai-card-border: #2c2c30;
+
+  color-scheme: dark;
+}
+
+/* Element Plus surfaces follow the same monochrome ramp so its dropdowns,
+   poppers and message boxes stop leaking blue. */
+:root {
+  --el-color-primary: #ffffff;
+  --el-color-primary-light-3: #e2e2e2;
+  --el-color-primary-light-5: #c4c7c8;
+  --el-color-primary-light-7: #8e9192;
+  --el-color-primary-light-8: #444748;
+  --el-color-primary-light-9: #2a2a2d;
+  --el-color-primary-dark-2: #d4d4d4;
+  --el-bg-color: #1b1b1e;
+  --el-bg-color-overlay: #1f1f22;
+  --el-bg-color-page: #131316;
+  --el-text-color-primary: #e4e1e6;
+  --el-text-color-regular: #c4c7c8;
+  --el-text-color-secondary: #8e9192;
+  --el-text-color-placeholder: #6f7274;
+  --el-border-color: #353438;
+  --el-border-color-light: #2c2c30;
+  --el-border-color-lighter: #26262a;
+  --el-fill-color: #1f1f22;
+  --el-fill-color-light: #1b1b1e;
+  --el-fill-color-blank: #131316;
+  --el-mask-color: rgba(6, 6, 8, 0.72);
+  --el-box-shadow-light: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+}
+
+/* preflight is disabled (Element Plus needs its own reset), so restore the
+   handful of base rules the Tailwind utilities assume. */
+*,
+::before,
+::after {
+  box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
+  border-color: #444748; /* outline-variant */
+}
+
+html {
+  color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background-color: #131316; /* surface */
+}
+
+body {
+  font-family: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #e4e1e6; /* on-surface */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button {
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Material Symbols — the bundles load this from Google Fonts; we ship it
+   locally through @fontsource so the glyph set is identical. */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-feature-settings: 'liga';
+}
+
+/* Thin monochrome scrollbars, matching the prototype's quiet surfaces. */
+.prism-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #353438 transparent;
+}
+
+.prism-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.prism-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prism-scroll::-webkit-scrollbar-thumb {
+  background-color: #353438; /* surface-container-highest */
+  border-radius: 9999px;
+}
+
+.prism-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #8e9192; /* outline */
+}
+
+/* Command palette backdrop — matches the bundle's overlay treatment. */
+.prism-overlay-enter-active,
+.prism-overlay-leave-active {
+  transition: opacity 180ms ease;
+}
+
+.prism-overlay-enter-from,
+.prism-overlay-leave-to {
+  opacity: 0;
+}
+
+.prism-dialog-enter-active,
+.prism-dialog-leave-active {
+  transition: opacity 180ms ease, transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.prism-dialog-enter-from,
+.prism-dialog-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.985);
+}
+
+/* Monochrome avatar fallback: the exported bundles reference Google-hosted
+   portraits that are unreachable here, so each avatar renders its initial in
+   the exact box the <img> occupied (grayscale, ring, radius all preserved). */
+[data-initial]::before {
+  content: attr(data-initial);
+  font-size: 0.75rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Primary-on-white corrections.
+
+   `--tg-primary` is now pure white, so every rule that painted
+   `color: white` on top of it would render an invisible label.
+   These overrides put the dark surface colour back on the ink side
+   and keep the primary surface flat instead of tinted.
+   ───────────────────────────────────────────────────────────── */
+.tg-button,
+button.tg-button {
+  background: var(--tg-primary);
+  color: #2f3131;
+  border: none;
+  box-shadow: none;
+}
+
+.tg-button:hover,
+button.tg-button:hover {
+  background: var(--tg-primary-dark);
+  color: #2f3131;
+}
+
+.tg-badge {
+  background: var(--tg-unread);
+  color: #2f3131;
+}
+
+/* Element Plus primary buttons/switch follow the same rule. */
+.el-button--primary {
+  --el-button-bg-color: #ffffff;
+  --el-button-border-color: #ffffff;
+  --el-button-text-color: #2f3131;
+  --el-button-hover-bg-color: #e2e2e2;
+  --el-button-hover-border-color: #e2e2e2;
+  --el-button-hover-text-color: #2f3131;
+  --el-button-active-bg-color: #d4d4d4;
+  --el-button-active-border-color: #d4d4d4;
+  --el-button-active-text-color: #2f3131;
+  --el-button-disabled-bg-color: #444748;
+  --el-button-disabled-border-color: #444748;
+  --el-button-disabled-text-color: #8e9192;
+}
+
+/* ============================================================
+   Element Plus — global Prism skin
+   EP ships a light theme by default; every shell we still use
+   (dialog, overlay, input, select, popper, message) is re-skinned
+   here so no light panel can leak through.
+   ============================================================ */
+:root {
+  --el-color-primary: #ffffff;
+  --el-color-primary-light-3: rgba(255, 255, 255, 0.55);
+  --el-color-primary-light-5: rgba(255, 255, 255, 0.35);
+  --el-color-primary-light-7: rgba(255, 255, 255, 0.2);
+  --el-color-primary-light-8: rgba(255, 255, 255, 0.16);
+  --el-color-primary-light-9: rgba(255, 255, 255, 0.1);
+  --el-color-primary-dark-2: #e2e2e2;
+  --el-color-success: #c4c7c8;
+  --el-color-warning: #c4c7c8;
+  --el-color-danger: #f2b8b5;
+  --el-color-error: #f2b8b5;
+  --el-color-info: #8e9192;
+  --el-bg-color: #1b1b1e;
+  --el-bg-color-page: #131316;
+  --el-bg-color-overlay: #1f1f22;
+  --el-text-color-primary: #e4e1e6;
+  --el-text-color-regular: #c4c7c8;
+  --el-text-color-secondary: #8e9192;
+  --el-text-color-placeholder: #6f7274;
+  --el-text-color-disabled: #6f7274;
+  --el-border-color: #353438;
+  --el-border-color-light: #2c2c30;
+  --el-border-color-lighter: #26262a;
+  --el-border-color-extra-light: #222225;
+  --el-border-color-dark: #444748;
+  --el-fill-color: #222225;
+  --el-fill-color-light: #1f1f22;
+  --el-fill-color-lighter: #1b1b1e;
+  --el-fill-color-blank: #131316;
+  --el-mask-color: rgba(6, 6, 8, 0.72);
+  --el-box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+  --el-box-shadow-light: 0 1px 0 rgba(255, 255, 255, 0.03);
+  --el-box-shadow-lighter: 0 1px 0 rgba(255, 255, 255, 0.03);
+  --el-disabled-bg-color: #1b1b1e;
+  --el-disabled-text-color: #6f7274;
+  --el-disabled-border-color: #2c2c30;
+}
+
+/* Overlay + dialog shell */
+.el-overlay {
+  background-color: rgba(6, 6, 8, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.el-dialog {
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.85);
+  padding: 0;
+}
+
+.el-dialog__header {
+  margin: 0;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.18);
+}
+
+.el-dialog__title {
+  font-family: 'Geist Sans', system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #e4e1e6;
+}
+
+.el-dialog__headerbtn {
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.el-dialog__headerbtn:hover { background: #2a2a2d; }
+
+.el-dialog__headerbtn .el-dialog__close {
+  color: #8e9192;
+  font-size: 16px;
+}
+
+.el-dialog__headerbtn:hover .el-dialog__close { color: #e4e1e6; }
+
+.el-dialog__body {
+  padding: 18px 20px;
+  color: #c4c7c8;
+  font-size: 13.5px;
+}
+
+.el-dialog__footer {
+  padding: 0 20px 18px;
+  border-top: none;
+}
+
+/* Message box */
+.el-message-box {
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.85);
+}
+
+.el-message-box__title { color: #e4e1e6; font-size: 15px; font-weight: 600; }
+.el-message-box__content { color: #c4c7c8; font-size: 13.5px; }
+.el-message-box__headerbtn .el-message-box__close { color: #8e9192; }
+.el-message-box__headerbtn:hover .el-message-box__close { color: #e4e1e6; }
+
+/* Inputs */
+.el-input__wrapper,
+.el-textarea__inner {
+  background-color: #16161a;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
+  border-radius: 8px;
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.el-input__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.55) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-input__wrapper:focus-within,
+.el-textarea__inner:focus {
+  background-color: #1b1b1e;
+  box-shadow: 0 0 0 1px #8e9192 inset;
+}
+
+.el-input__inner,
+.el-textarea__inner {
+  color: #e4e1e6;
+  font-size: 13.5px;
+}
+
+.el-input__inner::placeholder,
+.el-textarea__inner::placeholder { color: #6f7274; }
+
+.el-input.is-disabled .el-input__wrapper {
+  background-color: #1b1b1e;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.18) inset;
+}
+
+.el-input.is-disabled .el-input__inner { color: #6f7274; }
+
+/* Select */
+.el-select__wrapper {
+  background-color: #16161a;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
+  border-radius: 8px;
+}
+
+.el-select__wrapper.is-focused { box-shadow: 0 0 0 1px #8e9192 inset; }
+.el-select__placeholder { color: #6f7274; }
+.el-select__selected-item { color: #e4e1e6; }
+
+/* Poppers: dropdown / select / tooltip */
+.el-popper.is-light,
+.el-popper.is-pure {
+  background: #1f1f22;
+  border: 1px solid #2c2c30;
+  border-radius: 8px;
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+  color: #c4c7c8;
+}
+
+.el-popper.is-light .el-popper__arrow::before {
+  background: #1f1f22;
+  border-color: #2c2c30;
+}
+
+.el-popper.is-dark {
+  background: #2a2a2d;
+  border: 1px solid #353438;
+  color: #e4e1e6;
+  font-size: 12px;
+}
+
+.el-popper.is-dark .el-popper__arrow::before {
+  background: #2a2a2d;
+  border-color: #353438;
+}
+
+.el-select-dropdown__item { color: #c4c7c8; font-size: 13px; }
+.el-select-dropdown__item.is-hovering { background: #2a2a2d; }
+.el-select-dropdown__item.is-selected { color: #ffffff; font-weight: 500; }
+
+.el-dropdown-menu {
+  background: transparent;
+  padding: 4px;
+}
+
+.el-dropdown-menu__item {
+  color: #c4c7c8;
+  font-size: 13px;
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.el-dropdown-menu__item:not(.is-disabled):hover,
+.el-dropdown-menu__item:not(.is-disabled):focus {
+  background: #2a2a2d;
+  color: #e4e1e6;
+}
+
+.el-dropdown-menu__item--divided {
+  border-top: 1px solid rgba(68, 71, 72, 0.25);
+  margin-top: 4px;
+}
+
+/* Buttons (default / text) */
+.el-button {
+  --el-button-bg-color: #222225;
+  --el-button-border-color: rgba(68, 71, 72, 0.35);
+  --el-button-text-color: #c4c7c8;
+  --el-button-hover-bg-color: #2a2a2d;
+  --el-button-hover-border-color: rgba(68, 71, 72, 0.6);
+  --el-button-hover-text-color: #e4e1e6;
+  --el-button-active-bg-color: #353438;
+  --el-button-active-border-color: #444748;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.el-button.is-text,
+.el-button.is-link {
+  --el-button-bg-color: transparent;
+  --el-button-border-color: transparent;
+  --el-button-text-color: #c4c7c8;
+  --el-button-hover-bg-color: #2a2a2d;
+}
+
+/* The generic `.el-button` block above sits later in the file than the
+   `.el-button--primary` block, so it used to win on equal specificity and
+   every primary button (message-box confirm, dialog 保存…) rendered grey.
+   Restate the primary tokens here, after the generic block. */
+.el-button--primary {
+  --el-button-bg-color: #ffffff;
+  --el-button-border-color: #ffffff;
+  --el-button-text-color: #2f3131;
+  --el-button-hover-bg-color: #e2e2e2;
+  --el-button-hover-border-color: #e2e2e2;
+  --el-button-hover-text-color: #2f3131;
+  --el-button-active-bg-color: #d4d4d4;
+  --el-button-active-border-color: #d4d4d4;
+  --el-button-active-text-color: #2f3131;
+  --el-button-disabled-bg-color: #353438;
+  --el-button-disabled-border-color: #353438;
+  --el-button-disabled-text-color: #6f7274;
+}
+
+/* Switch / checkbox / radio */
+.el-switch__core {
+  background: #353438;
+  border-color: #353438;
+}
+
+.el-switch.is-checked .el-switch__core {
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+/* The knob keeps Element's default white fill, so on an active (white) track
+   it vanished entirely. Give it the on-primary ink instead. */
+.el-switch__action {
+  background: #131316;
+}
+
+.el-switch:not(.is-checked) .el-switch__action {
+  background: #8e9192;
+}
+
+.el-switch.is-checked .el-switch__action {
+  background: #131316;
+}
+
+.el-checkbox__inner,
+.el-radio__inner {
+  background: #16161a;
+  border-color: #444748;
+}
+
+.el-checkbox__input.is-checked .el-checkbox__inner,
+.el-radio__input.is-checked .el-radio__inner {
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+.el-checkbox__input.is-checked .el-checkbox__inner::after {
+  border-color: #131316;
+}
+
+.el-radio__input.is-checked .el-radio__inner::after { background: #131316; }
+
+.el-checkbox__label,
+.el-radio__label { color: #c4c7c8; }
+
+/* Progress */
+.el-progress-bar__outer { background: #26262a; }
+.el-progress-bar__inner { background: #ffffff; }
+.el-progress__text { color: #c4c7c8; font-size: 12px !important; }
+
+/* Avatar fallback */
+.el-avatar { background: #2a2a2d; color: #c4c7c8; }
+
+/* Messages / notifications */
+.el-message {
+  background: #1f1f22;
+  border: 1px solid #2c2c30;
+  border-radius: 8px;
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
+}
+
+.el-message__content { color: #e4e1e6; font-size: 13px; }
+
+.el-notification {
+  background: #1f1f22;
+  border: 1px solid #2c2c30;
+  border-radius: 8px;
+}
+
+.el-notification__title { color: #e4e1e6; }
+.el-notification__content { color: #c4c7c8; }
+
+/* Scrollbar inside EP containers */
+.el-scrollbar__bar .el-scrollbar__thumb {
+  background: #353438;
+  opacity: 1;
+}
+
+.el-scrollbar__bar .el-scrollbar__thumb:hover { background: #8e9192; }
+
+/* Form */
+.el-form-item__label { color: #8e9192; font-size: 12.5px; }
+.el-form-item__error { color: #f2b8b5; font-size: 11.5px; }
+
+/* Tabs */
+.el-tabs__item { color: #8e9192; font-size: 13px; }
+.el-tabs__item.is-active { color: #e4e1e6; }
+.el-tabs__nav-wrap::after { background: rgba(68, 71, 72, 0.25); }
+.el-tabs__active-bar { background: #ffffff; }
+
+/* Tags — the export's small chips: raised surface, hairline border, mono 11px. */
+.el-tag {
+  background-color: #1b1b1e;
+  border-color: rgba(68, 71, 72, 0.3);
+  color: #c4c7c8;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+}
+.el-tag.el-tag--success,
+.el-tag.el-tag--primary {
+  background-color: #2a2a2d;
+  color: #ffffff;
+}
+.el-tag.el-tag--danger { color: #ffb4ab; }

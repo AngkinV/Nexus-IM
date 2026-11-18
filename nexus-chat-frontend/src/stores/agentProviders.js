@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { agentAPI } from '@/services/agentApi'
+import i18n from '@/locales/i18n'
 
 export const PROVIDER_PURPOSE = Object.freeze({
     CHAT: 'chat',
@@ -31,6 +32,7 @@ export const PROVIDER_PRESETS = [
     {
         key: 'moonshot',
         label: 'Moonshot 月之暗面',
+        labelEn: 'Moonshot',
         baseUrl: 'https://api.moonshot.cn/v1',
         suggestedModels: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
         kind: 'openai-compatible'
@@ -38,6 +40,7 @@ export const PROVIDER_PRESETS = [
     {
         key: 'zhipu',
         label: '智谱 GLM',
+        labelEn: 'Zhipu GLM',
         baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         suggestedModels: ['glm-4-plus', 'glm-4-air', 'glm-4-flash'],
         kind: 'openai-compatible'
@@ -45,6 +48,7 @@ export const PROVIDER_PRESETS = [
     {
         key: 'tongyi',
         label: '通义千问 (兼容模式)',
+        labelEn: 'Qwen (compatible mode)',
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         suggestedModels: ['qwen-plus', 'qwen-max', 'qwen-turbo'],
         kind: 'openai-compatible'
@@ -87,6 +91,7 @@ export const PROVIDER_PRESETS = [
     {
         key: 'custom',
         label: '自定义 (OpenAI 兼容)',
+        labelEn: 'Custom (OpenAI-compatible)',
         baseUrl: '',
         suggestedModels: [],
         kind: 'openai-compatible'
@@ -111,18 +116,21 @@ export const EMBEDDING_PRESETS = [
     {
         key: 'tongyi',
         label: '阿里 DashScope',
+        labelEn: 'Alibaba DashScope',
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         suggestedModels: ['text-embedding-v3', 'text-embedding-v2', 'text-embedding-v1']
     },
     {
         key: 'zhipu',
         label: '智谱 BigModel',
+        labelEn: 'Zhipu BigModel',
         baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         suggestedModels: ['embedding-3', 'embedding-2']
     },
     {
         key: 'baichuan',
         label: '百川 Embedding',
+        labelEn: 'Baichuan Embedding',
         baseUrl: 'https://api.baichuan-ai.com/v1',
         suggestedModels: ['Baichuan-Text-Embedding']
     },
@@ -153,10 +161,20 @@ export const EMBEDDING_PRESETS = [
     {
         key: 'custom',
         label: '自定义 (OpenAI 兼容)',
+        labelEn: 'Custom (OpenAI-compatible)',
         baseUrl: '',
         suggestedModels: []
     }
 ]
+
+/**
+ * Resolve a preset's display label for the active language. Brand-only presets
+ * (OpenAI, DeepSeek, Groq…) carry no `labelEn` and stay as-is in both locales.
+ */
+export function presetLabel(preset) {
+    if (!preset) return ''
+    return i18n.global.locale.value === 'zh' ? preset.label : (preset.labelEn || preset.label)
+}
 
 export const useAgentProvidersStore = defineStore('agentProviders', () => {
     // All credentials, regardless of purpose. The settings UI displays this list
@@ -184,7 +202,9 @@ export const useAgentProvidersStore = defineStore('agentProviders', () => {
         lastError.value = null
         try {
             const response = await agentAPI.listProviders()
-            providers.value = response.data?.data || []
+            // The backend serialises its boolean `isDefault` field as `default`;
+            // everything in the app reads `isDefault`, so name it once here.
+            providers.value = (response.data?.data || []).map(p => ({ ...p, isDefault: p.default }))
             // Prune cached model catalogs for providers that no longer exist.
             const liveIds = new Set(providers.value.map(p => String(p.id)))
             modelsByProviderId.value = Object.fromEntries(

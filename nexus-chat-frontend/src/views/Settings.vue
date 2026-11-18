@@ -13,7 +13,7 @@
       <div class="settings-list">
         <!-- Language Setting -->
         <div class="setting-item">
-          <div class="setting-icon" style="background: var(--teal-500)">
+          <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
             <el-icon color="white"><Globe /></el-icon>
           </div>
           <span>{{ $t('settings.language') }}</span>
@@ -30,7 +30,7 @@
 
         <!-- Notifications -->
         <div class="setting-item">
-          <div class="setting-icon" style="background: var(--cyan-500)">
+          <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
             <el-icon color="white"><Bell /></el-icon>
           </div>
           <span>{{ $t('settings.notifications') }}</span>
@@ -39,7 +39,7 @@
 
         <!-- Privacy and Security -->
         <div class="setting-item" @click="showPrivacyDialog = true">
-          <div class="setting-icon" style="background: var(--teal-600)">
+          <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
             <el-icon color="white"><Lock /></el-icon>
           </div>
           <span>{{ $t('profile.privacySettings') }}</span>
@@ -48,7 +48,7 @@
 
         <!-- Check for Updates (only show in Electron) -->
         <div v-if="isElectron" class="setting-item" @click="checkForUpdates">
-          <div class="setting-icon" style="background: var(--cyan-600)">
+          <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
             <el-icon color="white"><Refresh /></el-icon>
           </div>
           <span>{{ $t('settings.checkForUpdates') }}</span>
@@ -59,7 +59,7 @@
 
         <!-- Logout -->
         <div class="setting-item logout" @click="handleLogout">
-          <div class="setting-icon" style="background: #ef4444">
+          <div class="setting-icon" style="background: rgba(242, 184, 181, 0.14)">
             <el-icon color="white"><SwitchButton /></el-icon>
           </div>
           <span>{{ $t('auth.logout') }}</span>
@@ -145,7 +145,7 @@
     >
       <div class="update-content" v-if="updateInfo">
         <div class="update-icon">
-          <el-icon :size="48" color="#007aff"><Refresh /></el-icon>
+          <el-icon :size="48" color="#c4c7c8"><Refresh /></el-icon>
         </div>
 
         <div v-if="updateInfo.hasUpdate" class="update-info">
@@ -162,7 +162,7 @@
         </div>
 
         <div v-else class="no-update">
-          <el-icon :size="48" color="#34c759"><CircleCheck /></el-icon>
+          <el-icon :size="48" color="#ffffff"><CircleCheck /></el-icon>
           <h3>{{ $t('settings.upToDate') }}</h3>
           <p>{{ $t('settings.currentVersionIs') }} v{{ updateInfo.currentVersion }}</p>
         </div>
@@ -183,6 +183,7 @@ import { ref, h, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
+import { userAPI } from '@/services/api'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Bell, Lock, SwitchButton, Refresh, Loading, CircleCheck } from '@element-plus/icons-vue'
 
@@ -230,7 +231,9 @@ const privacySettings = reactive({
   showLastSeen: userStore.currentUser?.showLastSeen ?? true,
   showPhone: userStore.currentUser?.showPhone ?? false,
   showEmail: userStore.currentUser?.showEmail ?? false,
-  friendRequestMode: userStore.currentUser?.friendRequestMode ?? 'DIRECT'
+  // The profile endpoint does not return this one, so it stays unset (and is
+  // left untouched on save) until the user picks a mode here.
+  friendRequestMode: userStore.currentUser?.friendRequestMode ?? null
 })
 
 const goBack = () => {
@@ -247,18 +250,29 @@ const handleLogout = async () => {
   router.push('/login')
 }
 
-const savePrivacySettings = () => {
+const savePrivacySettings = async () => {
   try {
-    userStore.updatePrivacySettings(privacySettings)
-    ElMessage.success('Privacy settings updated successfully')
+    const response = await userAPI.updatePrivacySettings(userStore.currentUser.id, privacySettings)
+    userStore.updatePrivacySettings(response.data)
+    privacySettings.friendRequestMode = response.data.friendRequestMode
+    ElMessage.success(t('common.savedSuccess'))
     showPrivacyDialog.value = false
   } catch (error) {
-    ElMessage.error('Failed to update privacy settings')
+    ElMessage.error(t('profile.updateFailed'))
   }
 }
 
 // Get app version on mount
 onMounted(async () => {
+  // Login does not carry the privacy flags; read the saved ones before the dialog can open.
+  const profile = await userStore.loadUserProfile()
+  if (profile) {
+    privacySettings.showOnlineStatus = profile.showOnlineStatus
+    privacySettings.showLastSeen = profile.showLastSeen
+    privacySettings.showPhone = profile.showPhone
+    privacySettings.showEmail = profile.showEmail
+  }
+
   if (isElectron.value && window.electronAPI.getAppVersion) {
     try {
       appVersion.value = await window.electronAPI.getAppVersion()
@@ -301,7 +315,7 @@ const downloadUpdate = () => {
 <style scoped>
 .settings-container {
   height: 100vh;
-  background: linear-gradient(180deg, #f7f9fd 0%, #f4f6fb 100%);
+  background: #131316;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -330,13 +344,14 @@ const downloadUpdate = () => {
 }
 
 .settings-header {
-  background: white;
+  background: rgba(14, 14, 17, 0.85);
+  backdrop-filter: blur(12px);
   padding: 16px 20px;
   padding-top: 40px; /* Extra padding for drag region */
   display: flex;
   align-items: center;
   gap: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  border-bottom: 1px solid rgba(68, 71, 72, 0.2);
   flex-shrink: 0;
 }
 
@@ -344,7 +359,7 @@ const downloadUpdate = () => {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .settings-header :deep(.el-button) {
@@ -362,10 +377,10 @@ const downloadUpdate = () => {
 }
 
 .settings-list {
-  background: white;
-  border-radius: 16px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 
 .setting-item {
@@ -374,7 +389,7 @@ const downloadUpdate = () => {
   padding: 14px 18px;
   cursor: pointer;
   transition: background 0.2s ease;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.18);
 }
 
 .setting-item:last-child {
@@ -382,7 +397,7 @@ const downloadUpdate = () => {
 }
 
 .setting-item:hover {
-  background: #f8f9fa;
+  background: #222225;
 }
 
 .setting-icon {
@@ -400,16 +415,16 @@ const downloadUpdate = () => {
   flex: 1;
   font-size: 15px;
   font-weight: 500;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .arrow {
-  color: #c7c7cc;
+  color: #6f7274;
   font-size: 16px;
 }
 
 .logout span {
-  color: #ff3b30;
+  color: #f2b8b5;
   font-weight: 600;
 }
 
@@ -418,19 +433,19 @@ const downloadUpdate = () => {
 }
 
 .language-select :deep(.el-input__wrapper) {
-  background-color: #f5f5f7;
+  background-color: #222225;
   border-radius: 10px;
   box-shadow: none;
   transition: all 0.2s ease;
 }
 
 .language-select :deep(.el-input__wrapper:hover) {
-  background-color: #ebebed;
+  background-color: #2a2a2d;
 }
 
 .language-select :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 2px #3390ec inset;
-  background-color: white;
+  box-shadow: 0 0 0 1px #8e9192 inset;
+  background-color: #1b1b1e;
 }
 
 .privacy-settings {
@@ -444,13 +459,13 @@ const downloadUpdate = () => {
   justify-content: space-between;
   align-items: center;
   padding: 14px 16px;
-  background: #f8f9fa;
+  background: #222225;
   border-radius: 12px;
   transition: background 0.2s ease;
 }
 
 .privacy-item:hover {
-  background: #f0f2f5;
+  background: #1f1f22;
 }
 
 .privacy-info {
@@ -461,13 +476,13 @@ const downloadUpdate = () => {
   margin: 0 0 4px 0;
   font-size: 14px;
   font-weight: 600;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .privacy-info p {
   margin: 0;
   font-size: 12px;
-  color: #8e8e93;
+  color: #8e9192;
 }
 
 /* Friend request mode styles */
@@ -489,15 +504,15 @@ const downloadUpdate = () => {
   align-items: flex-start;
   height: auto;
   padding: 12px;
-  background: #f0f2f5;
+  background: #1f1f22;
   border-radius: 10px;
   margin-right: 0;
   width: 100%;
 }
 
 .mode-radio-group :deep(.el-radio.is-checked) {
-  background: #e8f4ff;
-  border: 1px solid #3390ec;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid #ffffff;
 }
 
 .mode-radio-group :deep(.el-radio__label) {
@@ -513,25 +528,25 @@ const downloadUpdate = () => {
 .radio-label {
   font-size: 14px;
   font-weight: 600;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .radio-desc {
   font-size: 12px;
-  color: #8e8e93;
+  color: #8e9192;
 }
 
 .privacy-divider {
   height: 1px;
-  background: #e5e5e5;
+  background: rgba(68, 71, 72, 0.25);
   margin: 8px 0;
 }
 
 /* Version tag */
 .version-tag {
   font-size: 12px;
-  color: #8e8e93;
-  background: #f0f2f5;
+  color: #8e9192;
+  background: #1f1f22;
   padding: 2px 8px;
   border-radius: 8px;
   margin-right: 8px;
@@ -551,7 +566,7 @@ const downloadUpdate = () => {
   margin: 0 0 12px 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .version-compare {
@@ -563,19 +578,19 @@ const downloadUpdate = () => {
 }
 
 .version-compare .current {
-  color: #8e8e93;
+  color: #8e9192;
   font-size: 14px;
 }
 
 .version-compare .latest {
-  color: #007aff;
+  color: #ffffff;
   font-size: 14px;
   font-weight: 600;
 }
 
 .release-notes {
   text-align: left;
-  background: #f8f9fa;
+  background: #222225;
   padding: 16px;
   border-radius: 12px;
   margin-top: 16px;
@@ -585,13 +600,13 @@ const downloadUpdate = () => {
   margin: 0 0 8px 0;
   font-size: 14px;
   font-weight: 600;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .release-notes p {
   margin: 0;
   font-size: 13px;
-  color: #636366;
+  color: #6f7274;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -605,13 +620,13 @@ const downloadUpdate = () => {
   margin: 16px 0 8px 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1c1c1e;
+  color: #e4e1e6;
 }
 
 .no-update p {
   margin: 0;
   font-size: 14px;
-  color: #8e8e93;
+  color: #8e9192;
 }
 
 /* Mobile Responsive Styles */

@@ -330,7 +330,7 @@ const lastChangedDays = computed(() => {
 })
 
 const scoreColor = computed(() =>
-  securityScore.value >= 70 ? '#22c55e' : securityScore.value >= 40 ? '#e6a23c' : '#f56c6c'
+  securityScore.value >= 70 ? '#ffffff' : securityScore.value >= 40 ? '#c4c7c8' : '#f2b8b5'
 )
 const scoreGrade = computed(() =>
   securityScore.value >= 70 ? t('profile.strengthStrong')
@@ -577,9 +577,9 @@ const strengthText = computed(() => {
 })
 
 const getStrengthColor = (strength) => {
-  if (strength < 40) return '#f56c6c'
-  if (strength < 70) return '#e6a23c'
-  return '#14b8a6'
+  if (strength < 40) return '#f2b8b5'
+  if (strength < 70) return '#c4c7c8'
+  return '#ffffff'
 }
 
 // Map backend BusinessException keys to friendly i18n messages.
@@ -648,13 +648,13 @@ const changePassword = async () => {
   font-size: 26px;
   font-weight: 800;
   letter-spacing: -0.4px;
-  color: #1f2430;
+  color: #e4e1e6;
 }
 
 .sec-sub {
   margin: 6px 0 0;
   font-size: 14px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .sec-refresh {
@@ -664,17 +664,17 @@ const changePassword = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #eef0f4;
+  border: 1px solid rgba(68, 71, 72, 0.35);
   border-radius: 50%;
-  background: #ffffff;
-  color: #8a93a5;
+  background: #1b1b1e;
+  color: #8e9192;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .sec-refresh:hover {
-  color: #4f8ef0;
-  border-color: #dbe3ff;
+  color: #ffffff;
+  border-color: rgba(142, 145, 146, 0.5);
 }
 
 .sec-refresh.spinning .el-icon {
@@ -703,17 +703,17 @@ const changePassword = async () => {
 .panel {
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  border: 1px solid #eef0f4;
-  border-radius: 16px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 12px;
   padding: 20px 22px;
-  box-shadow: 0 2px 12px rgba(20, 30, 60, 0.04);
+  box-shadow: none;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .panel:hover {
   transform: translateY(-2px);
-  box-shadow: 0 10px 24px -10px rgba(30, 45, 90, 0.18);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .panel-head {
@@ -744,7 +744,7 @@ const changePassword = async () => {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
-  color: #1f2430;
+  color: #e4e1e6;
 }
 
 .panel-link {
@@ -754,7 +754,7 @@ const changePassword = async () => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #4f8ef0;
+  color: #ffffff;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -770,11 +770,11 @@ const changePassword = async () => {
 }
 
 /* ===== Icon tones ===== */
-.blue { background: #e8f1fd; color: #3b82f6; }
-.green { background: #e7f8ef; color: #22c55e; }
-.purple { background: #f1ecfe; color: #8b5cf6; }
-.orange { background: #fff2e3; color: #f59e0b; }
-.teal { background: #e6f7f4; color: #14b8a6; }
+.blue { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.green { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
+.purple { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.orange { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.teal { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
 
 /* ===== Device count ===== */
 .dm-stat {
@@ -788,12 +788,12 @@ const changePassword = async () => {
   font-size: 38px;
   font-weight: 800;
   line-height: 1;
-  color: #1f2430;
+  color: #e4e1e6;
 }
 
 .dm-count-label {
   font-size: 13px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 /* ===== Generic rows ===== */
@@ -805,7 +805,7 @@ const changePassword = async () => {
 .empty-row {
   padding: 16px 2px;
   font-size: 13px;
-  color: #aab2c0;
+  color: #6f7274;
 }
 
 .row {
@@ -813,7 +813,7 @@ const changePassword = async () => {
   align-items: center;
   gap: 12px;
   padding: 11px 0;
-  border-bottom: 1px solid #f1f3f7;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.18);
 }
 
 .row:last-child { border-bottom: none; }
@@ -840,28 +840,28 @@ const changePassword = async () => {
 .row-name {
   font-size: 13.5px;
   font-weight: 600;
-  color: #1f2430;
+  color: #e4e1e6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.row-name.muted { color: #8a93a5; }
+.row-name.muted { color: #8e9192; }
 
 .row-sub {
   font-size: 12px;
-  color: #8a93a5;
+  color: #8e9192;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.row-sub.ok { color: #22c55e; }
-.row-sub.fail { color: #ef4444; }
+.row-sub.ok { color: #ffffff; }
+.row-sub.fail { color: #f2b8b5; }
 
 .row-time {
   font-size: 12px;
-  color: #aab2c0;
+  color: #6f7274;
   flex-shrink: 0;
 }
 
@@ -869,8 +869,8 @@ const changePassword = async () => {
   flex-shrink: 0;
   padding: 2px 9px;
   border-radius: 999px;
-  background: #e7f8ef;
-  color: #22c55e;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
   font-size: 10.5px;
   font-weight: 700;
 }
@@ -879,14 +879,14 @@ const changePassword = async () => {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #aab2c0;
+  color: #6f7274;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: color 0.2s ease;
 }
 
-.row-action:hover { color: #ef4444; }
+.row-action:hover { color: #f2b8b5; }
 
 /* ===== Password gauge ===== */
 .gauge-wrap {
@@ -910,13 +910,13 @@ const changePassword = async () => {
 
 .gauge-score {
   font-size: 12px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .gauge-hint {
   margin: 10px 0 0;
   font-size: 12px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 /* ===== Two-step ===== */
@@ -926,12 +926,12 @@ const changePassword = async () => {
   gap: 12px;
   padding: 12px;
   border-radius: 12px;
-  background: rgba(34, 197, 94, 0.08);
+  background: rgba(255, 255, 255, 0.06);
   margin-bottom: 12px;
 }
 
 .ts-status.off {
-  background: rgba(138, 147, 165, 0.1);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .ts-badge {
@@ -942,13 +942,13 @@ const changePassword = async () => {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: #22c55e;
-  color: #ffffff;
+  background: #e4e1e6;
+  color: #131316;
   font-size: 20px;
 }
 
 .ts-badge.off {
-  background: #aab2c0;
+  background: #6f7274;
 }
 
 .ts-status-text {
@@ -960,16 +960,16 @@ const changePassword = async () => {
 .ts-state {
   font-size: 15px;
   font-weight: 700;
-  color: #22c55e;
+  color: #ffffff;
 }
 
 .ts-state.off {
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .ts-desc {
   font-size: 12px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .ts-action-row {
@@ -982,7 +982,7 @@ const changePassword = async () => {
 
 .ts-toggle-label {
   font-size: 13px;
-  color: #6b7585;
+  color: #c4c7c8;
   font-weight: 600;
 }
 
@@ -991,7 +991,7 @@ const changePassword = async () => {
   margin: 0 0 14px;
   font-size: 13px;
   line-height: 1.6;
-  color: #6b7585;
+  color: #c4c7c8;
 }
 
 .tfa-secret {
@@ -1000,13 +1000,13 @@ const changePassword = async () => {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: #f4f6fb;
+  background: #16161a;
   margin-bottom: 14px;
 }
 
 .tfa-secret-label {
   font-size: 12px;
-  color: #8a93a5;
+  color: #8e9192;
   flex-shrink: 0;
 }
 
@@ -1017,7 +1017,7 @@ const changePassword = async () => {
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 1px;
-  color: #1f2430;
+  color: #e4e1e6;
   word-break: break-all;
 }
 
@@ -1025,13 +1025,13 @@ const changePassword = async () => {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #8a93a5;
+  color: #8e9192;
   cursor: pointer;
   display: flex;
   align-items: center;
 }
 
-.tfa-copy:hover { color: #4f8ef0; }
+.tfa-copy:hover { color: #ffffff; }
 
 .tfa-code-input :deep(.el-input__inner) {
   letter-spacing: 6px;
@@ -1049,23 +1049,13 @@ const changePassword = async () => {
 .tfa-backup-code {
   padding: 8px 10px;
   border-radius: 8px;
-  background: #f4f6fb;
+  background: #16161a;
   font-family: 'SFMono-Regular', Consolas, monospace;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 1px;
   text-align: center;
-  color: #1f2430;
-}
-
-[data-theme="dark"] .tfa-secret,
-[data-theme="dark"] .tfa-backup-code {
-  background: #262a34;
-}
-
-[data-theme="dark"] .tfa-secret-key,
-[data-theme="dark"] .tfa-backup-code {
-  color: #eef1f6;
+  color: #e4e1e6;
 }
 
 /* ===== Login activity status ===== */
@@ -1080,8 +1070,8 @@ const changePassword = async () => {
   font-size: 14px;
 }
 
-.status-dot-ic.success { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-.status-dot-ic.failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.status-dot-ic.success { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.status-dot-ic.failed { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 /* ===== Recommendations ===== */
 .rec-ic {
@@ -1094,14 +1084,14 @@ const changePassword = async () => {
   font-size: 18px;
 }
 
-.rec-ic.done { color: #22c55e; }
-.rec-ic.todo { color: #f59e0b; }
+.rec-ic.done { color: #ffffff; }
+.rec-ic.todo { color: #c4c7c8; }
 
 .rec-action {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #4f8ef0;
+  color: #ffffff;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1127,48 +1117,9 @@ const changePassword = async () => {
   flex-shrink: 0;
 }
 
-.strength-value.weak { color: #f56c6c; }
-.strength-value.medium { color: #e6a23c; }
+.strength-value.weak { color: #f2b8b5; }
+.strength-value.medium { color: #c4c7c8; }
 .strength-value.strong { color: var(--tg-primary); }
-
-/* ===== Dark mode ===== */
-[data-theme="dark"] .sec-title { color: #eef1f6; }
-[data-theme="dark"] .sec-sub { color: #aab2c0; }
-
-[data-theme="dark"] .sec-refresh {
-  background: #1e2230;
-  border-color: #262a34;
-  color: #aab2c0;
-}
-
-[data-theme="dark"] .sec-refresh:hover {
-  color: #9cc6f8;
-  border-color: rgba(79, 142, 240, 0.4);
-}
-
-[data-theme="dark"] .panel {
-  background: #1e2230;
-  border-color: #262a34;
-  box-shadow: none;
-}
-
-[data-theme="dark"] .panel-title,
-[data-theme="dark"] .dm-count,
-[data-theme="dark"] .row-name { color: #eef1f6; }
-
-[data-theme="dark"] .row-name.muted { color: #8a93a5; }
-[data-theme="dark"] .row { border-bottom-color: #262a34; }
-[data-theme="dark"] .panel-link { color: #9cc6f8; }
-
-[data-theme="dark"] .blue { background: rgba(59, 130, 246, 0.16); color: #7eb0ff; }
-[data-theme="dark"] .green { background: rgba(34, 197, 94, 0.16); color: #5ee19a; }
-[data-theme="dark"] .purple { background: rgba(139, 92, 246, 0.16); color: #b69bff; }
-[data-theme="dark"] .orange { background: rgba(245, 158, 11, 0.16); color: #ffc35c; }
-[data-theme="dark"] .teal { background: rgba(20, 184, 166, 0.18); color: #4fd6c4; }
-
-[data-theme="dark"] .badge-current { background: rgba(34, 197, 94, 0.16); color: #5ee19a; }
-[data-theme="dark"] .ts-status.off { background: rgba(138, 147, 165, 0.12); }
-[data-theme="dark"] .ts-toggle-label { color: #aab2c0; }
 
 /* ===== Responsive ===== */
 @media (max-width: 1080px) {

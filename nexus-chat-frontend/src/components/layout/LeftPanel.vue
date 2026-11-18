@@ -1,63 +1,149 @@
 <template>
   <div class="left-panel">
-    <!-- Header: Search & quick add -->
-    <div class="panel-header drag-region">
-      <!-- Window controls for Windows -->
-      <div v-if="isElectron && !isMac" class="win-controls no-drag">
-        <button class="window-ctrl-btn minimize" @click="minimizeWindow" title="最小化">
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect width="10" height="1" x="1" y="6" fill="currentColor"/>
-          </svg>
+    <AgentSessionList v-if="activeView === 'ai'" />
+
+    <!-- Prism pane header: title + count + filter, search with ⌘K, filter tags -->
+    <div
+      v-if="activeView !== 'ai'"
+      class="p-space-md flex flex-col gap-space-sm shrink-0"
+      :class="{ 'border-b border-outline-variant/20': activeView === 'contacts' }"
+    >
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-space-xs min-w-0">
+          <span class="font-headline-md text-headline-md tracking-tight text-primary font-medium truncate">
+            {{ paneTitle }}
+          </span>
+          <span
+            v-if="activeView !== 'contacts'"
+            class="shrink-0 px-2 py-0.5 rounded-full bg-surface-container-high text-primary font-code text-label-sm"
+          >{{ paneCount }}</span>
+        </div>
+        <!-- Header actions differ per pane, as in the exported screens. -->
+        <div v-if="activeView === 'contacts'" class="flex items-center gap-1 shrink-0">
+          <button class="shrink-0 w-7 h-7 rounded bg-surface-container-low hover:bg-surface-container-high text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors" :title="$t('contact.addContact')" type="button" @click="showAddContact = true">
+            <span class="material-symbols-outlined text-[16px]">person_add</span>
+          </button>
+          <el-dropdown trigger="click" @command="handleMoreCommand">
+            <button class="shrink-0 w-7 h-7 rounded bg-surface-container-low hover:bg-surface-container-high text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors" :title="$t('leftPanel.moreOptions')" type="button">
+              <span class="material-symbols-outlined text-[16px]">more_horiz</span>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="contact">{{ $t('contact.addContact') }}</el-dropdown-item>
+                <el-dropdown-item command="group">{{ $t('chat.newGroup') }}</el-dropdown-item>
+                <el-dropdown-item command="refresh" divided>{{ $t('leftPanel.refreshDirectory') }}</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <button
+          v-else-if="activeView === 'groups'"
+          class="shrink-0 w-7 h-7 rounded bg-surface-container-low hover:bg-surface-container-high text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors"
+          :title="$t('chat.newGroup')"
+          type="button"
+          @click="showCreateGroup = true"
+        >
+          <span class="material-symbols-outlined text-[16px]">add</span>
         </button>
-        <button class="window-ctrl-btn maximize" @click="maximizeWindow" title="最大化">
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <rect width="9" height="9" x="1.5" y="1.5" fill="none" stroke="currentColor" stroke-width="1"/>
-          </svg>
-        </button>
-        <button class="window-ctrl-btn close" @click="closeWindow" title="关闭">
-          <svg width="12" height="12" viewBox="0 0 12 12">
-            <path d="M1 1 L11 11 M1 11 L11 1" stroke="currentColor" stroke-width="1.5"/>
-          </svg>
+        <button
+          v-else
+          class="shrink-0 w-7 h-7 rounded bg-surface-container-low hover:bg-surface-container-high text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors"
+          :title="$t('leftPanel.quickFilter')"
+          type="button"
+          @click="cycleFilter"
+        >
+          <span class="material-symbols-outlined text-[16px]">filter_list</span>
         </button>
       </div>
 
-      <div class="header-row no-drag">
-        <div class="search-bar-new">
-          <el-icon class="search-icon"><Search /></el-icon>
-          <input
-            v-model="searchQuery"
-            :placeholder="$t('chat.search')"
-            class="search-input-new"
-            type="text"
-          />
-        </div>
-        <el-dropdown trigger="click" placement="bottom-end" @command="handleAddCommand">
-          <button class="icon-btn-add" :title="$t('chat.newChat')">
-            <el-icon><Plus /></el-icon>
-          </button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="group">{{ $t('group.createGroup') }}</el-dropdown-item>
-              <el-dropdown-item command="contact">{{ $t('contact.addContact') }}</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+      <!-- Search -->
+      <div class="relative w-full flex items-center">
+        <span
+          class="material-symbols-outlined absolute left-2.5 text-[16px] text-on-surface-variant/60 pointer-events-none"
+        >search</span>
+        <input
+          ref="searchInput"
+          v-model="searchQuery"
+          class="w-full bg-surface-container-low text-primary placeholder-on-surface-variant/40 text-body-md font-body-md pl-8 pr-12 py-1.5 rounded border border-transparent focus:border-outline-variant/40 focus:outline-none focus:bg-surface-container transition-colors"
+          :placeholder="searchPlaceholder"
+          type="text"
+          @keydown.meta.k.prevent="openPalette"
+          @keydown.ctrl.k.prevent="openPalette"
+        />
+        <button
+          class="absolute right-2 px-1.5 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant hover:text-primary font-code text-label-sm transition-colors"
+          type="button"
+          :title="activeView === 'contacts' ? $t('common.search') : $t('leftPanel.openPalette')"
+          @click="activeView === 'contacts' ? focusSearch() : openPalette()"
+        >{{ activeView === 'contacts' ? '⌘F' : '⌘K' }}</button>
+      </div>
+
+      <!-- Filter tags (chats only — the other panes have their own headers) -->
+      <div v-if="activeView === 'chats'" class="flex items-center gap-1.5 pt-1 overflow-x-auto">
+        <button
+          v-for="tag in filterTags"
+          :key="tag.key"
+          class="shrink-0 px-2.5 py-1 rounded-full font-label-sm text-label-sm tracking-tight transition-colors"
+          :class="
+            activeFilter === tag.key
+              ? 'bg-primary text-on-primary font-medium'
+              : 'bg-surface-container-low hover:bg-surface-container hover:text-primary text-on-surface-variant'
+          "
+          type="button"
+          @click="activeFilter = tag.key"
+        >{{ tag.label }}</button>
       </div>
     </div>
 
-    <!-- Content based on active view (driven by NavRail) -->
-    <div class="list-container">
+    <!-- List -->
+    <div v-if="activeView !== 'ai'" class="list-container" :class="{ 'is-directory': activeView === 'contacts' }">
       <template v-if="activeView === 'chats'">
-        <ChatList :search-query="searchQuery" />
+        <ChatList :search-query="searchQuery" :filter="activeFilter" />
       </template>
 
       <template v-else-if="activeView === 'contacts'">
-        <ContactList :search-query="searchQuery" @select="handleContactSelect" />
+        <ContactList
+          :search-query="searchQuery"
+          :selected-id="selectedContactId"
+          @select="handleContactSelect"
+          @chat="openContactChat"
+        />
       </template>
 
       <template v-else>
-        <GroupList :search-query="searchQuery" @select="handleGroupSelect" />
+        <GroupList :search-query="searchQuery" :selected-id="selectedGroupId" @select="handleGroupSelect" />
       </template>
+    </div>
+
+    <!-- Link status strip (chats pane) -->
+    <div
+      v-if="activeView === 'chats'"
+      class="shrink-0 p-3 bg-surface-container-low/50 flex items-center justify-between"
+    >
+      <div class="flex items-center gap-2 min-w-0">
+        <span
+          class="w-2 h-2 shrink-0 rounded-full"
+          :class="connectionStore.isConnected ? 'bg-primary animate-pulse' : 'bg-on-surface-variant/40'"
+        ></span>
+        <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider truncate">
+          {{ connectionStore.isConnected ? $t('leftPanel.linkActive') : $t('leftPanel.linkReconnecting') }}
+        </span>
+      </div>
+      <span class="shrink-0 font-code text-label-sm text-on-surface-variant/60">v{{ appVersion }}</span>
+    </div>
+
+    <!-- Directory totals (contacts pane) -->
+    <div
+      v-if="activeView === 'contacts'"
+      class="shrink-0 px-space-md py-2.5 bg-surface-container-low border-t border-outline-variant/20 flex items-center justify-between"
+    >
+      <span class="font-code text-label-sm text-on-surface-variant/70">
+        {{ $t('leftPanel.directoryTotal', { n: contactStore.contacts?.length || 0 }) }}
+      </span>
+      <div class="flex items-center gap-1.5 text-on-surface-variant font-code text-label-sm">
+        <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+        <span>{{ $t('leftPanel.directoryOnline', { n: contactStore.onlineContacts?.length || 0 }) }}</span>
+      </div>
     </div>
 
     <CreateGroupModal
@@ -73,62 +159,99 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted } from 'vue'
-import { Search, Plus } from '@element-plus/icons-vue'
+import { computed, ref, inject, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useChatStore } from '@/stores/chat'
+import { useContactStore } from '@/stores/contact'
+import { useConnectionStore } from '@/stores/connection'
+import { version as appVersion } from '../../../package.json'
 import ChatList from '@/components/chat/ChatList.vue'
 import ContactList from '@/components/contact/ContactList.vue'
 import GroupList from '@/components/chat/GroupList.vue'
+import AgentSessionList from '@/components/agent/AgentSessionList.vue'
 import CreateGroupModal from '@/components/chat/CreateGroupModal.vue'
 import AddContactModal from '@/components/contact/AddContactModal.vue'
 
+const { t } = useI18n()
 const userStore = useUserStore()
 const chatStore = useChatStore()
+const contactStore = useContactStore()
+const connectionStore = useConnectionStore()
 
 const activeView = inject('activeView', ref('chats'))
 const setActiveView = inject('setActiveView', () => {})
+const openPalette = inject('openPalette', () => {})
+const createGroupSignal = inject('createGroupSignal', ref(0))
 
 const searchQuery = ref('')
 const showCreateGroup = ref(false)
 const showAddContact = ref(false)
 
-// Electron detection
-const isElectron = ref(false)
-const isMac = ref(false)
-
-onMounted(() => {
-  isElectron.value = !!window.electronAPI
-  if (window.electronAPI) {
-    isMac.value = window.electronAPI.platform === 'darwin'
-  }
+// Same counter pattern for "add contact" (nav-rail button, command palette).
+const addContactSignal = inject('addContactSignal', ref(0))
+watch(addContactSignal, () => {
+  showAddContact.value = true
 })
 
-// Window control methods
-const minimizeWindow = () => {
-  if (window.electronAPI) {
-    window.electronAPI.minimizeWindow()
+const handleMoreCommand = (command) => {
+  if (command === 'contact') showAddContact.value = true
+  else if (command === 'group') showCreateGroup.value = true
+  else if (command === 'refresh' && userStore.currentUser?.id) {
+    contactStore.fetchContacts(userStore.currentUser.id)
   }
 }
 
-const maximizeWindow = () => {
-  if (window.electronAPI) {
-    window.electronAPI.maximizeWindow()
+// ⌘F focuses the directory search while the contacts pane is open.
+const searchInput = ref(null)
+const focusSearch = () => searchInput.value?.focus()
+const onDirectoryKeydown = (event) => {
+  if (activeView.value !== 'contacts') return
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    focusSearch()
   }
 }
+onMounted(() => window.addEventListener('keydown', onDirectoryKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onDirectoryKeydown))
 
-const closeWindow = () => {
-  if (window.electronAPI) {
-    window.electronAPI.closeWindow()
-  }
-}
+// The standby screen asks for the create-group dialog through this signal.
+watch(createGroupSignal, () => {
+  showCreateGroup.value = true
+})
 
-const handleAddCommand = (command) => {
-  if (command === 'group') {
-    showCreateGroup.value = true
-  } else if (command === 'contact') {
-    showAddContact.value = true
-  }
+// Pane header adapts to whichever nav section is active.
+const paneTitle = computed(() => {
+  if (activeView.value === 'contacts') return t('leftPanel.contacts')
+  if (activeView.value === 'groups') return t('leftPanel.groups')
+  return t('leftPanel.chats')
+})
+
+const paneCount = computed(() => {
+  if (activeView.value === 'contacts') return contactStore.contacts?.length || 0
+  if (activeView.value === 'groups') return chatStore.groupChats?.length || 0
+  return chatStore.chats?.length || 0
+})
+
+const searchPlaceholder = computed(() => {
+  if (activeView.value === 'contacts') return t('leftPanel.searchContacts')
+  if (activeView.value === 'groups') return t('leftPanel.searchGroups')
+  return t('leftPanel.searchChats')
+})
+
+const activeFilter = ref('all')
+
+const filterTags = computed(() => [
+  { key: 'all', label: t('leftPanel.filterAll') },
+  { key: 'unread', label: t('leftPanel.filterUnread', { n: chatStore.totalUnreadCount || 0 }) },
+  { key: 'starred', label: t('leftPanel.filterStarred') },
+  { key: 'groups', label: t('leftPanel.filterTeams') }
+])
+
+const cycleFilter = () => {
+  const keys = filterTags.value.map((t) => t.key)
+  const i = keys.indexOf(activeFilter.value)
+  activeFilter.value = keys[(i + 1) % keys.length]
 }
 
 const handleGroupCreated = (group) => {
@@ -138,15 +261,30 @@ const handleGroupCreated = (group) => {
 
 const handleContactAdded = () => {}
 
-const handleContactSelect = async (contact) => {
-  // Create or open direct chat with contact
+const selectedContactId = inject('selectedContactId', ref(null))
+const selectedGroupId = inject('selectedGroupId', ref(null))
+const isMobile = inject('isMobile', ref(false))
+
+// Create or open the direct chat with a contact.
+const openContactChat = async (contact) => {
   await chatStore.createDirectChat(userStore.currentUser?.id, contact)
   setActiveView('chats')
 }
 
+// Desktop: a row click selects the record and the middle pane shows its
+// detail card. Phones have no room for that pane, so they keep the direct jump.
+const handleContactSelect = (contact) => {
+  if (isMobile.value) return openContactChat(contact)
+  selectedContactId.value = contact.id
+}
+
 const handleGroupSelect = (group) => {
-  chatStore.setActiveChat(group)
-  setActiveView('chats')
+  if (isMobile.value) {
+    chatStore.setActiveChat(group)
+    setActiveView('chats')
+    return
+  }
+  selectedGroupId.value = group.id
 }
 </script>
 
@@ -155,215 +293,38 @@ const handleGroupSelect = (group) => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: rgba(255, 255, 255, 0.72);
-  transition: background 0.3s ease;
-}
-
-/* Header */
-.panel-header {
-  padding: 24px 16px 12px 16px;
-}
-
-/* Drag region for window dragging */
-.drag-region {
-  -webkit-app-region: drag;
-}
-
-.no-drag {
-  -webkit-app-region: no-drag;
-}
-
-.win-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: 2px;
-  margin-bottom: 8px;
-}
-
-.header-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Window control buttons */
-.window-ctrl-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  color: #64748b;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: all 0.2s ease;
-}
-
-.window-ctrl-btn:hover {
-  background: #f1f5f9;
-}
-
-.window-ctrl-btn.close:hover {
-  background: #fee2e2;
-  color: #ef4444;
-}
-
-.window-ctrl-btn:active {
-  transform: scale(0.95);
-}
-
-/* Search Bar */
-.search-bar-new {
-  position: relative;
-  flex: 1;
+  background: #0e0e11;
   min-width: 0;
 }
 
-.search-icon {
-  position: absolute;
-  left: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #94a3b8;
-  font-size: 18px;
-  transition: color 0.3s ease;
-  pointer-events: none;
-}
-
-.search-input-new {
-  width: 100%;
-  padding: 13px 16px 13px 44px;
-  border: none;
-  border-radius: 16px;
-  background: #f1f5f9;
-  font-size: 14px;
-  color: #1e293b;
-  outline: none;
-  transition: all 0.3s ease;
-  box-sizing: border-box;
-}
-
-.search-input-new::placeholder {
-  color: #64748b;
-}
-
-.search-input-new:focus {
-  background: #ffffff;
-  box-shadow: 0 0 0 2px rgba(79, 142, 240, 0.3);
-}
-
-.search-bar-new:focus-within .search-icon {
-  color: #4f8ef0;
-}
-
-/* Add button */
-.icon-btn-add {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  border: none;
-  background: linear-gradient(135deg, #6aa8f6 0%, #4f8ef0 100%);
-  color: #fff;
-  cursor: pointer;
-  box-shadow: 0 4px 12px -4px rgba(79, 142, 240, 0.4);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.icon-btn-add:hover {
-  transform: translateY(-1px) rotate(90deg);
-  box-shadow: 0 8px 18px -5px rgba(79, 142, 240, 0.5);
-}
-
-.icon-btn-add:active {
-  transform: translateY(0) rotate(90deg) scale(0.94);
-}
-
-.icon-btn-add .el-icon {
-  font-size: 18px;
-}
-
-/* List Container */
 .list-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 4px 12px 12px 12px;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  overflow-x: hidden;
+  padding: 0 8px;
+}
+
+/* The contacts directory scrolls itself (it owns the A–Z index rail). */
+.list-container.is-directory {
+  padding: 0;
+  overflow: hidden;
 }
 
 .list-container::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  width: 6px;
 }
 
-/* Dark Mode */
-[data-theme="dark"] .left-panel {
-  background: rgba(30, 34, 48, 0.72);
+.list-container::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-[data-theme="dark"] .window-ctrl-btn {
-  color: #94a3b8;
+.list-container::-webkit-scrollbar-thumb {
+  background: #353438;
+  border-radius: 9999px;
 }
 
-[data-theme="dark"] .window-ctrl-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
-}
-
-[data-theme="dark"] .window-ctrl-btn.close:hover {
-  background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
-}
-
-[data-theme="dark"] .search-input-new {
-  background: rgba(0, 0, 0, 0.2);
-  color: #e2e8f0;
-}
-
-[data-theme="dark"] .search-input-new:focus {
-  background: rgba(0, 0, 0, 0.3);
-}
-
-/* Mobile Responsive Styles */
-@media (max-width: 768px) {
-  .left-panel {
-    border-right: none;
-  }
-
-  .panel-header {
-    padding: 12px 12px 8px 12px;
-  }
-
-  .search-input-new {
-    padding: 12px 16px 12px 40px;
-    font-size: 16px; /* Prevent iOS zoom */
-  }
-
-  .icon-btn-add {
-    width: 44px;
-    height: 44px;
-  }
-
-  .list-container {
-    padding: 4px 8px 8px 8px;
-  }
-}
-
-/* Small phones */
-@media (max-width: 375px) {
-  .panel-header {
-    padding: 10px 10px 6px 10px;
-  }
-
-  .list-container {
-    padding: 4px 6px 6px 6px;
-  }
+.list-container::-webkit-scrollbar-thumb:hover {
+  background: #8e9192;
 }
 </style>

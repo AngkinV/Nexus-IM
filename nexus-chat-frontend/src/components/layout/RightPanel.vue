@@ -4,15 +4,14 @@
     <div class="panel-header">
       <h3 class="panel-title">{{ isGroupChat ? $t('group.groupInfo') : $t('settings.profile') }}</h3>
       <button class="close-btn" @click="closePanel">
-        <span class="material-icons-round">close</span>
+        <span class="material-symbols-outlined">close</span>
       </button>
     </div>
 
     <div class="profile-content custom-scrollbar">
-      <!-- Profile/Group Header -->
+      <!-- Profile / Group header -->
       <div class="profile-header">
         <div class="avatar-wrapper">
-          <div class="avatar-glow"></div>
           <img
             :src="chatStore.activeChat.avatar || defaultAvatar"
             :alt="chatStore.activeChat.name"
@@ -21,6 +20,7 @@
         </div>
         <h2 class="profile-name">{{ chatStore.activeChat.name }}</h2>
         <p class="profile-status" v-if="!isGroupChat">
+          <span class="status-pip" :class="{ online: chatStore.activeChat.status === 'online' }"></span>
           {{ $t('chat.' + (chatStore.activeChat.status || 'offline')) }}
         </p>
         <p class="profile-status member-count" v-else>
@@ -28,18 +28,18 @@
         </p>
       </div>
 
-      <!-- Direct Chat Info -->
+      <!-- Direct chat info -->
       <template v-if="!isGroupChat">
         <div class="profile-actions">
           <div class="action-item">
-            <el-icon><InfoFilled /></el-icon>
+            <span class="material-symbols-outlined action-icon">smartphone</span>
             <div class="action-text">
               <span class="label">Mobile</span>
               <span class="value">+1 234 567 890</span>
             </div>
           </div>
           <div class="action-item">
-            <el-icon><Bell /></el-icon>
+            <span class="material-symbols-outlined action-icon">notifications</span>
             <div class="action-text">
               <span class="label">{{ $t('settings.notifications') }}</span>
               <span class="value">{{ notificationsEnabled ? $t('common.enabled') : $t('common.disabled') }}</span>
@@ -49,18 +49,16 @@
         </div>
       </template>
 
-      <!-- Group Chat Members -->
+      <!-- Group members -->
       <template v-else>
-        <!-- Members Section -->
         <div class="members-section">
           <div class="section-header">
             <h4 class="section-title">{{ $t('group.memberList') }}</h4>
             <button class="add-member-header-btn" @click="handleAddMember">
-              <span class="material-icons-round">person_add</span>
+              <span class="material-symbols-outlined">person_add</span>
             </button>
           </div>
 
-          <!-- Members Grid -->
           <div class="members-grid" v-loading="loadingMembers">
             <div
               v-for="member in displayedMembers"
@@ -75,16 +73,14 @@
                   class="member-avatar-img"
                 />
                 <span class="online-indicator" :class="{ online: member.isOnline }"></span>
-                <!-- Role indicator for owner/admin -->
                 <span v-if="member.role === 'owner'" class="role-indicator owner">
-                  <span class="material-icons-round">star</span>
+                  <span class="material-symbols-outlined">star</span>
                 </span>
                 <span v-else-if="member.role === 'admin'" class="role-indicator admin">
-                  <span class="material-icons-round">verified_user</span>
+                  <span class="material-symbols-outlined">verified_user</span>
                 </span>
               </div>
               <span class="member-label">{{ getMemberLabel(member) }}</span>
-              <!-- Context menu for member management -->
               <el-dropdown
                 v-if="canManageMember(member)"
                 trigger="click"
@@ -93,26 +89,26 @@
                 class="member-dropdown"
               >
                 <button class="member-more-btn" @click.stop>
-                  <span class="material-icons-round">more_vert</span>
+                  <span class="material-symbols-outlined">more_vert</span>
                 </button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <template v-if="isOwner">
                       <el-dropdown-item v-if="member.role !== 'admin'" command="setAdmin">
-                        <span class="material-icons-round menu-icon">admin_panel_settings</span>
+                        <span class="material-symbols-outlined menu-icon">admin_panel_settings</span>
                         {{ $t('group.setAdmin') }}
                       </el-dropdown-item>
                       <el-dropdown-item v-if="member.role === 'admin'" command="removeAdmin">
-                        <span class="material-icons-round menu-icon">remove_moderator</span>
+                        <span class="material-symbols-outlined menu-icon">remove_moderator</span>
                         {{ $t('group.removeAdmin') }}
                       </el-dropdown-item>
                       <el-dropdown-item command="transfer">
-                        <span class="material-icons-round menu-icon">swap_horiz</span>
+                        <span class="material-symbols-outlined menu-icon">swap_horiz</span>
                         {{ $t('group.transferOwnership') }}
                       </el-dropdown-item>
                     </template>
                     <el-dropdown-item v-if="canKickMember(member)" command="kick" divided>
-                      <span class="material-icons-round menu-icon text-danger">person_remove</span>
+                      <span class="material-symbols-outlined menu-icon text-danger">person_remove</span>
                       {{ $t('group.removeMember') }}
                     </el-dropdown-item>
                   </el-dropdown-menu>
@@ -120,26 +116,23 @@
               </el-dropdown>
             </div>
 
-            <!-- Add Member Button -->
             <button class="add-member-btn" @click="handleAddMember">
-              <span class="material-icons-round">add</span>
+              <span class="material-symbols-outlined">add</span>
             </button>
           </div>
         </div>
 
-        <!-- Divider -->
         <div class="section-divider"></div>
 
-        <!-- Settings Section -->
         <div class="settings-section">
           <button class="setting-item" @click="handleSearchHistory">
-            <span class="material-icons-round setting-icon">search</span>
+            <span class="material-symbols-outlined setting-icon">search</span>
             <span class="setting-text">{{ $t('group.searchHistory') || 'Search History' }}</span>
-            <span class="material-icons-round setting-arrow">chevron_right</span>
+            <span class="material-symbols-outlined setting-arrow">chevron_right</span>
           </button>
 
           <button class="setting-item" @click="toggleMute">
-            <span class="material-icons-round setting-icon">notifications_off</span>
+            <span class="material-symbols-outlined setting-icon">notifications_off</span>
             <span class="setting-text">{{ $t('group.muteNotifications') || 'Mute Notifications' }}</span>
             <div class="toggle-switch" :class="{ active: isMuted }">
               <div class="toggle-thumb"></div>
@@ -147,7 +140,7 @@
           </button>
 
           <button class="setting-item" @click="toggleSticky">
-            <span class="material-icons-round setting-icon">push_pin</span>
+            <span class="material-symbols-outlined setting-icon">push_pin</span>
             <span class="setting-text">{{ $t('group.stickyOnTop') || 'Sticky on Top' }}</span>
             <div class="toggle-switch" :class="{ active: isSticky }">
               <div class="toggle-thumb"></div>
@@ -157,14 +150,14 @@
       </template>
     </div>
 
-    <!-- Bottom Actions -->
+    <!-- Bottom actions -->
     <div class="bottom-actions" v-if="isGroupChat">
       <button
         v-if="!isOwner"
         class="leave-group-btn"
         @click="handleLeaveGroup"
       >
-        <span class="material-icons-round">logout</span>
+        <span class="material-symbols-outlined">logout</span>
         <span>{{ $t('group.leaveGroup') }}</span>
       </button>
 
@@ -173,12 +166,12 @@
         class="leave-group-btn dissolve"
         @click="handleDissolveGroup"
       >
-        <span class="material-icons-round">delete_forever</span>
+        <span class="material-symbols-outlined">delete_forever</span>
         <span>{{ $t('group.dissolveGroup') }}</span>
       </button>
     </div>
 
-    <!-- Confirm Dialog -->
+    <!-- Confirm dialog -->
     <el-dialog
       v-model="confirmDialog.visible"
       :title="confirmDialog.title"
@@ -198,7 +191,6 @@
       </template>
     </el-dialog>
 
-    <!-- Add Member Modal -->
     <AddGroupMemberModal
       v-model="showAddMemberModal"
       :group-id="chatStore.activeChat?.id"
@@ -206,7 +198,6 @@
       @members-added="handleMembersAdded"
     />
 
-    <!-- Search Messages Modal -->
     <SearchMessagesModal
       v-model="showSearchModal"
       :chat-id="chatStore.activeChat?.id"
@@ -222,7 +213,6 @@ import { useUserStore } from '@/stores/user'
 import { groupAPI } from '@/services/api'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { InfoFilled, Bell } from '@element-plus/icons-vue'
 import AddGroupMemberModal from '@/components/chat/AddGroupMemberModal.vue'
 import SearchMessagesModal from '@/components/chat/SearchMessagesModal.vue'
 
@@ -240,6 +230,12 @@ const loadingMembers = ref(false)
 // Modal visibility
 const showAddMemberModal = ref(false)
 const showSearchModal = ref(false)
+
+// The chat header's search button opens this dialog through a signal.
+const searchSignal = inject('searchSignal', ref(0))
+watch(searchSignal, () => {
+  if (chatStore.activeChat) showSearchModal.value = true
+})
 
 // Settings state - use chatStore
 const isMuted = computed(() => {
@@ -519,43 +515,32 @@ const closePanel = () => {
 </script>
 
 <style scoped>
-/* Primary color: #00bfa5 (Teal) */
 .right-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #ffffff;
-  transition: all 0.3s ease;
+  background: #0e0e11;
+  border-left: 1px solid rgba(68, 71, 72, 0.2);
+  min-width: 0;
 }
 
-[data-theme="dark"] .right-panel {
-  background: #1e1e1e;
-}
-
-/* Header */
+/* ── Header ─────────────────────────────────────────────── */
 .panel-header {
   height: 56px;
+  flex-shrink: 0;
   padding: 0 16px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid transparent;
-  flex-shrink: 0;
-}
-
-[data-theme="dark"] .panel-header {
-  border-bottom-color: #333;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.2);
 }
 
 .panel-title {
   margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  color: #111827;
-}
-
-[data-theme="dark"] .panel-title {
-  color: #f3f4f6;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #ffffff;
 }
 
 .close-btn {
@@ -566,36 +551,31 @@ const closePanel = () => {
   justify-content: center;
   border: none;
   background: transparent;
-  border-radius: 50%;
-  color: #6b7280;
+  border-radius: 4px;
+  color: #8e9192;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
-.close-btn:hover {
-  background: #f3f4f6;
-  color: #111827;
-}
-
-[data-theme="dark"] .close-btn:hover {
-  background: #374151;
-  color: #f3f4f6;
-}
-
-.close-btn .material-icons-round {
+.close-btn .material-symbols-outlined {
   font-size: 18px;
 }
 
-/* Scrollable Content */
-.profile-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px 16px;
+.close-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
-/* Custom Scrollbar */
+/* ── Scroll body ────────────────────────────────────────── */
+.profile-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -603,143 +583,134 @@ const closePanel = () => {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.3);
-  border-radius: 20px;
+  background: #353438;
+  border-radius: 9999px;
 }
 
-[data-theme="dark"] .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(156, 163, 175, 0.2);
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #8e9192;
 }
 
-/* Profile Header with Avatar */
+/* ── Profile header ─────────────────────────────────────── */
 .profile-header {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding-bottom: 24px;
+  padding-bottom: 16px;
 }
 
 .avatar-wrapper {
-  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
   margin-bottom: 12px;
 }
 
-.avatar-glow {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 191, 165, 0.2);
-  filter: blur(20px);
-  border-radius: 50%;
-  opacity: 0;
-  transition: opacity 0.5s ease;
-}
-
-.avatar-wrapper:hover .avatar-glow {
-  opacity: 1;
-}
-
 .profile-avatar {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  position: relative;
-  z-index: 10;
-  border: 4px solid #ffffff;
-  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.1);
-}
-
-[data-theme="dark"] .profile-avatar {
-  border-color: #1e1e1e;
+  filter: grayscale(100%) contrast(1.1);
 }
 
 .profile-name {
-  margin: 0 0 4px 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: #111827;
-}
-
-[data-theme="dark"] .profile-name {
-  color: #f3f4f6;
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #ffffff;
 }
 
 .profile-status {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
-  color: #6b7280;
+  color: #c4c7c8;
 }
 
-.profile-status.member-count {
-  color: #00bfa5;
+.status-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: #6f7274;
 }
 
-/* Profile Actions (for direct chat) */
+.status-pip.online {
+  background: #ffffff;
+}
+
+/* ── Info rows ──────────────────────────────────────────── */
 .profile-actions {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(68, 71, 72, 0.2);
 }
 
 .action-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 12px;
-  transition: background 0.2s ease;
-  cursor: pointer;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #16161a;
+  border: 1px solid rgba(68, 71, 72, 0.2);
 }
 
-.action-item:hover {
-  background: #f9fafb;
-}
-
-[data-theme="dark"] .action-item:hover {
-  background: #262626;
+.action-icon {
+  font-size: 16px;
+  color: #8e9192;
+  flex-shrink: 0;
 }
 
 .action-text {
-  flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
 }
 
-.label {
-  font-size: 14px;
-  font-weight: 500;
-  color: #111827;
+.action-text .label {
+  font-size: 11px;
+  color: #8e9192;
 }
 
-[data-theme="dark"] .label {
-  color: #f3f4f6;
-}
-
-.value {
+.action-text .value {
   font-size: 12px;
-  color: #6b7280;
+  color: #e4e1e6;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Members Section */
+/* ── Members ────────────────────────────────────────────── */
 .members-section {
-  padding: 0;
+  padding-top: 12px;
 }
 
 .section-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  margin-top: 8px;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
 .section-title {
-  font-size: 12px;
+  margin: 0;
+  font-size: 11px;
   font-weight: 600;
-  color: #6b7280;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: #6f7274;
 }
 
 .add-member-header-btn {
@@ -750,322 +721,246 @@ const closePanel = () => {
   justify-content: center;
   border: none;
   background: transparent;
-  color: #6b7280;
-  cursor: pointer;
   border-radius: 4px;
-  transition: all 0.2s ease;
+  color: #8e9192;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.add-member-header-btn:hover {
-  color: #00bfa5;
-  background: rgba(0, 191, 165, 0.1);
-}
-
-.add-member-header-btn .material-icons-round {
+.add-member-header-btn .material-symbols-outlined {
   font-size: 16px;
 }
 
-/* Members Grid */
+.add-member-header-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
+}
+
 .members-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px 8px;
-  margin-bottom: 24px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .member-grid-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 5px;
+  padding: 6px 2px;
+  border-radius: 6px;
   cursor: pointer;
-  position: relative;
+  transition: background-color 0.15s ease;
 }
 
-.member-grid-item:hover .member-avatar-img {
-  transform: translateY(-2px);
+.member-grid-item:hover {
+  background: #16161a;
 }
 
 .member-avatar-box {
   position: relative;
-  width: 40px;
-  height: 40px;
-  margin-bottom: 4px;
+  width: 38px;
+  height: 38px;
+  border-radius: 9999px;
+  overflow: visible;
 }
 
 .member-avatar-img {
-  width: 100%;
-  height: 100%;
-  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  border-radius: 9999px;
   object-fit: cover;
-  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.1);
-  transition: transform 0.2s ease;
+  filter: grayscale(100%) contrast(1.1);
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.35);
 }
 
 .online-indicator {
   position: absolute;
-  bottom: -2px;
-  right: -2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #9ca3af;
-  border: 2px solid #ffffff;
+  bottom: 0;
+  right: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+  background: #6f7274;
+  box-shadow: 0 0 0 2px #0e0e11;
 }
 
 .online-indicator.online {
-  background: #10b981;
+  background: #ffffff;
 }
 
-[data-theme="dark"] .online-indicator {
-  border-color: #1e1e1e;
-}
-
-/* Role Indicator */
 .role-indicator {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+  top: -3px;
+  left: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid #ffffff;
-}
-
-.role-indicator .material-icons-round {
-  font-size: 10px;
+  box-shadow: 0 0 0 2px #0e0e11;
 }
 
 .role-indicator.owner {
-  background: linear-gradient(135deg, #fbbf24, #f59e0b);
-  color: #ffffff;
+  background: #ffffff;
+  color: #2f3131;
 }
 
 .role-indicator.admin {
-  background: linear-gradient(135deg, #60a5fa, #3b82f6);
-  color: #ffffff;
+  background: #353438;
+  color: #e4e1e6;
 }
 
-[data-theme="dark"] .role-indicator {
-  border-color: #1e1e1e;
+.role-indicator .material-symbols-outlined {
+  font-size: 9px;
 }
 
 .member-label {
   font-size: 10px;
-  color: #6b7280;
-  text-align: center;
-  width: 100%;
+  color: #c4c7c8;
+  max-width: 100%;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color 0.2s ease;
-}
-
-.member-grid-item:hover .member-label {
-  color: #111827;
-}
-
-[data-theme="dark"] .member-grid-item:hover .member-label {
-  color: #f3f4f6;
-}
-
-/* Member Dropdown */
-.member-dropdown {
-  position: absolute;
-  top: 0;
-  right: -4px;
-  z-index: 10;
 }
 
 .member-more-btn {
-  width: 20px;
-  height: 20px;
-  display: flex;
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 16px;
+  height: 16px;
+  display: none;
   align-items: center;
   justify-content: center;
   border: none;
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 50%;
+  border-radius: 9999px;
+  background: #353438;
+  color: #e4e1e6;
   cursor: pointer;
-  opacity: 0;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.member-more-btn .material-symbols-outlined {
+  font-size: 11px;
 }
 
 .member-grid-item:hover .member-more-btn {
-  opacity: 1;
+  display: flex;
 }
 
-.member-more-btn:hover {
-  background: #ffffff;
-}
-
-.member-more-btn .material-icons-round {
-  font-size: 14px;
-  color: #6b7280;
-}
-
-[data-theme="dark"] .member-more-btn {
-  background: rgba(38, 38, 38, 0.9);
-}
-
-[data-theme="dark"] .member-more-btn:hover {
-  background: #374151;
-}
-
-.menu-icon {
-  font-size: 16px;
-  margin-right: 8px;
-}
-
-.menu-icon.text-danger {
-  color: #ef4444;
-}
-
-/* Add Member Button */
 .add-member-btn {
-  width: 40px;
-  height: 40px;
-  border: 1px dashed #d1d5db;
-  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  margin-top: 6px;
+  align-self: center;
+  border: 1px dashed rgba(68, 71, 72, 0.6);
+  border-radius: 9999px;
+  background: transparent;
+  color: #8e9192;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  color: #9ca3af;
   cursor: pointer;
-  transition: all 0.2s ease;
-  margin: 0 auto;
+  transition: all 0.15s ease;
+}
+
+.add-member-btn .material-symbols-outlined {
+  font-size: 16px;
 }
 
 .add-member-btn:hover {
-  border-color: #00bfa5;
-  color: #00bfa5;
-  background: rgba(0, 191, 165, 0.05);
+  border-color: #8e9192;
+  color: #ffffff;
+  background: #16161a;
 }
 
-.add-member-btn .material-icons-round {
-  font-size: 18px;
-}
-
-/* Section Divider */
 .section-divider {
-  width: 100%;
   height: 1px;
-  background: #f3f4f6;
-  margin: 16px 0;
+  background: rgba(68, 71, 72, 0.2);
+  margin: 14px 0;
 }
 
-[data-theme="dark"] .section-divider {
-  background: #333;
-}
-
-/* Settings Section */
+/* ── Settings rows ──────────────────────────────────────── */
 .settings-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .setting-item {
-  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
   border: none;
+  border-radius: 6px;
   background: transparent;
-  border-radius: 8px;
+  color: #c4c7c8;
   cursor: pointer;
-  transition: all 0.2s ease;
+  text-align: left;
+  transition: background-color 0.15s ease;
 }
 
 .setting-item:hover {
-  background: #f9fafb;
-}
-
-[data-theme="dark"] .setting-item:hover {
-  background: #262626;
+  background: #16161a;
 }
 
 .setting-icon {
-  font-size: 18px;
-  color: #9ca3af;
-  margin-right: 12px;
-  transition: color 0.2s ease;
-}
-
-.setting-item:hover .setting-icon {
-  color: #00bfa5;
+  font-size: 16px;
+  color: #8e9192;
+  flex-shrink: 0;
 }
 
 .setting-text {
   flex: 1;
-  text-align: left;
   font-size: 12px;
-  font-weight: 500;
-  color: #111827;
-}
-
-[data-theme="dark"] .setting-text {
-  color: #f3f4f6;
+  color: #e4e1e6;
 }
 
 .setting-arrow {
   font-size: 16px;
-  color: #d1d5db;
+  color: #6f7274;
+  flex-shrink: 0;
 }
 
-[data-theme="dark"] .setting-arrow {
-  color: #4b5563;
-}
-
-/* Toggle Switch */
 .toggle-switch {
-  width: 32px;
-  height: 16px;
-  background: #e5e7eb;
-  border-radius: 8px;
+  width: 30px;
+  height: 17px;
+  border-radius: 9999px;
+  background: #353438;
   position: relative;
-  cursor: pointer;
-  transition: background 0.2s ease;
+  flex-shrink: 0;
+  transition: background-color 0.18s ease;
 }
 
 .toggle-switch.active {
-  background: #00bfa5;
+  background: #ffffff;
 }
 
 .toggle-thumb {
-  width: 12px;
-  height: 12px;
-  background: #ffffff;
-  border-radius: 50%;
   position: absolute;
   top: 2px;
   left: 2px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  transition: transform 0.2s ease;
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: #0e0e11;
+  transition: transform 0.18s ease;
 }
 
 .toggle-switch.active .toggle-thumb {
-  transform: translateX(16px);
+  transform: translateX(13px);
 }
 
-[data-theme="dark"] .toggle-switch {
-  background: #374151;
-}
-
-/* Bottom Actions */
+/* ── Bottom actions ─────────────────────────────────────── */
 .bottom-actions {
-  padding: 16px;
-  border-top: 1px solid transparent;
-  margin-top: auto;
-}
-
-[data-theme="dark"] .bottom-actions {
-  border-top-color: #333;
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(68, 71, 72, 0.2);
 }
 
 .leave-group-btn {
@@ -1073,45 +968,40 @@ const closePanel = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border: none;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(68, 71, 72, 0.6);
+  border-radius: 4px;
   background: transparent;
-  border-radius: 12px;
-  color: #ef4444;
+  color: #e4e1e6;
   font-size: 12px;
-  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
+}
+
+.leave-group-btn .material-symbols-outlined {
+  font-size: 15px;
 }
 
 .leave-group-btn:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: #1b1b1e;
 }
 
-.leave-group-btn:hover .material-icons-round {
-  transform: translateX(-4px);
+.leave-group-btn.dissolve {
+  border-color: rgba(255, 180, 171, 0.4);
+  color: #ffb4ab;
 }
 
-.leave-group-btn .material-icons-round {
-  font-size: 18px;
-  transition: transform 0.2s ease;
+.leave-group-btn.dissolve:hover {
+  background: rgba(255, 180, 171, 0.08);
 }
 
-[data-theme="dark"] .leave-group-btn:hover {
-  background: rgba(239, 68, 68, 0.15);
-}
-
-/* Confirm Dialog */
+/* ── Dialog bits ────────────────────────────────────────── */
 .confirm-message {
   margin: 0;
-  font-size: 14px;
-  color: #475569;
+  font-size: 13px;
   line-height: 1.6;
-}
-
-[data-theme="dark"] .confirm-message {
-  color: #94a3b8;
+  color: #c4c7c8;
 }
 
 .dialog-footer {
@@ -1120,72 +1010,14 @@ const closePanel = () => {
   gap: 8px;
 }
 
-/* Mobile Responsive Styles */
-@media (max-width: 768px) {
-  .right-panel {
-    border-left: none;
-  }
+.menu-icon {
+  font-size: 15px;
+  margin-right: 6px;
+  vertical-align: middle;
+  color: #8e9192;
+}
 
-  .panel-header {
-    height: 52px;
-    padding: 0 12px;
-  }
-
-  .panel-title {
-    font-size: 15px;
-  }
-
-  .profile-content {
-    padding: 20px 12px;
-  }
-
-  .profile-avatar {
-    width: 70px;
-    height: 70px;
-  }
-
-  .profile-name {
-    font-size: 15px;
-  }
-
-  .profile-status {
-    font-size: 11px;
-  }
-
-  .members-grid {
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px 6px;
-  }
-
-  .member-avatar-box {
-    width: 36px;
-    height: 36px;
-  }
-
-  .member-label {
-    font-size: 9px;
-  }
-
-  .add-member-btn {
-    width: 36px;
-    height: 36px;
-  }
-
-  .setting-item {
-    padding: 10px 6px;
-  }
-
-  .setting-text {
-    font-size: 13px;
-  }
-
-  .bottom-actions {
-    padding: 12px;
-  }
-
-  .leave-group-btn {
-    padding: 10px 12px;
-    font-size: 13px;
-  }
+.text-danger {
+  color: #ffb4ab !important;
 }
 </style>

@@ -54,6 +54,15 @@ const router = createRouter({
     ]
 })
 
+// Dev-only review stage for the AI warp transition; stripped from production builds.
+if (import.meta.env.DEV) {
+    router.addRoute({
+        path: '/dev/warp',
+        name: 'WarpPreview',
+        component: () => import('@/views/dev/WarpPreview.vue')
+    })
+}
+
 // Navigation guard
 router.beforeEach((to, from, next) => {
     const token = localStorage.getItem('token')

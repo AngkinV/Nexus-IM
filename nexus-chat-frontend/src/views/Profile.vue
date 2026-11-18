@@ -21,7 +21,7 @@
               <el-icon><EditPen /></el-icon>
             </button>
           </div>
-          <p class="identity-handle">ID: {{ userStore.currentUser?.username }}</p>
+          <p class="identity-handle">{{ $t('profile.idLabel') }} {{ userStore.currentUser?.username }}</p>
           <p class="identity-tagline">{{ userStore.currentUser?.bio || $t('profile.noSignature') }}</p>
         </div>
 
@@ -57,13 +57,13 @@
           <svg viewBox="0 0 160 160" width="150" height="150">
             <defs>
               <linearGradient id="planetBody" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stop-color="#cfe0ff" />
-                <stop offset="55%" stop-color="#a9c4ff" />
-                <stop offset="100%" stop-color="#7aa0f5" />
+                <stop offset="0%" stop-color="#e4e1e6" />
+                <stop offset="55%" stop-color="#c4c7c8" />
+                <stop offset="100%" stop-color="#8e9192" />
               </linearGradient>
               <linearGradient id="planetRing" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#bcd0ff" />
-                <stop offset="100%" stop-color="#dfe9ff" />
+                <stop offset="0%" stop-color="#c4c7c8" />
+                <stop offset="100%" stop-color="#e4e1e6" />
               </linearGradient>
             </defs>
             <circle cx="80" cy="78" r="40" fill="url(#planetBody)" />
@@ -71,9 +71,9 @@
             <circle cx="66" cy="66" r="6" fill="#ffffff" opacity="0.4" />
             <circle cx="92" cy="86" r="9" fill="#ffffff" opacity="0.16" />
             <ellipse cx="80" cy="86" rx="64" ry="20" fill="none" stroke="url(#planetRing)" stroke-width="7" opacity="0.85" transform="rotate(-18 80 86)" />
-            <circle cx="32" cy="40" r="2.4" fill="#9db9ff" />
-            <circle cx="128" cy="44" r="2" fill="#9db9ff" />
-            <circle cx="120" cy="118" r="2.6" fill="#9db9ff" />
+            <circle cx="32" cy="40" r="2.4" fill="#8e9192" />
+            <circle cx="128" cy="44" r="2" fill="#8e9192" />
+            <circle cx="120" cy="118" r="2.6" fill="#8e9192" />
           </svg>
         </div>
       </aside>
@@ -103,32 +103,32 @@
                   <svg viewBox="0 0 220 150" width="220" height="150">
                     <defs>
                       <linearGradient id="podium" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="#c9d8ff" />
-                        <stop offset="100%" stop-color="#aec4f7" />
+                        <stop offset="0%" stop-color="#c4c7c8" />
+                        <stop offset="100%" stop-color="#8e9192" />
                       </linearGradient>
                       <linearGradient id="bubbleA" x1="0" y1="0" x2="1" y2="1">
                         <stop offset="0%" stop-color="#ffffff" />
-                        <stop offset="100%" stop-color="#dbe6ff" />
+                        <stop offset="100%" stop-color="#c4c7c8" />
                       </linearGradient>
                       <linearGradient id="bubbleB" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#7aa0f5" />
-                        <stop offset="100%" stop-color="#6aa8f6" />
+                        <stop offset="0%" stop-color="#8e9192" />
+                        <stop offset="100%" stop-color="#6f7274" />
                       </linearGradient>
                     </defs>
                     <ellipse cx="120" cy="120" rx="92" ry="20" fill="url(#podium)" opacity="0.55" />
                     <ellipse cx="120" cy="116" rx="70" ry="14" fill="#ffffff" opacity="0.5" />
                     <rect x="58" y="44" width="78" height="54" rx="16" fill="url(#bubbleA)" />
-                    <path d="M78 96 l0 16 l16 -12 z" fill="#dbe6ff" />
-                    <circle cx="80" cy="71" r="4.4" fill="#9db9ff" />
-                    <circle cx="97" cy="71" r="4.4" fill="#9db9ff" />
-                    <circle cx="114" cy="71" r="4.4" fill="#9db9ff" />
+                    <path d="M78 96 l0 16 l16 -12 z" fill="#c4c7c8" />
+                    <circle cx="80" cy="71" r="4.4" fill="#8e9192" />
+                    <circle cx="97" cy="71" r="4.4" fill="#8e9192" />
+                    <circle cx="114" cy="71" r="4.4" fill="#8e9192" />
                     <rect x="120" y="30" width="70" height="48" rx="15" fill="url(#bubbleB)" />
-                    <path d="M168 76 l0 15 l15 -11 z" fill="#6aa8f6" />
+                    <path d="M168 76 l0 15 l15 -11 z" fill="#6f7274" />
                     <rect x="132" y="46" width="46" height="6" rx="3" fill="#ffffff" opacity="0.85" />
                     <rect x="132" y="58" width="30" height="6" rx="3" fill="#ffffff" opacity="0.6" />
-                    <circle cx="44" cy="40" r="4" fill="#bcd0ff" />
-                    <circle cx="196" cy="96" r="5" fill="#bcd0ff" />
-                    <circle cx="182" cy="20" r="3" fill="#d7e2ff" />
+                    <circle cx="44" cy="40" r="4" fill="#c4c7c8" />
+                    <circle cx="196" cy="96" r="5" fill="#c4c7c8" />
+                    <circle cx="182" cy="20" r="3" fill="#e4e1e6" />
                   </svg>
                 </div>
               </section>
@@ -389,12 +389,8 @@ const formatTime = (time) => {
   height: 100vh;
   box-sizing: border-box;
   padding: 0;
-  background: #f4f6fb;
+  background: #131316;
   overflow: hidden;
-}
-
-[data-theme="dark"] .profile-page {
-  background: #14161c;
 }
 
 .drag-region {
@@ -425,14 +421,9 @@ const formatTime = (time) => {
   display: flex;
   flex-direction: column;
   padding: 38px 18px 18px;
-  background: #ffffff;
-  border-right: 1px solid #eef0f4;
+  background: #16161a;
+  border-right: 1px solid rgba(68, 71, 72, 0.2);
   overflow: hidden;
-}
-
-[data-theme="dark"] .profile-aside {
-  background: #1b1e26;
-  border-right-color: #262a34;
 }
 
 .aside-back {
@@ -443,25 +434,15 @@ const formatTime = (time) => {
   justify-content: center;
   border: none;
   border-radius: 10px;
-  background: #f1f4f9;
-  color: #8a93a5;
+  background: #222225;
+  color: #8e9192;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .aside-back:hover {
-  background: #eef2ff;
-  color: #4f8ef0;
-}
-
-[data-theme="dark"] .aside-back {
-  background: #262a34;
-  color: #aab2c0;
-}
-
-[data-theme="dark"] .aside-back:hover {
-  background: rgba(79, 142, 240, 0.2);
-  color: #9cc6f8;
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
 .aside-identity {
@@ -476,12 +457,8 @@ const formatTime = (time) => {
 }
 
 .identity-avatar .el-avatar {
-  border: 3px solid #ffffff;
-  box-shadow: 0 6px 18px -6px rgba(79, 142, 240, 0.35);
-}
-
-[data-theme="dark"] .identity-avatar .el-avatar {
-  border-color: #232730;
+  border: 3px solid #131316;
+  box-shadow: none;
 }
 
 .status-dot {
@@ -491,16 +468,12 @@ const formatTime = (time) => {
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  background: #c2c9d6;
-  border: 3px solid #ffffff;
-}
-
-[data-theme="dark"] .status-dot {
-  border-color: #1b1e26;
+  background: #6f7274;
+  border: 3px solid #16161a;
 }
 
 .status-dot.online {
-  background: #22c55e;
+  background: #ffffff;
 }
 
 .identity-name-row {
@@ -514,11 +487,7 @@ const formatTime = (time) => {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  color: #1f2430;
-}
-
-[data-theme="dark"] .identity-name {
-  color: #eef1f6;
+  color: #e4e1e6;
 }
 
 .name-edit {
@@ -530,28 +499,28 @@ const formatTime = (time) => {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #aab2c0;
+  color: #6f7274;
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .name-edit:hover {
-  background: #eef2ff;
-  color: #4f8ef0;
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
 .identity-handle {
   margin: 6px 0 0;
   font-size: 12.5px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .identity-tagline {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #aab2c0;
+  color: #6f7274;
   text-align: center;
   max-width: 200px;
 }
@@ -573,7 +542,7 @@ const formatTime = (time) => {
   border: none;
   border-radius: 12px;
   background: transparent;
-  color: #6b7585;
+  color: #8e9192;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -586,13 +555,13 @@ const formatTime = (time) => {
 }
 
 .nav-item:hover {
-  background: #f1f4f9;
-  color: #1f2430;
+  background: #222225;
+  color: #e4e1e6;
 }
 
 .nav-item.active {
-  background: #eef2ff;
-  color: #4f8ef0;
+  background: #2a2a2d;
+  color: #ffffff;
 }
 
 .nav-item.active::before {
@@ -604,21 +573,7 @@ const formatTime = (time) => {
   width: 3px;
   height: 18px;
   border-radius: 2px;
-  background: #4f8ef0;
-}
-
-[data-theme="dark"] .nav-item {
-  color: #aab2c0;
-}
-
-[data-theme="dark"] .nav-item:hover {
-  background: #262a34;
-  color: #eef1f6;
-}
-
-[data-theme="dark"] .nav-item.active {
-  background: rgba(79, 142, 240, 0.18);
-  color: #9cc6f8;
+  background: #ffffff;
 }
 
 /* Decoration */
@@ -638,11 +593,7 @@ const formatTime = (time) => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #f7f9fd 0%, #f4f6fb 100%);
-}
-
-[data-theme="dark"] .profile-main {
-  background: #14161c;
+  background: #131316;
 }
 
 .main-body {
@@ -678,17 +629,13 @@ const formatTime = (time) => {
   font-size: 26px;
   font-weight: 800;
   letter-spacing: -0.4px;
-  color: #1f2430;
-}
-
-[data-theme="dark"] .ov-title {
-  color: #eef1f6;
+  color: #e4e1e6;
 }
 
 .ov-greeting {
   margin: 6px 0 0;
   font-size: 14px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .ov-quote {
@@ -699,7 +646,7 @@ const formatTime = (time) => {
   font-size: 13px;
   font-style: italic;
   line-height: 1.5;
-  color: #aab2c0;
+  color: #6f7274;
   text-align: right;
   flex-shrink: 0;
 }
@@ -710,7 +657,7 @@ const formatTime = (time) => {
   font-size: 30px;
   font-style: normal;
   line-height: 1;
-  color: #d7deea;
+  color: #353438;
 }
 
 .ov-quote::before { content: "\201C"; left: 0; top: -6px; }
@@ -724,13 +671,9 @@ const formatTime = (time) => {
   justify-content: space-between;
   min-height: 132px;
   padding: 26px 30px;
-  border-radius: 20px;
-  background: linear-gradient(120deg, #e8edfd 0%, #ebe8fb 55%, #f0ecfd 100%);
+  border-radius: 16px;
+  background: linear-gradient(120deg, #222225 0%, #1b1b1e 55%, #16161a 100%);
   overflow: hidden;
-}
-
-[data-theme="dark"] .hero-card {
-  background: linear-gradient(120deg, #232a45 0%, #2a2742 100%);
 }
 
 .hero-text {
@@ -743,22 +686,14 @@ const formatTime = (time) => {
   margin: 0;
   font-size: 19px;
   font-weight: 800;
-  color: #2b3350;
-}
-
-[data-theme="dark"] .hero-title {
-  color: #eef1f6;
+  color: #e4e1e6;
 }
 
 .hero-sub {
   margin: 10px 0 0;
   font-size: 13.5px;
   line-height: 1.6;
-  color: #6b7592;
-}
-
-[data-theme="dark"] .hero-sub {
-  color: #aab2c0;
+  color: #8e9192;
 }
 
 .hero-art {
@@ -782,22 +717,16 @@ const formatTime = (time) => {
   align-items: flex-start;
   gap: 14px;
   padding: 18px 18px 16px;
-  background: #ffffff;
-  border: 1px solid #eef0f4;
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(20, 30, 60, 0.04);
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 12px;
+  box-shadow: none;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .stat-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 10px 24px -10px rgba(30, 45, 90, 0.18);
-}
-
-[data-theme="dark"] .stat-card {
-  background: #1e2230;
-  border-color: #262a34;
-  box-shadow: none;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .stat-icon {
@@ -819,7 +748,7 @@ const formatTime = (time) => {
 
 .stat-label {
   font-size: 12.5px;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .stat-value {
@@ -827,18 +756,14 @@ const formatTime = (time) => {
   font-size: 25px;
   font-weight: 800;
   line-height: 1.1;
-  color: #1f2430;
-}
-
-[data-theme="dark"] .stat-value {
-  color: #eef1f6;
+  color: #e4e1e6;
 }
 
 .stat-unit {
   font-size: 15px;
   font-weight: 700;
   font-style: normal;
-  color: #8a93a5;
+  color: #8e9192;
 }
 
 .stat-delta {
@@ -848,27 +773,22 @@ const formatTime = (time) => {
   margin-top: 6px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #aab2c0;
+  color: #6f7274;
 }
 
 .stat-delta .el-icon {
   font-size: 12px;
 }
 
-.stat-delta.up { color: #22c55e; }
-.stat-delta.down { color: #ef4444; }
-.stat-delta.flat { color: #aab2c0; }
+.stat-delta.up { color: #ffffff; }
+.stat-delta.down { color: #f2b8b5; }
+.stat-delta.flat { color: #6f7274; }
 
 /* Icon tones */
-.blue { background: #e8f1fd; color: #3b82f6; }
-.green { background: #e7f8ef; color: #22c55e; }
-.purple { background: #f1ecfe; color: #8b5cf6; }
-.orange { background: #fff2e3; color: #f59e0b; }
-
-[data-theme="dark"] .blue { background: rgba(59, 130, 246, 0.16); color: #7eb0ff; }
-[data-theme="dark"] .green { background: rgba(34, 197, 94, 0.16); color: #5ee19a; }
-[data-theme="dark"] .purple { background: rgba(139, 92, 246, 0.16); color: #b69bff; }
-[data-theme="dark"] .orange { background: rgba(245, 158, 11, 0.16); color: #ffc35c; }
+.blue { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.green { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
+.purple { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.orange { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
 
 /* Bottom columns */
 .ov-columns {
@@ -879,16 +799,10 @@ const formatTime = (time) => {
 }
 
 .panel {
-  background: #ffffff;
-  border: 1px solid #eef0f4;
-  border-radius: 16px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 12px;
   padding: 20px 22px;
-  box-shadow: 0 2px 12px rgba(20, 30, 60, 0.04);
-}
-
-[data-theme="dark"] .panel {
-  background: #1e2230;
-  border-color: #262a34;
   box-shadow: none;
 }
 
@@ -903,11 +817,7 @@ const formatTime = (time) => {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
-  color: #1f2430;
-}
-
-[data-theme="dark"] .panel-title {
-  color: #eef1f6;
+  color: #e4e1e6;
 }
 
 .panel-link {
@@ -916,7 +826,7 @@ const formatTime = (time) => {
   gap: 2px;
   border: none;
   background: transparent;
-  color: #4f8ef0;
+  color: #ffffff;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -938,7 +848,7 @@ const formatTime = (time) => {
   width: 100%;
   padding: 13px 8px;
   border: none;
-  border-bottom: 1px solid #f1f3f7;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.18);
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -948,10 +858,7 @@ const formatTime = (time) => {
 
 .pi-row:last-child { border-bottom: none; }
 .pi-row.static { cursor: default; }
-.pi-row:not(.static):hover { background: #f7f9fd; }
-
-[data-theme="dark"] .pi-row { border-bottom-color: #262a34; }
-[data-theme="dark"] .pi-row:not(.static):hover { background: #232733; }
+.pi-row:not(.static):hover { background: #222225; }
 
 .pi-ic {
   width: 32px;
@@ -966,7 +873,7 @@ const formatTime = (time) => {
 
 .pi-label {
   font-size: 13px;
-  color: #8a93a5;
+  color: #8e9192;
   width: 76px;
   flex-shrink: 0;
 }
@@ -979,7 +886,7 @@ const formatTime = (time) => {
   gap: 6px;
   font-size: 13.5px;
   font-weight: 600;
-  color: #1f2430;
+  color: #e4e1e6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -987,21 +894,19 @@ const formatTime = (time) => {
   text-align: right;
 }
 
-[data-theme="dark"] .pi-value { color: #eef1f6; }
-
 .dot-online {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #c2c9d6;
+  background: #6f7274;
   flex-shrink: 0;
 }
 
-.dot-online.on { background: #22c55e; }
+.dot-online.on { background: #ffffff; }
 
 .pi-arrow {
   font-size: 14px;
-  color: #c2c9d6;
+  color: #6f7274;
   flex-shrink: 0;
 }
 
@@ -1014,7 +919,7 @@ const formatTime = (time) => {
 .act-empty {
   padding: 18px 4px;
   font-size: 13px;
-  color: #aab2c0;
+  color: #6f7274;
 }
 
 .act-row {
@@ -1022,28 +927,24 @@ const formatTime = (time) => {
   align-items: center;
   gap: 12px;
   padding: 11px 4px;
-  border-bottom: 1px solid #f1f3f7;
+  border-bottom: 1px solid rgba(68, 71, 72, 0.18);
 }
 
 .act-row:last-child { border-bottom: none; }
-
-[data-theme="dark"] .act-row { border-bottom-color: #262a34; }
 
 .act-text {
   flex: 1;
   min-width: 0;
   font-size: 13.5px;
-  color: #2b3350;
+  color: #e4e1e6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-[data-theme="dark"] .act-text { color: #d7dbe4; }
-
 .act-time {
   font-size: 12px;
-  color: #aab2c0;
+  color: #6f7274;
   flex-shrink: 0;
 }
 
@@ -1113,7 +1014,7 @@ const formatTime = (time) => {
     width: auto;
     padding: 44px 16px 12px;
     border-right: none;
-    border-bottom: 1px solid #eef0f4;
+    border-bottom: 1px solid rgba(68, 71, 72, 0.25);
   }
 
   .aside-nav {

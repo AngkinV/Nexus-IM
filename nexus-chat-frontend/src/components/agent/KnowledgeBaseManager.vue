@@ -160,12 +160,12 @@
         (kb.embeddingDimension is non-null). Switching providers later would
         change the vector dimension and break Chroma's locked collection.
       -->
-      <el-form-item label="Embedding 服务">
+      <el-form-item :label="$t('agent.knowledge.fieldEmbeddingService')">
         <el-select
           v-model="form.embeddingCredentialId"
           :disabled="embeddingLocked"
           clearable
-          placeholder="选择已配置的 Embedding 凭据 (留空使用服务器默认)"
+          :placeholder="$t('agent.knowledge.embeddingPlaceholder')"
           style="width: 100%"
         >
           <el-option
@@ -183,27 +183,26 @@
           </el-option>
           <template #empty>
             <div style="padding: 12px; font-size: 12px; color: var(--el-text-color-secondary);">
-              还没有 Embedding 凭据。请先打开"AI 设置 → 向量 Embedding"添加一条。
+              {{ $t('agent.knowledge.embeddingEmpty') }}
             </div>
           </template>
         </el-select>
         <div class="form-hint" v-if="embeddingLocked">
-          已经入库过文档，dim={{ form._lockedDimension }}，不能再改 Embedding 配置（会与现有向量维度冲突）。
-          要换 Embedding 请新建一个知识库。
+          {{ $t('agent.knowledge.embeddingLockedHint', { dim: form._lockedDimension }) }}
         </div>
         <div class="form-hint" v-else-if="!form.embeddingCredentialId">
-          ⚠️ 留空时会回退到 Python 服务的 EMBEDDING_API_KEY 环境变量；推荐在前端绑定一条凭据。
+          {{ $t('agent.knowledge.embeddingFallbackHint') }}
         </div>
       </el-form-item>
 
-      <el-form-item label="Embedding 模型">
+      <el-form-item :label="$t('agent.knowledge.fieldEmbeddingModel')">
         <el-input
           v-model="form.embeddingModel"
           :disabled="embeddingLocked"
           :placeholder="embeddingModelPlaceholder"
         />
         <div class="form-hint">
-          留空将使用所选凭据的默认模型（{{ defaultModelHint || 'text-embedding-3-small' }}）。
+          {{ $t('agent.knowledge.embeddingModelHint', { model: defaultModelHint || 'text-embedding-3-small' }) }}
         </div>
       </el-form-item>
 

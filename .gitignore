@@ -27,6 +27,8 @@ logs/
 npm-debug.log*
 
 # ==================== 后端 (Spring Boot) ====================
+# 本地凭据覆盖文件（真实邮箱/SMTP 码等），只留在本机
+application-local.properties
 nexus-chat-backend/target/
 nexus-chat-backend/.mvn/
 nexus-chat-backend/mvnw

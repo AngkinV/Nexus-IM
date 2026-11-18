@@ -121,7 +121,7 @@ function handleReject() {
   transform: translate(-50%, -50%);
   width: 300px;
   height: 300px;
-  background: radial-gradient(circle, rgba(76, 175, 80, 0.2) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.06) 0%, transparent 70%);
   border-radius: 50%;
   animation: pulse-bg 2s ease-in-out infinite;
 }
@@ -154,7 +154,7 @@ function handleReject() {
   left: -10px;
   right: -10px;
   bottom: -10px;
-  border: 3px solid rgba(76, 175, 80, 0.5);
+  border: 3px solid rgba(255, 255, 255, 0.22);
   border-radius: 50%;
   animation: ring-pulse 1.5s ease-in-out infinite;
 }
@@ -175,23 +175,23 @@ function handleReject() {
   height: 120px;
   border-radius: 50%;
   object-fit: cover;
-  border: 4px solid #fff;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  box-shadow: none;
 }
 
 .caller-avatar-placeholder {
   width: 120px;
   height: 120px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #444748 0%, #222225 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 48px;
   font-weight: 600;
   color: #fff;
-  border: 4px solid #fff;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  box-shadow: none;
 }
 
 .caller-info {
@@ -258,31 +258,32 @@ function handleReject() {
 }
 
 .reject-btn .btn-icon {
-  background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
-  box-shadow: 0 4px 20px rgba(255, 65, 108, 0.4);
+  background: #b3261e;
+  box-shadow: none;
 }
 
 .reject-btn:hover .btn-icon {
-  box-shadow: 0 6px 30px rgba(255, 65, 108, 0.6);
+  box-shadow: 0 0 0 1px rgba(242, 184, 181, 0.35);
 }
 
 .accept-btn .btn-icon {
-  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
-  box-shadow: 0 4px 20px rgba(76, 175, 80, 0.4);
+  background: #ffffff;
+  color: #2f3131;
+  box-shadow: none;
   animation: accept-pulse 1.5s ease-in-out infinite;
 }
 
 @keyframes accept-pulse {
   0%, 100% {
-    box-shadow: 0 4px 20px rgba(76, 175, 80, 0.4);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.22);
   }
   50% {
-    box-shadow: 0 6px 30px rgba(76, 175, 80, 0.6);
+    box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
   }
 }
 
 .accept-btn:hover .btn-icon {
-  box-shadow: 0 6px 30px rgba(76, 175, 80, 0.6);
+  box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
 }
 
 .btn-label {

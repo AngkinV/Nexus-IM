@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { API_BASE_URL } from './runtimeConfig'
+import i18n from '@/locales/i18n'
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
@@ -23,7 +24,7 @@ export const AGENT_OP = Object.freeze({
 
 export const agentAPI = {
     /** Create a new Agent session (Mode A: AI 助手会话). */
-    createSession: ({ entryMode = AGENT_OP.ASSISTANT_CHAT, title = 'AI 助手', boundChatId = null } = {}) =>
+    createSession: ({ entryMode = AGENT_OP.ASSISTANT_CHAT, title = i18n.global.t('agent.title'), boundChatId = null } = {}) =>
         apiClient.post('/agent/sessions', { entryMode, title, boundChatId }),
 
     /** List the current user's sessions (history dropdown). */

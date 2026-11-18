@@ -1,13 +1,10 @@
 <template>
   <div class="group-list">
     <div v-if="filteredGroups.length === 0" class="empty-state">
-      <div class="empty-icon-wrapper">
-        <div class="empty-icon-glow"></div>
-        <div class="empty-icon">
-          <el-icon :size="48"><User /></el-icon>
-        </div>
+      <div class="empty-mark">
+        <span class="material-symbols-outlined">group</span>
       </div>
-      <h3 class="empty-title">{{ $t('group.noGroups') }}</h3>
+      <p class="empty-title">{{ $t('group.noGroups') }}</p>
       <p class="empty-text">{{ $t('group.noGroupsDesc') }}</p>
     </div>
 
@@ -16,18 +13,18 @@
         v-for="group in filteredGroups"
         :key="group.id"
         class="group-item"
-        :class="{ active: chatStore.activeChat?.id === group.id }"
+        :class="{ active: selectedId != null ? selectedId === group.id : chatStore.activeChat?.id === group.id }"
         @click="selectGroup(group)"
       >
-        <div class="group-avatar">
-          <el-avatar :size="50" :src="group.avatar || defaultGroupAvatar">
-            <template v-if="!group.avatar">
-              {{ getGroupInitials(group.name) }}
-            </template>
-          </el-avatar>
-          <span v-if="group.isPrivate" class="private-badge">
-            <el-icon :size="12"><Lock /></el-icon>
-          </span>
+        <div class="avatar-frame">
+          <img
+            v-if="group.avatar"
+            class="avatar-img"
+            :src="group.avatar"
+            alt=""
+          />
+          <div v-else class="avatar-fallback">{{ getGroupInitials(group.name) }}</div>
+          <span class="member-badge">{{ group.memberCount || 0 }}</span>
         </div>
 
         <div class="group-content">
@@ -37,11 +34,19 @@
           </div>
           <div class="group-footer">
             <span class="group-message">{{ group.lastMessage || $t('group.noMessages') }}</span>
-            <span v-if="group.unreadCount > 0" class="unread-badge">{{ group.unreadCount }}</span>
+            <span v-if="group.unreadCount > 0" class="unread-badge">
+              {{ group.unreadCount > 99 ? '99+' : group.unreadCount }}
+            </span>
           </div>
           <div class="group-meta">
-            <el-icon><User /></el-icon>
-            <span>{{ group.memberCount || 0 }} {{ $t('group.members') }}</span>
+            <span class="group-chip">
+              <span v-if="group.isPrivate" class="material-symbols-outlined">lock</span>
+              {{ group.memberCount || 0 }} {{ $t('group.members') }}
+            </span>
+            <div class="group-flags">
+              <span v-if="chatStore.isChatMuted?.(group.id)" class="material-symbols-outlined">notifications_off</span>
+              <span v-if="chatStore.isChatPinned(group.id)" class="material-symbols-outlined pinned">push_pin</span>
+            </div>
           </div>
         </div>
       </div>
@@ -51,7 +56,6 @@
 
 <script setup>
 import { computed } from 'vue'
-import { User, Lock } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
 import dayjs from 'dayjs'
 
@@ -59,13 +63,16 @@ const props = defineProps({
   searchQuery: {
     type: String,
     default: ''
+  },
+  selectedId: {
+    type: [Number, String],
+    default: null
   }
 })
 
 const emit = defineEmits(['select'])
 
 const chatStore = useChatStore()
-const defaultGroupAvatar = ''
 
 const filteredGroups = computed(() => {
   const groups = chatStore.groupChats
@@ -73,13 +80,14 @@ const filteredGroups = computed(() => {
     return groups
   }
   const query = props.searchQuery.toLowerCase()
-  return groups.filter(group => 
+  return groups.filter(group =>
     group.name.toLowerCase().includes(query)
   )
 })
 
 const selectGroup = (group) => {
-  chatStore.setActiveChat(group)
+  // The parent decides what a selection means (detail card on desktop,
+  // straight into the conversation on phones).
   emit('select', group)
 }
 
@@ -92,7 +100,7 @@ const formatTime = (time) => {
   if (!time) return ''
   const date = dayjs(time)
   const now = dayjs()
-  
+
   if (date.isSame(now, 'day')) {
     return date.format('HH:mm')
   } else if (date.isSame(now.subtract(1, 'day'), 'day')) {
@@ -106,323 +114,274 @@ const formatTime = (time) => {
 </script>
 
 <style scoped>
+/* Prism c3 group rows — exported Tailwind classes resolved to CSS. */
 .group-list {
-  padding: 5px 0;
+  padding: 4px 0;
 }
 
-/* Empty State - Blue-Green Theme */
+/* ── Empty state ────────────────────────────────────────── */
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 400px;
-  padding: 0 24px;
+  padding: 64px 24px;
   text-align: center;
 }
 
-.empty-icon-wrapper {
-  position: relative;
-  margin-bottom: 24px;
-}
-
-.empty-icon-glow {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.2) 0%, rgba(16, 185, 129, 0.2) 100%);
-  border-radius: 50%;
-  filter: blur(24px);
-  animation: pulse-slow 4s ease-in-out infinite;
-}
-
-@keyframes pulse-slow {
-  0%, 100% {
-    opacity: 0.4;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.7;
-    transform: scale(1.15);
-  }
-}
-
-.empty-icon {
-  width: 96px;
-  height: 96px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.05) 0%, rgba(16, 185, 129, 0.05) 100%);
+.empty-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #6f7274;
   display: flex;
-  justify-content: center;
   align-items: center;
-  position: relative;
-  z-index: 10;
-  transition: transform 0.3s ease;
+  justify-content: center;
+  margin-bottom: 16px;
 }
 
-.empty-icon:hover {
-  transform: scale(1.05);
-}
-
-.empty-icon .el-icon {
-  font-size: 48px;
-  background: linear-gradient(135deg, #0ea5e9 0%, #10b981 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.empty-mark .material-symbols-outlined {
+  font-size: 24px;
 }
 
 .empty-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #1e293b;
-  margin: 0 0 8px 0;
-  letter-spacing: -0.01em;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e4e1e6;
+  margin: 0 0 6px;
 }
 
 .empty-text {
-  color: #64748b;
-  font-size: 14px;
-  margin: 0 0 32px 0;
-  max-width: 200px;
+  color: #8e9192;
+  font-size: 12px;
   line-height: 1.6;
+  margin: 0;
+  max-width: 200px;
 }
 
-/* Group Item */
+/* ── Group rows ─────────────────────────────────────────── */
 .group-item {
+  position: relative;
   display: flex;
-  gap: 12px;
-  padding: 12px 16px;
-  margin: 4px 8px;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
   cursor: pointer;
-  border-radius: 16px;
-  transition: all 0.2s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .group-item:hover {
-  background: rgba(14, 165, 233, 0.06);
+  background: #1b1b1e;
 }
 
-.group-item:active {
-  transform: scale(0.99);
-}
-
+/* Selected: bg-surface-container + border-outline-variant/40 */
 .group-item.active {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(16, 185, 129, 0.08) 100%);
+  background: #1f1f22;
+  border-color: rgba(68, 71, 72, 0.4);
 }
 
-.group-avatar {
+.avatar-frame {
   position: relative;
-}
-
-.group-avatar .el-avatar {
-  background: linear-gradient(135deg, #0ea5e9 0%, #10b981 100%);
-  color: white;
-  font-weight: 600;
-  font-size: 16px;
-  box-shadow: 0 4px 12px -2px rgba(14, 165, 233, 0.3);
-}
-
-.private-badge {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #0ea5e9 0%, #10b981 100%);
-  color: white;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 4px;
+  background: #2a2a2d;
+  border: 1px solid rgba(68, 71, 72, 0.3);
   display: flex;
-  justify-content: center;
   align-items: center;
-  border: 2px solid white;
-  box-shadow: 0 2px 6px rgba(14, 165, 233, 0.3);
+  justify-content: center;
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  object-fit: cover;
+  filter: grayscale(100%);
+}
+
+.avatar-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #e4e1e6;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.member-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #353438;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  line-height: 1.25;
 }
 
 .group-content {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  padding-right: 4px;
 }
 
 .group-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  gap: 4px;
 }
 
 .group-name {
-  font-weight: 600;
-  font-size: 15px;
-  color: #1e293b;
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+  color: #e4e1e6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: color 0.2s ease;
+  transition: color 0.15s ease;
 }
 
 .group-item:hover .group-name {
-  color: #0ea5e9;
+  color: #ffffff;
+}
+
+.group-item.active .group-name {
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .group-time {
-  font-size: 12px;
-  color: #94a3b8;
   flex-shrink: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(196, 199, 200, 0.7);
 }
 
 .group-footer {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .group-message {
-  font-size: 13px;
-  color: #64748b;
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 24px;
+  color: #c4c7c8;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
 }
 
 .unread-badge {
-  background: linear-gradient(135deg, #0ea5e9 0%, #10b981 100%);
-  color: white;
+  flex-shrink: 0;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: #ffffff;
+  color: #2f3131;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 10px;
-  min-width: 20px;
-  text-align: center;
-  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .group-meta {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: #94a3b8;
+  justify-content: space-between;
+  margin-top: 4px;
 }
 
-.group-meta .el-icon {
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #2a2a2d;
+  color: #c4c7c8;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.group-chip .material-symbols-outlined {
+  font-size: 11px;
+}
+
+.group-flags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(196, 199, 200, 0.7);
+}
+
+.group-flags .material-symbols-outlined {
   font-size: 14px;
-  color: #0ea5e9;
 }
 
-/* Dark Mode - Blue-Green Theme */
-[data-theme="dark"] .empty-state {
-  background: transparent;
+.group-flags .pinned {
+  color: #ffffff;
 }
 
-[data-theme="dark"] .empty-icon {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.08) 0%, rgba(16, 185, 129, 0.08) 100%);
-}
-
-[data-theme="dark"] .empty-icon-glow {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15) 0%, rgba(16, 185, 129, 0.15) 100%);
-}
-
-[data-theme="dark"] .empty-title {
-  color: #e2e8f0;
-}
-
-[data-theme="dark"] .empty-text {
-  color: #94a3b8;
-}
-
-[data-theme="dark"] .group-item:hover {
-  background: rgba(14, 165, 233, 0.1);
-}
-
-[data-theme="dark"] .group-item.active {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15) 0%, rgba(16, 185, 129, 0.1) 100%);
-}
-
-[data-theme="dark"] .group-name {
-  color: #e2e8f0;
-}
-
-[data-theme="dark"] .group-item:hover .group-name {
-  color: #38bdf8;
-}
-
-[data-theme="dark"] .group-message {
-  color: #94a3b8;
-}
-
-[data-theme="dark"] .private-badge {
-  border-color: #1e293b;
-}
-
-/* Mobile Responsive Styles */
+/* ── Mobile ─────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .group-list {
-    padding: 4px 0;
+    padding: 2px 0;
   }
 
   .empty-state {
-    height: 350px;
-    padding: 0 20px;
-  }
-
-  .empty-icon {
-    width: 80px;
-    height: 80px;
-  }
-
-  .empty-icon .el-icon {
-    font-size: 40px;
-  }
-
-  .empty-title {
-    font-size: 15px;
-  }
-
-  .empty-text {
-    font-size: 13px;
-    max-width: 180px;
+    padding: 48px 20px;
   }
 
   .group-item {
-    gap: 10px;
-    padding: 10px 12px;
-    margin: 3px 6px;
-    border-radius: 14px;
+    padding: 7px;
+    margin: 0 6px;
   }
 
-  .group-avatar .el-avatar {
-    width: 46px !important;
-    height: 46px !important;
-    font-size: 14px !important;
+  .avatar-frame {
+    width: 32px;
+    height: 32px;
   }
 
   .group-name {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .group-time {
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .group-message {
-    font-size: 12px;
-  }
-
-  .unread-badge {
-    font-size: 10px;
-    padding: 2px 6px;
-  }
-
-  .group-meta {
     font-size: 11px;
-  }
-
-  .group-meta .el-icon {
-    font-size: 12px;
   }
 }
 </style>

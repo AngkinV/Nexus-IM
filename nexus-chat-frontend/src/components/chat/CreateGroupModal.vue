@@ -365,7 +365,7 @@ const createGroup = async () => {
   width: 100px;
   height: 100px;
   border-radius: 50%;
-  background: #10B981;
+  background: #ffffff;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -373,12 +373,12 @@ const createGroup = async () => {
   overflow: hidden;
   position: relative;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 8px 24px -4px rgba(16, 185, 129, 0.4);
+  box-shadow: none;
 }
 
 .avatar-wrapper:hover {
   transform: scale(1.05) translateY(-2px);
-  box-shadow: 0 12px 28px -4px rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 .avatar-wrapper:hover .avatar-hover-overlay {
@@ -389,7 +389,7 @@ const createGroup = async () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: white;
+  color: #2f3131;
   gap: 5px;
 }
 
@@ -417,7 +417,7 @@ const createGroup = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  color: white;
+  color: #2f3131;
   font-size: 24px;
   opacity: 0;
   transition: opacity 0.2s;
@@ -434,7 +434,7 @@ const createGroup = async () => {
 }
 
 .group-settings {
-  background: #f8f9fa;
+  background: #1f1f22;
   border-radius: 12px;
   padding: 15px;
 }
@@ -449,13 +449,13 @@ const createGroup = async () => {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #333;
+  color: #e4e1e6;
 }
 
 .setting-hint {
   margin-top: 8px;
   font-size: 12px;
-  color: #999;
+  color: #8e9192;
 }
 
 /* Step 2 Styles */
@@ -467,7 +467,7 @@ const createGroup = async () => {
 
 .member-search :deep(.el-input__wrapper) {
   border-radius: 20px;
-  background: #f5f5f5;
+  background: #222225;
 }
 
 .selected-members {
@@ -475,7 +475,7 @@ const createGroup = async () => {
   flex-wrap: wrap;
   gap: 8px;
   padding: 10px;
-  background: #f8f9fa;
+  background: #1f1f22;
   border-radius: 12px;
   min-height: 50px;
 }
@@ -484,11 +484,11 @@ const createGroup = async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 20px;
   padding: 4px 10px 4px 4px;
   font-size: 13px;
-  color: #10B981;
+  color: #ffffff;
 }
 
 .remove-icon {
@@ -505,17 +505,17 @@ const createGroup = async () => {
 
 .section-title {
   font-size: 13px;
-  color: #999;
+  color: #8e9192;
   margin-bottom: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .available-users {
-  border: 1px solid #e5e5e5;
+  border: 1px solid rgba(68, 71, 72, 0.3);
   border-radius: 12px;
   padding: 15px;
-  background: #fafafa;
+  background: #16161a;
 }
 
 .user-item {
@@ -529,11 +529,11 @@ const createGroup = async () => {
 }
 
 .user-item:hover {
-  background: #f0f0f0;
+  background: #2a2a2d;
 }
 
 .user-item.selected {
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .user-info {
@@ -545,18 +545,18 @@ const createGroup = async () => {
 .user-name {
   font-weight: 500;
   font-size: 14px;
-  color: #333;
+  color: #e4e1e6;
 }
 
 .user-username {
   font-size: 12px;
-  color: #999;
+  color: #8e9192;
 }
 
 .check-box {
   width: 22px;
   height: 22px;
-  border: 2px solid #ddd;
+  border: 1px solid rgba(68, 71, 72, 0.5);
   border-radius: 50%;
   display: flex;
   justify-content: center;
@@ -565,15 +565,15 @@ const createGroup = async () => {
 }
 
 .check-box.checked {
-  background: #10B981;
-  border-color: #10B981;
-  color: white;
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #2f3131;
 }
 
 .member-count {
   text-align: center;
   font-size: 13px;
-  color: #666;
+  color: #c4c7c8;
 }
 
 .empty-contacts {
@@ -582,13 +582,13 @@ const createGroup = async () => {
   align-items: center;
   justify-content: center;
   padding: 40px 20px;
-  color: #999;
+  color: #8e9192;
   text-align: center;
 }
 
 .empty-contacts .empty-icon {
   font-size: 48px;
-  color: #ddd;
+  color: #8e9192;
   margin-bottom: 12px;
 }
 
@@ -596,12 +596,12 @@ const createGroup = async () => {
   margin: 0;
   font-size: 14px;
   font-weight: 500;
-  color: #666;
+  color: #c4c7c8;
 }
 
 .empty-contacts span {
   font-size: 12px;
-  color: #999;
+  color: #8e9192;
   margin-top: 4px;
 }
 

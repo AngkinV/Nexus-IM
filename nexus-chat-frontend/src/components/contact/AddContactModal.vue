@@ -55,7 +55,7 @@
             class="user-result-card"
           >
             <div class="user-left">
-              <el-avatar :size="50" :src="user.avatar || defaultAvatar" />
+              <div class="avatar-frame avatar-frame--lg"><img v-if="user.avatar" class="avatar-img" :src="user.avatar" alt="" /><div v-else class="avatar-fallback">{{ (user.nickname || user.username || "?").charAt(0) }}</div></div>
               <div class="user-details">
                 <span class="user-nickname">{{ user.nickname }}</span>
                 <span class="user-username">@{{ user.username }}</span>
@@ -73,11 +73,11 @@
                 <el-icon><Plus /></el-icon>
                 {{ $t('contact.add') }}
               </el-button>
-              <el-button v-else-if="isContactAdded(user.id)" type="success" size="small" disabled>
+              <el-button v-else-if="isContactAdded(user.id)" size="small" disabled class="state-btn">
                 <el-icon><Check /></el-icon>
                 {{ $t('contact.added') }}
               </el-button>
-              <el-button v-else type="warning" size="small" disabled>
+              <el-button v-else size="small" disabled class="state-btn">
                 <el-icon><Clock /></el-icon>
                 {{ $t('contact.requestSentShort') }}
               </el-button>
@@ -131,7 +131,7 @@
             class="recommended-user"
             @click="quickAddContact(user)"
           >
-            <el-avatar :size="40" :src="user.avatar || defaultAvatar" />
+            <div class="avatar-frame"><img v-if="user.avatar" class="avatar-img" :src="user.avatar" alt="" /><div v-else class="avatar-fallback">{{ (user.nickname || user.username || "?").charAt(0) }}</div></div>
             <span class="recommended-name">{{ user.nickname }}</span>
             <el-icon class="add-icon"><Plus /></el-icon>
           </div>
@@ -360,7 +360,7 @@ const addContactById = async () => {
 
 .search-section {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .search-input {
@@ -368,23 +368,31 @@ const addContactById = async () => {
 }
 
 .search-input :deep(.el-input__wrapper) {
-  border-radius: 24px;
-  padding-left: 15px;
+  border-radius: 8px;
+  padding-left: 12px;
+  background: #16161a;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
+}
+
+.search-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
 }
 
 .search-hint {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 15px;
-  background: #f0f7ff;
-  border-radius: 10px;
-  color: #3390ec;
-  font-size: 13px;
+  padding: 10px 12px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  border-radius: 8px;
+  color: #8e9192;
+  font-size: 12px;
 }
 
 .hint-icon {
-  font-size: 16px;
+  font-size: 15px;
+  color: #8e9192;
 }
 
 .loading-state {
@@ -393,109 +401,164 @@ const addContactById = async () => {
   align-items: center;
   gap: 10px;
   padding: 40px;
-  color: #666;
+  color: #8e9192;
+  font-size: 12px;
 }
 
 .loading-icon {
-  font-size: 32px;
-  color: #3390ec;
+  font-size: 26px;
+  color: #c4c7c8;
 }
 
 .search-results {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .results-title {
-  font-size: 13px;
-  color: #999;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #6f7274;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 .user-result-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 15px;
-  background: #f8f9fa;
-  border-radius: 12px;
-  transition: all 0.2s;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 8px;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .user-result-card:hover {
-  background: #f0f2f5;
-  transform: translateY(-1px);
+  background: #222225;
+  border-color: rgba(142, 145, 146, 0.4);
 }
 
 .user-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.avatar-frame {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: #2a2a2d;
+  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
+}
+
+.avatar-frame--lg {
+  width: 40px;
+  height: 40px;
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  object-fit: cover;
+  filter: grayscale(100%) contrast(1.1);
+}
+
+.avatar-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2a2d;
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
 }
 
 .user-details {
   display: flex;
   flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
 .user-nickname {
-  font-weight: 600;
-  font-size: 15px;
-  color: #1c1c1e;
+  font-weight: 500;
+  font-size: 13px;
+  color: #e4e1e6;
 }
 
 .user-username {
-  font-size: 13px;
-  color: #3390ec;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #8e9192;
 }
 
 .user-email {
-  font-size: 12px;
-  color: #999;
+  font-size: 11px;
+  color: #6f7274;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.state-btn {
+  pointer-events: none;
 }
 
 .no-results {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 40px 20px;
-  gap: 10px;
+  padding: 36px 20px;
+  gap: 8px;
 }
 
 .no-results-illustration {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: #f5f5f5;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.3);
   display: flex;
   justify-content: center;
   align-items: center;
+  margin-bottom: 4px;
 }
 
 .sad-icon {
-  font-size: 40px;
-  color: #ccc;
+  font-size: 24px;
+  color: #6f7274;
 }
 
 .no-results-text {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: #e4e1e6;
 }
 
 .no-results-hint {
-  font-size: 13px;
-  color: #999;
+  font-size: 12px;
+  color: #8e9192;
 }
 
 .section-divider {
   display: flex;
   align-items: center;
-  gap: 15px;
-  color: #999;
-  font-size: 12px;
+  gap: 12px;
+  color: #6f7274;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
 .section-divider::before,
@@ -503,48 +566,52 @@ const addContactById = async () => {
   content: '';
   flex: 1;
   height: 1px;
-  background: #e5e5e5;
+  background: rgba(68, 71, 72, 0.4);
 }
 
 .quick-add-section {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 12px;
 }
 
 .direct-id-input :deep(.el-input-group__append) {
-  background: #3390ec;
-  border-color: #3390ec;
+  background: #ffffff;
+  border-color: #ffffff;
+  box-shadow: none;
 }
 
 .direct-id-input :deep(.el-input-group__append .el-button) {
-  color: white;
+  color: #2f3131;
+  background: transparent;
+  border: none;
 }
 
 .recommended-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .section-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  gap: 6px;
+  font-size: 12px;
   font-weight: 500;
-  color: #333;
+  color: #c4c7c8;
 }
 
 .section-title .el-icon {
-  color: #ffc107;
+  color: #8e9192;
+  font-size: 14px;
 }
 
 .recommended-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 5px 0;
+  gap: 8px;
+  padding: 2px 0;
 }
 
 .recommended-user {
@@ -552,20 +619,21 @@ const addContactById = async () => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 12px 15px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-  border-radius: 12px;
+  padding: 12px 10px;
+  background: #1b1b1e;
+  border: 1px solid rgba(68, 71, 72, 0.25);
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s;
-  min-width: 80px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  min-width: 76px;
   flex: 1;
-  max-width: calc(33.33% - 7px);
+  max-width: calc(33.33% - 6px);
   position: relative;
 }
 
 .recommended-user:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  background: #222225;
+  border-color: rgba(142, 145, 146, 0.4);
 }
 
 .recommended-user:hover .add-icon {
@@ -573,8 +641,8 @@ const addContactById = async () => {
 }
 
 .recommended-name {
-  font-size: 12px;
-  color: #333;
+  font-size: 11px;
+  color: #c4c7c8;
   text-align: center;
   max-width: 80px;
   overflow: hidden;
@@ -584,22 +652,22 @@ const addContactById = async () => {
 
 .add-icon {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #3390ec;
-  color: white;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #2f3131;
   display: flex;
   justify-content: center;
   align-items: center;
-  font-size: 14px;
+  font-size: 12px;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity 0.15s ease;
 }
 
-/* Mobile Responsive Styles */
+/* Mobile */
 @media (max-width: 768px) {
   .add-contact-content {
     gap: 12px;
@@ -610,72 +678,35 @@ const addContactById = async () => {
     gap: 8px;
   }
 
-  .search-input :deep(.el-input__wrapper) {
-    padding-left: 12px;
-  }
-
   .search-input :deep(.el-input__inner) {
     font-size: 16px;
   }
 
   .search-hint {
-    padding: 10px 12px;
-    font-size: 12px;
+    padding: 9px 10px;
+    font-size: 11px;
   }
 
   .user-result-card {
-    padding: 10px 12px;
-  }
-
-  .user-left {
-    gap: 10px;
-  }
-
-  .user-nickname {
-    font-size: 14px;
-  }
-
-  .user-username {
-    font-size: 12px;
-  }
-
-  .user-email {
-    font-size: 11px;
+    padding: 9px 10px;
   }
 
   .no-results {
-    padding: 30px 16px;
+    padding: 28px 16px;
   }
 
   .no-results-illustration {
-    width: 60px;
-    height: 60px;
+    width: 48px;
+    height: 48px;
   }
 
   .sad-icon {
-    font-size: 32px;
-  }
-
-  .no-results-text {
-    font-size: 14px;
-  }
-
-  .no-results-hint {
-    font-size: 12px;
+    font-size: 20px;
   }
 
   .recommended-user {
-    padding: 10px 12px;
-    max-width: calc(50% - 5px);
-  }
-
-  .recommended-name {
-    font-size: 11px;
-    max-width: 70px;
-  }
-
-  .section-title {
-    font-size: 13px;
+    padding: 10px;
+    max-width: calc(50% - 4px);
   }
 }
 </style>
