@@ -1,7 +1,7 @@
 -- ============================================================
 -- Nexus Chat 一键完整建表脚本（含 IM + Profile + Companion + Agent + RAG）
 -- ============================================================
--- 用法：mysql -uroot -p12345678 nexus_chat < schema_full.sql
+-- 用法：mysql -uroot -p nexus_chat < schema_full.sql（回车后输入密码）
 --
 -- 特性：
 --   * 全部 CREATE TABLE 都用 IF NOT EXISTS——已存在的表不会被覆盖
