@@ -28,14 +28,14 @@
       <div ref="brandEl" class="rail-brand drag-region h-14 flex items-center border-b border-outline-variant/20 overflow-hidden shrink-0">
         <div class="rail-brand-inner flex items-center min-w-0 w-full">
           <div
-            class="rail-logo no-drag w-8 h-8 rounded-lg bg-white flex items-center justify-center shrink-0 cursor-pointer"
-            :title="collapsed ? 'Prism' : undefined"
+            class="rail-logo no-drag w-8 h-8 rounded-lg flex items-center justify-center shrink-0 cursor-pointer"
+            :title="collapsed ? 'Nexus' : undefined"
             @click="navCollapsed && toggleNav()"
           >
-            <span class="material-symbols-outlined text-zinc-950 text-[18px]">polyline</span>
+            <img src="@/assets/images/nexus-emblem.png" alt="Nexus" class="rail-logo-img" draggable="false" />
           </div>
           <div class="rail-reveal flex items-center justify-between flex-1 min-w-0">
-            <span class="font-headline-md text-[15px] font-semibold text-primary tracking-tight truncate">Prism</span>
+            <span class="font-headline-md text-[15px] font-semibold text-primary tracking-tight truncate">Nexus</span>
             <button
               class="no-drag w-6 h-6 rounded flex items-center justify-center shrink-0 text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
               :title="brandTitle"
@@ -376,6 +376,12 @@ const goToProfile = () => router.push('/profile')
 
 .rail-logo:hover {
   transform: scale(1.05);
+}
+
+.rail-logo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 /* macOS traffic lights: expanded pushes the brand text right, collapsed needs

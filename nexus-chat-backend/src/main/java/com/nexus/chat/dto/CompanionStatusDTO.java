@@ -14,4 +14,7 @@ public class CompanionStatusDTO {
     private String statusType;
     private String summary;
     private LocalDateTime updatedAt;
+    /** Reported by the model, never derived. Null until she has said so. */
+    private String mood;
+    private String motion;
 }

@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Nexus Chat",
+    "name": "Nexus",
     "tagline": "随时随地连接任何人"
   },
   "nav": {
@@ -659,17 +659,14 @@
     "typing": "正在回应…",
     "stage": {
       "collapse": "收起舞台",
-      "expand": "展开全息舞台",
-      "online": "全息在线",
-      "sync": "3D 全息同步节点",
-      "synchronized": "SYNCHRONIZED",
-      "projection": "意识投影实时演算",
-      "live": "HOLO_MESH · LIVE",
-      "intimacy": "羁绊好感度",
-      "mood": "情绪基调",
-      "scene": "当前场景",
-      "demoCollapse": "动效测试：收起为迷你徽章",
-      "demoExpand": "动效测试：展开全息大舞台"
+      "expand": "展开舞台",
+      "mood": "情绪",
+      "now": "此刻",
+      "evening": "本场",
+      "eveningOpen": "本场已 {min} 分钟 · {n} 句",
+      "eveningNotOpen": "尚未开场",
+      "eveningShort": "{min} 分钟",
+      "memoriesUsed": "本次回复参考了 {n} 条记忆"
     },
     "orbit": {
       "whisper": "独白",
@@ -809,10 +806,38 @@
       "closed": "这一晚结束了",
       "history": "过往场次",
       "closingTitle": "正在收尾这一晚",
-      "closingHint": "她在想最后该说些什么"
+      "closingHint": "她在想最后该说些什么",
+      "openingTag": "开场白",
+      "cannedTag": "固定回复 · 模型未应答",
+      "stop": "停止",
+      "stopped": "已停止",
+      "sendFailed": "没有发出去 · 重试",
+      "noReply": "没有收到回复 · 重试",
+      "sendFailedToast": "这句话没有发出去，可以点重试"
     },
     "loadingConversation": "正在翻开这一晚的对话…",
-    "loadingRoles": "正在点灯…"
+    "loadingRoles": "正在点灯…",
+    "mood": {
+      "calm": "平静",
+      "warm": "温和",
+      "happy": "开心",
+      "shy": "害羞",
+      "sad": "低落",
+      "worried": "担心",
+      "angry": "生气",
+      "surprised": "惊讶",
+      "tired": "疲倦",
+      "thoughtful": "若有所思"
+    },
+    "card": {
+      "title": "角色卡",
+      "background": "来历",
+      "backgroundPlaceholder": "她从哪来、为什么在这里。会原样写进提示词。",
+      "greeting": "开场白",
+      "greetingPlaceholder": "每一场开始时她先说的话。留空则等你先开口。",
+      "save": "保存角色卡",
+      "saved": "角色卡已保存"
+    }
   },
   "agent": {
     "title": "AI 助手",

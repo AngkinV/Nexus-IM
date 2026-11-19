@@ -16,8 +16,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import com.nexus.chat.util.CompanionStateTag;
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CompanionService {
@@ -37,6 +43,7 @@ public class CompanionService {
     private final CompanionCryptoService cryptoService;
     private final TavernSessionRepository sessionRepository;
     private final com.nexus.chat.util.ModelEndpointGuard endpointGuard;
+    private final CompanionModelResolver modelResolver;
 
     public List<CompanionRoleDTO> initDefaultRoles(Long userId) {
         if (roleRepository.countByUserId(userId) > 0) {
@@ -105,6 +112,9 @@ public class CompanionService {
         if (update.getTraits() != null) role.setTraits(JsonUtil.toJson(update.getTraits()));
         if (update.getTone() != null) role.setTone(update.getTone());
         if (update.getBaselineMood() != null) role.setBaselineMood(update.getBaselineMood());
+        // Empty string clears the field; null leaves it alone (older clients never send it).
+        if (update.getBackground() != null) role.setBackground(blankToNull(update.getBackground()));
+        if (update.getGreeting() != null) role.setGreeting(blankToNull(update.getGreeting()));
         if (update.getAvatarUrl() != null) role.setAvatarUrl(update.getAvatarUrl());
         if (update.getModelUrl() != null) role.setModelUrl(update.getModelUrl());
         if (update.getModelType() != null) role.setModelType(update.getModelType());
@@ -117,7 +127,7 @@ public class CompanionService {
     public List<CompanionMessageDTO> getConversation(Long userId, Long roleId) {
         CompanionConversation conversation = getOrCreateConversation(userId, roleId);
         List<CompanionMessage> messages = messageRepository
-                .findByConversationIdOrderByCreatedAtAsc(conversation.getId());
+                .findByConversationIdOrderByIdAsc(conversation.getId());
         List<CompanionMessageDTO> result = new ArrayList<>();
         for (CompanionMessage msg : messages) {
             result.add(toMessageDTO(msg));
@@ -126,138 +136,233 @@ public class CompanionService {
     }
 
     public CompanionChatResponse sendMessage(Long userId, Long roleId, String content) {
-        return sendMessage(userId, roleId, content, null);
+        return exchange(userId, roleId, content, null, null, null, null);
     }
 
     public CompanionChatResponse sendMessage(Long userId, Long roleId, String content, String sceneKey) {
-        CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
-                .orElseThrow(() -> new RuntimeException("role not found"));
+        return exchange(userId, roleId, content, sceneKey, null, null, null);
+    }
 
-        CompanionConversation conversation = getOrCreateConversation(userId, roleId);
-
-        CompanionMessage userMessage = new CompanionMessage();
-        userMessage.setConversationId(conversation.getId());
-        userMessage.setUserId(userId);
-        userMessage.setRoleId(roleId);
-        userMessage.setSenderType(CompanionMessage.SenderType.user);
-        userMessage.setContent(content);
-        userMessage.setFallback(false);
-        Long sessionId = sessionRepository
-                .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(
-                        userId, roleId, com.nexus.chat.model.TavernSession.Status.active)
-                .map(com.nexus.chat.model.TavernSession::getId)
-                .orElse(null);
-        userMessage.setSessionId(sessionId);
-        messageRepository.save(userMessage);
-
-        ResolvedModel resolved = resolveModel(userId, roleId);
-        CompanionModelBinding binding = resolved.binding();
-        ModelCredential credential = resolved.credential();
-        List<CompanionMessage> history = recentHistory(conversation.getId(), binding);
-
-        boolean fallback = false;
-        String reply;
-        if (resolved.usable()) {
-            CompanionModelService.ModelReply modelReply = modelService.generateReply(role, history, binding, credential, sceneKey);
-            if (modelReply.success()) {
-                reply = modelReply.content();
-                credential.setStatus(ModelCredential.CredentialStatus.ok);
-            } else {
-                reply = fallbackService.generateReply(role, content);
-                fallback = true;
-                if ("invalid_key".equals(modelReply.error())) {
-                    credential.setStatus(ModelCredential.CredentialStatus.invalid);
-                }
-            }
-            credentialRepository.save(credential);
-        } else {
-            reply = fallbackService.generateReply(role, content);
-            fallback = true;
-        }
-
-        CompanionMessage roleMessage = new CompanionMessage();
-        roleMessage.setConversationId(conversation.getId());
-        roleMessage.setUserId(userId);
-        roleMessage.setRoleId(roleId);
-        roleMessage.setSenderType(CompanionMessage.SenderType.role);
-        roleMessage.setContent(reply);
-        roleMessage.setFallback(fallback);
-        roleMessage.setSessionId(sessionId);
-        messageRepository.save(roleMessage);
-
-        updateGrowth(userId, roleId);
-        touchConversation(conversation);
-        CompanionStatusDTO status = refreshChattingStatus(userId, role);
-
-        return new CompanionChatResponse(
-                toMessageDTO(userMessage),
-                toMessageDTO(roleMessage),
-                fallback,
-                status
-        );
+    public CompanionChatResponse sendMessage(Long userId, Long roleId, String content,
+                                             String sceneKey, String clientMsgId) {
+        return exchange(userId, roleId, content, sceneKey, clientMsgId, null, null);
     }
 
     /**
      * Streaming variant of {@link #sendMessage}. Same bookkeeping, but the reply
-     * reaches the caller as it is written. `onDelta` receives each piece; the
-     * returned response is the same shape as the blocking one, so the client can
-     * settle on identical state either way.
+     * reaches the caller as it is written.
+     *
+     * @param onDelta receives each piece of visible text. Throwing from it means
+     *                the reader is gone: the model is stopped and what was
+     *                written so far is kept.
+     * @param onEvent receives side-channel events — "context" (what went into
+     *                the prompt), "opening" (her first line of a new evening) and
+     *                "state" (what she reports about herself). Must not throw.
      */
     public CompanionChatResponse sendMessageStreaming(Long userId,
                                                       Long roleId,
                                                       String content,
-                                                      Consumer<String> onDelta) {
-        return sendMessageStreaming(userId, roleId, content, null, onDelta);
+                                                      String sceneKey,
+                                                      String clientMsgId,
+                                                      Consumer<String> onDelta,
+                                                      BiConsumer<String, Object> onEvent) {
+        return exchange(userId, roleId, content, sceneKey, clientMsgId, onDelta, onEvent);
     }
 
-    public CompanionChatResponse sendMessageStreaming(Long userId,
-                                                      Long roleId,
-                                                      String content,
-                                                      String sceneKey,
-                                                      Consumer<String> onDelta) {
+    /**
+     * One exchange: file the user's line, ask the model, file her answer.
+     * Blocking and streaming sends are the same thing with or without a listener,
+     * so they cannot drift apart again.
+     */
+    private CompanionChatResponse exchange(Long userId,
+                                           Long roleId,
+                                           String content,
+                                           String sceneKey,
+                                           String clientMsgId,
+                                           Consumer<String> onDelta,
+                                           BiConsumer<String, Object> onEvent) {
         CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
-
         CompanionConversation conversation = getOrCreateConversation(userId, roleId);
+        String clientId = normalizeClientId(clientMsgId);
 
-        CompanionMessage userMessage = new CompanionMessage();
-        userMessage.setConversationId(conversation.getId());
-        userMessage.setUserId(userId);
-        userMessage.setRoleId(roleId);
-        userMessage.setSenderType(CompanionMessage.SenderType.user);
-        userMessage.setContent(content);
-        userMessage.setFallback(false);
-        Long sessionId = sessionRepository
-                .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(
-                        userId, roleId, com.nexus.chat.model.TavernSession.Status.active)
-                .map(com.nexus.chat.model.TavernSession::getId)
+        // ── A retry of something already sent? ─────────────────────────────
+        CompanionMessage userMessage = clientId == null ? null : messageRepository
+                .findFirstByUserIdAndRoleIdAndClientMsgIdOrderByIdAsc(userId, roleId, clientId)
                 .orElse(null);
-        userMessage.setSessionId(sessionId);
-        messageRepository.save(userMessage);
+        if (userMessage != null) {
+            CompanionMessage next = messageRepository
+                    .findFirstByConversationIdAndIdGreaterThanOrderByIdAsc(conversation.getId(), userMessage.getId())
+                    .orElse(null);
+            if (next != null && next.getSenderType() == CompanionMessage.SenderType.role) {
+                // Already answered: hand back what was stored. No second model
+                // call, no second copy of the line, no second growth tick.
+                if (onDelta != null) {
+                    try {
+                        onDelta.accept(next.getContent() == null ? "" : next.getContent());
+                    } catch (RuntimeException ignored) {
+                        // The reader left again; the stored exchange stands.
+                    }
+                }
+                CompanionChatResponse replay = new CompanionChatResponse(
+                        toMessageDTO(userMessage), toMessageDTO(next),
+                        Boolean.TRUE.equals(next.getFallback()), currentStatus(userId, roleId));
+                replay.setSessionId(next.getSessionId());
+                return replay;
+            }
+        }
 
-        ResolvedModel resolved = resolveModel(userId, roleId);
+        // ── The evening ────────────────────────────────────────────────────
+        // An evening opens when the first line is said, not when the room is
+        // looked at — browsing characters must not leave empty sessions behind.
+        TavernSession session = sessionRepository
+                .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.active)
+                .orElse(null);
+        CompanionMessage opening = null;
+        if (session == null) {
+            session = new TavernSession();
+            session.setUserId(userId);
+            session.setRoleId(roleId);
+            session.setSceneKey(sceneKey);
+            session.setStatus(TavernSession.Status.active);
+            session.setStartedAt(LocalDateTime.now());
+            session = sessionRepository.save(session);
+
+            if (role.getGreeting() != null && !role.getGreeting().isBlank()) {
+                opening = new CompanionMessage();
+                opening.setConversationId(conversation.getId());
+                opening.setUserId(userId);
+                opening.setRoleId(roleId);
+                opening.setSenderType(CompanionMessage.SenderType.role);
+                opening.setContent(role.getGreeting().trim());
+                opening.setFallback(false);
+                opening.setSessionId(session.getId());
+                messageRepository.save(opening);
+            }
+        } else if (sceneKey != null && !sceneKey.equals(session.getSceneKey())) {
+            session.setSceneKey(sceneKey);
+            sessionRepository.save(session);
+        }
+        String scene = session.getSceneKey();
+
+        if (userMessage == null) {
+            userMessage = new CompanionMessage();
+            userMessage.setConversationId(conversation.getId());
+            userMessage.setUserId(userId);
+            userMessage.setRoleId(roleId);
+            userMessage.setSenderType(CompanionMessage.SenderType.user);
+            userMessage.setContent(content);
+            userMessage.setFallback(false);
+            userMessage.setClientMsgId(clientId);
+            userMessage.setSessionId(session.getId());
+            messageRepository.save(userMessage);
+        } else if (!session.getId().equals(userMessage.getSessionId())) {
+            // A retry after its evening was closed: the line moves to tonight.
+            userMessage.setSessionId(session.getId());
+            messageRepository.save(userMessage);
+        }
+
+        // ── What she is told ───────────────────────────────────────────────
+        CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, roleId);
         CompanionModelBinding binding = resolved.binding();
         ModelCredential credential = resolved.credential();
-        List<CompanionMessage> history = recentHistory(conversation.getId(), binding);
+        List<CompanionMessage> history = sessionHistory(session.getId(), binding);
+        CompanionGrowth growth = growthRepository.findByUserIdAndRoleId(userId, roleId).orElse(null);
+        MemoryPick memories = pickMemories(userId, roleId);
 
+        CompanionPromptBuilder.Context ctx = new CompanionPromptBuilder.Context(
+                role, scene,
+                binding == null ? null : binding.getPersonaLock(),
+                growth == null ? null : growth.getIntimacy(),
+                growth == null ? null : growth.getTrust(),
+                memories.lines(),
+                true);
+
+        if (onEvent != null) {
+            Map<String, Object> context = new java.util.LinkedHashMap<>();
+            context.put("sessionId", session.getId());
+            context.put("sceneKey", scene);
+            context.put("memoryIds", memories.ids());
+            context.put("historyCount", history.size());
+            context.put("model", resolved.usable() ? binding.getModelName() : null);
+            onEvent.accept("context", context);
+            if (opening != null) onEvent.accept("opening", toMessageDTO(opening));
+        }
+
+        // ── Her answer ─────────────────────────────────────────────────────
+        String reply = null;
+        CompanionStateTag.State state = null;
         boolean fallback = false;
-        String reply;
-        String streamed = null;
+        boolean readerLeft = false;
+
         if (resolved.usable()) {
-            streamed = modelService.streamReply(role, history, binding, credential, sceneKey, onDelta);
-            if (streamed == null) {
-                reply = fallbackService.generateReply(role, content);
-                fallback = true;
-                onDelta.accept(reply);
+            if (onDelta != null) {
+                AtomicBoolean gone = new AtomicBoolean(false);
+                CompanionStateTag.Filter filter = new CompanionStateTag.Filter(piece -> {
+                    if (gone.get()) throw new CompanionModelService.ReaderGone();
+                    try {
+                        onDelta.accept(piece);
+                    } catch (RuntimeException e) {
+                        gone.set(true);
+                        throw new CompanionModelService.ReaderGone();
+                    }
+                });
+                AtomicBoolean stateSent = new AtomicBoolean(false);
+                modelService.streamReply(ctx, history, binding, credential, piece -> {
+                    filter.accept(piece);
+                    // The marker comes first, so the stage can move before she speaks.
+                    if (onEvent != null && filter.state() != null && stateSent.compareAndSet(false, true)) {
+                        onEvent.accept("state", filter.state().toMap());
+                    }
+                });
+                try {
+                    filter.finish();
+                } catch (CompanionModelService.ReaderGone ignored) {
+                    // Nothing left to deliver to.
+                }
+                readerLeft = gone.get();
+                state = filter.state();
+                if (!filter.visibleText().isBlank()) reply = filter.visibleText();
+                if (onEvent != null && state != null && stateSent.compareAndSet(false, true)) {
+                    onEvent.accept("state", state.toMap());
+                }
             } else {
-                reply = streamed;
-                credential.setStatus(ModelCredential.CredentialStatus.ok);
+                CompanionModelService.ModelReply modelReply =
+                        modelService.generateReply(ctx, history, binding, credential);
+                if (modelReply.success()) {
+                    CompanionStateTag.Parsed parsed = CompanionStateTag.parse(modelReply.content());
+                    state = parsed.state();
+                    if (!parsed.text().isBlank()) reply = parsed.text();
+                } else if ("invalid_key".equals(modelReply.error())) {
+                    markCredential(credential, ModelCredential.CredentialStatus.invalid);
+                }
             }
-            credentialRepository.save(credential);
-        } else {
+            if (reply != null) markCredential(credential, ModelCredential.CredentialStatus.ok);
+        }
+
+        if (reply == null && readerLeft) {
+            // Stopped before she said anything. Nothing to file; the user's line
+            // stays unanswered and can be sent again.
+            CompanionChatResponse stopped = new CompanionChatResponse(
+                    toMessageDTO(userMessage), null, false, currentStatus(userId, roleId));
+            stopped.setOpeningMessage(opening == null ? null : toMessageDTO(opening));
+            stopped.setSessionId(session.getId());
+            stopped.setSceneKey(scene);
+            stopped.setPartial(true);
+            return stopped;
+        }
+
+        if (reply == null) {
             reply = fallbackService.generateReply(role, content);
             fallback = true;
-            onDelta.accept(reply);
+            state = null;
+            if (onDelta != null) {
+                try {
+                    onDelta.accept(reply);
+                } catch (RuntimeException ignored) {
+                    // Reader gone; still file the line so the history is whole.
+                }
+            }
         }
 
         CompanionMessage roleMessage = new CompanionMessage();
@@ -267,19 +372,82 @@ public class CompanionService {
         roleMessage.setSenderType(CompanionMessage.SenderType.role);
         roleMessage.setContent(reply);
         roleMessage.setFallback(fallback);
-        roleMessage.setSessionId(sessionId);
+        roleMessage.setSessionId(session.getId());
+        roleMessage.setStateJson(CompanionStateTag.toJson(state));
         messageRepository.save(roleMessage);
 
-        updateGrowth(userId, roleId);
+        // A canned line is not an exchange with her; the bond does not move for it.
+        if (!fallback) updateGrowth(userId, roleId);
         touchConversation(conversation);
-        CompanionStatusDTO status = refreshChattingStatus(userId, role);
+        CompanionStatusDTO status = recordState(userId, role, state);
 
-        return new CompanionChatResponse(
-                toMessageDTO(userMessage),
-                toMessageDTO(roleMessage),
-                fallback,
-                status
-        );
+        CompanionChatResponse response = new CompanionChatResponse(
+                toMessageDTO(userMessage), toMessageDTO(roleMessage), fallback, status);
+        response.setOpeningMessage(opening == null ? null : toMessageDTO(opening));
+        response.setSessionId(session.getId());
+        response.setSceneKey(scene);
+        response.setMemoryIds(fallback ? List.of() : memories.ids());
+        response.setPartial(readerLeft);
+        return response;
+    }
+
+    private static String normalizeClientId(String raw) {
+        if (raw == null) return null;
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) return null;
+        return trimmed.length() > 64 ? trimmed.substring(0, 64) : trimmed;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /** Only write the credential row when its status actually changes. */
+    private void markCredential(ModelCredential credential, ModelCredential.CredentialStatus status) {
+        if (credential == null || credential.getId() == null || credential.getStatus() == status) return;
+        credential.setStatus(status);
+        credentialRepository.save(credential);
+    }
+
+    /** Which memories go in front of the model, and the ids to report back. */
+    private record MemoryPick(List<Long> ids, List<String> lines) {}
+
+    private static final int MEMORY_CONFIRMED_MAX = 8;
+    private static final int MEMORY_RECENT_MAX = 4;
+    private static final int MEMORY_CHAR_BUDGET = 1200;
+
+    /**
+     * Memories for the prompt. Confirmed ones are the user saying "keep this", so
+     * they always go in (newest first, up to a cap); of the rest only the most
+     * recent few do. Deleting a memory is therefore enough to make her forget it.
+     */
+    private MemoryPick pickMemories(Long userId, Long roleId) {
+        List<CompanionMemory> all = memoryRepository.findByUserIdAndRoleIdOrderByCreatedAtDesc(userId, roleId);
+        List<CompanionMemory> chosen = new ArrayList<>();
+        int confirmed = 0;
+        int recent = 0;
+        for (CompanionMemory memory : all) {
+            if (memory.getContent() == null || memory.getContent().isBlank()) continue;
+            if (Boolean.TRUE.equals(memory.getConfirmed())) {
+                if (confirmed++ < MEMORY_CONFIRMED_MAX) chosen.add(memory);
+            } else if (recent++ < MEMORY_RECENT_MAX) {
+                chosen.add(memory);
+            }
+        }
+        // Confirmed first: if the budget runs out, the unpinned ones are what drop.
+        chosen.sort((a, b) -> Boolean.compare(Boolean.TRUE.equals(b.getConfirmed()), Boolean.TRUE.equals(a.getConfirmed())));
+
+        List<Long> ids = new ArrayList<>();
+        List<String> lines = new ArrayList<>();
+        int used = 0;
+        for (CompanionMemory memory : chosen) {
+            String text = memory.getContent().trim();
+            if (used + text.length() > MEMORY_CHAR_BUDGET) continue;
+            used += text.length();
+            ids.add(memory.getId());
+            lines.add(text);
+        }
+        return new MemoryPick(ids, lines);
     }
 
     /**
@@ -293,10 +461,19 @@ public class CompanionService {
 
         CompanionConversation conversation = getOrCreateConversation(userId, roleId);
 
-        ResolvedModel resolved = resolveModel(userId, roleId);
+        CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, roleId);
         CompanionModelBinding binding = resolved.binding();
         ModelCredential credential = resolved.credential();
-        List<CompanionMessage> history = recentHistory(conversation.getId(), binding);
+        // Tonight's conversation if there is one; otherwise the tail of the last.
+        List<CompanionMessage> history = sessionRepository
+                .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.active)
+                .map(active -> sessionHistory(active.getId(), binding))
+                .orElseGet(() -> {
+                    List<CompanionMessage> tail = new ArrayList<>(messageRepository
+                            .findByConversationIdOrderByCreatedAtDesc(conversation.getId(), PageRequest.of(0, 12)));
+                    Collections.reverse(tail);
+                    return tail;
+                });
 
         String statusSummary = statusRepository.findByUserIdAndRoleId(userId, roleId)
                 .map(CompanionStatus::getSummary)
@@ -386,8 +563,11 @@ public class CompanionService {
                     return statusRepository.save(s);
                 });
 
-        if (status.getUpdatedAt() == null ||
-                Duration.between(status.getUpdatedAt(), LocalDateTime.now()).toMinutes() > 30) {
+        // The clock-based line is a placeholder for a character no model has
+        // described yet. Once a line is hers — she reported it, or it came with
+        // her as an invited guest — it stands until she reports another.
+        if (!Boolean.TRUE.equals(status.getSummaryAuthored()) && (status.getUpdatedAt() == null ||
+                Duration.between(status.getUpdatedAt(), LocalDateTime.now()).toMinutes() > 30)) {
             CompanionStatus.StatusType type = fallbackService.pickStatus(LocalDateTime.now());
             status.setStatusType(type);
             status.setSummary(fallbackService.generateStatusSummary(role, type));
@@ -478,15 +658,18 @@ public class CompanionService {
     }
 
     /**
-     * History window for one model call, honoring the binding's contextHorizon
-     * token budget. Fetches the newest 100 messages and drops the oldest ones
-     * until the estimate fits; the newest message always survives.
+     * Tonight's conversation, for one model call. Only the open evening: a closed
+     * one reaches her through the sentence it left in memory, not as raw turns —
+     * that is what makes closing an evening mean something.
+     *
+     * Honors the binding's contextHorizon token budget: takes the newest 100
+     * messages and drops the oldest until the estimate fits; the newest survives.
      */
-    private List<CompanionMessage> recentHistory(Long conversationId, CompanionModelBinding binding) {
+    private List<CompanionMessage> sessionHistory(Long sessionId, CompanionModelBinding binding) {
         int horizon = binding != null && binding.getContextHorizon() != null && binding.getContextHorizon() > 0
                 ? binding.getContextHorizon() : 128_000;
-        List<CompanionMessage> history = messageRepository
-                .findByConversationIdOrderByCreatedAtDesc(conversationId, PageRequest.of(0, 100));
+        List<CompanionMessage> history = new ArrayList<>(messageRepository
+                .findBySessionIdOrderByIdDesc(sessionId, PageRequest.of(0, 100)));
         Collections.reverse(history);
         int total = 0;
         for (CompanionMessage m : history) total += estimateTokens(m.getContent());
@@ -521,89 +704,12 @@ public class CompanionService {
     }
 
     /**
-     * Resolve which model a role should talk through.
-     *
-     * A role binding is the specific answer: the user picked a model for THIS
-     * character. But a fresh install has no binding at all, and then the tavern
-     * used to silently fall back to canned replies even though the user had
-     * already configured a chat provider for the AI assistant. So when there is
-     * no binding, borrow the user's default chat credential and its model — same
-     * account, same key, one place to configure.
-     */
-    private ResolvedModel resolveModel(Long userId, Long roleId) {
-        CompanionModelBinding binding = modelBindingRepository.findByUserIdAndRoleId(userId, roleId).orElse(null);
-
-        ModelCredential credential = null;
-        if (binding != null) {
-            credential = credentialRepository
-                    .findByUserIdAndProviderAndPurpose(userId, binding.getProvider(), ModelCredential.PURPOSE_CHAT)
-                    .or(() -> credentialRepository.findByUserIdAndProvider(userId, binding.getProvider()))
-                    .orElse(null);
-        }
-
-        if (credential != null && binding != null
-                && binding.getEndpoint() != null && !binding.getEndpoint().isBlank()) {
-            return new ResolvedModel(binding, credential, null);
-        }
-
-        // No usable binding: borrow the default chat provider (and, if the
-        // binding had no endpoint of its own, its base URL too).
-        Optional<ModelCredential> fallback = credentialRepository
-                .findFirstByUserIdAndPurposeAndIsDefaultTrue(userId, ModelCredential.PURPOSE_CHAT);
-        if (fallback.isEmpty()) {
-            fallback = credentialRepository
-                    .findFirstByUserIdAndPurposeOrderByIsDefaultDescUpdatedAtDesc(userId, ModelCredential.PURPOSE_CHAT);
-        }
-        if (fallback.isEmpty()) {
-            return new ResolvedModel(binding, null, null);
-        }
-
-        ModelCredential borrowed = fallback.get();
-        String endpoint = binding != null && binding.getEndpoint() != null && !binding.getEndpoint().isBlank()
-                ? binding.getEndpoint()
-                : borrowed.getBaseUrl();
-        String modelName = binding != null && binding.getModelName() != null && !binding.getModelName().isBlank()
-                ? binding.getModelName()
-                : borrowed.getDefaultModel();
-        String provider = binding != null && binding.getProvider() != null
-                ? binding.getProvider()
-                : borrowed.getProvider();
-
-        CompanionModelBinding effective = new CompanionModelBinding();
-        effective.setUserId(userId);
-        effective.setRoleId(roleId);
-        effective.setProvider(provider);
-        effective.setModelName(modelName);
-        effective.setEndpoint(endpoint);
-        effective.setEnabled(true);
-        return new ResolvedModel(effective, borrowed, null);
-    }
-
-    /** The binding to use, the credential to authenticate with, and why it failed. */
-    private record ResolvedModel(CompanionModelBinding binding, ModelCredential credential, String reason) {
-        boolean usable() {
-            return binding != null && credential != null
-                    && credential.getApiKeyEncrypted() != null
-                    && binding.getEndpoint() != null && !binding.getEndpoint().isBlank();
-        }
-
-        /** The first missing piece, named, so the UI can say what to fix. */
-        String missing() {
-            if (binding == null) return "no_binding";
-            if (binding.getEndpoint() == null || binding.getEndpoint().isBlank()) return "no_endpoint";
-            if (credential == null) return "no_credential";
-            if (credential.getApiKeyEncrypted() == null) return "no_api_key";
-            return null;
-        }
-    }
-
-    /**
      * Send one minimal request through the resolved channel and report what came
      * back. This is what tells "no model configured" apart from "wrong URL",
      * "bad key" and "provider refused".
      */
     public java.util.Map<String, Object> testModelChannel(Long userId, Long roleId) {
-        ResolvedModel resolved = resolveModel(userId, roleId);
+        CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, roleId);
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("usable", resolved.usable());
         out.put("missing", resolved.missing());
@@ -626,7 +732,7 @@ public class CompanionService {
      * show this in the settings panel without spending tokens.
      */
     public java.util.Map<String, Object> describeModel(Long userId, Long roleId) {
-        ResolvedModel resolved = resolveModel(userId, roleId);
+        CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, roleId);
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         CompanionModelBinding b = resolved.binding();
         out.put("provider", b != null ? b.getProvider() : null);
@@ -638,8 +744,7 @@ public class CompanionService {
         out.put("credentialStatus", resolved.credential() != null && resolved.credential().getStatus() != null
                 ? resolved.credential().getStatus().name() : null);
         // Borrowed means: no per-role binding, using the account's default chat provider.
-        out.put("borrowed", b != null && modelBindingRepository
-                .findByUserIdAndRoleId(userId, roleId).isEmpty());
+        out.put("borrowed", b != null && resolved.borrowed());
         return out;
     }
 
@@ -682,7 +787,12 @@ public class CompanionService {
         growthRepository.save(growth);
     }
 
-    private CompanionStatusDTO refreshChattingStatus(Long userId, CompanionRole role) {
+    /**
+     * After an exchange: she is talking to you, and if she reported a state, that
+     * is now her state. Without a report nothing about her mood is written — the
+     * previous one stands rather than a guess replacing it.
+     */
+    private CompanionStatusDTO recordState(Long userId, CompanionRole role, CompanionStateTag.State state) {
         CompanionStatus status = statusRepository.findByUserIdAndRoleId(userId, role.getId())
                 .orElseGet(() -> {
                     CompanionStatus s = new CompanionStatus();
@@ -691,9 +801,23 @@ public class CompanionService {
                     return s;
                 });
         status.setStatusType(CompanionStatus.StatusType.chatting);
-        status.setSummary(role.getName() + "正在陪你聊天。" );
+        if (state != null) {
+            status.setMood(state.mood());
+            status.setMotion(state.motion());
+            if (state.doing() != null) {
+                status.setSummary(state.doing());
+                status.setSummaryAuthored(true);
+            }
+        } else if (!Boolean.TRUE.equals(status.getSummaryAuthored())) {
+            status.setSummary(role.getName() + "正在陪你聊天。");
+        }
         statusRepository.save(status);
         return toStatusDTO(status);
+    }
+
+    /** Her status as stored, without the clock refresh — null if none exists yet. */
+    private CompanionStatusDTO currentStatus(Long userId, Long roleId) {
+        return statusRepository.findByUserIdAndRoleId(userId, roleId).map(this::toStatusDTO).orElse(null);
     }
 
     public CompanionRoleDTO toRoleDTO(CompanionRole role) {
@@ -722,7 +846,9 @@ public class CompanionService {
                 role.getActive(),
                 role.getKind() == null ? CompanionRole.Kind.regular.name() : role.getKind().name(),
                 lastMessageAt,
-                presence
+                presence,
+                role.getBackground(),
+                role.getGreeting()
         );
     }
 
@@ -733,7 +859,10 @@ public class CompanionService {
                 msg.getSenderType().name(),
                 msg.getContent(),
                 msg.getFallback(),
-                msg.getCreatedAt()
+                msg.getCreatedAt(),
+                msg.getSessionId(),
+                stateMap(msg.getStateJson()),
+                msg.getClientMsgId()
         );
     }
 
@@ -765,8 +894,15 @@ public class CompanionService {
                 status.getRoleId(),
                 status.getStatusType().name(),
                 status.getSummary(),
-                status.getUpdatedAt()
+                status.getUpdatedAt(),
+                status.getMood(),
+                status.getMotion()
         );
+    }
+
+    private static Map<String, String> stateMap(String stateJson) {
+        CompanionStateTag.State state = CompanionStateTag.fromJson(stateJson);
+        return state == null ? null : state.toMap();
     }
 
     private CompanionMemory.MemoryType parseMemoryType(String type) {

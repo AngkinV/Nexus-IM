@@ -33,6 +33,25 @@ public class CompanionStatus {
     @Column(columnDefinition = "TEXT")
     private String summary;
 
+    /**
+     * Her mood and motion as she last reported them (see CompanionStateTag).
+     * Null until a model has said so — a non-null mood also marks `summary` as
+     * her own words rather than the clock-based placeholder.
+     */
+    @Column(name = "mood", length = 20)
+    private String mood;
+
+    @Column(name = "motion", length = 20)
+    private String motion;
+
+    /**
+     * True when `summary` is something a model wrote about her (a reported
+     * "doing", or the presence line of an invited guest). Such a line is hers and
+     * is never replaced by the clock-based placeholder.
+     */
+    @Column(name = "summary_authored")
+    private Boolean summaryAuthored;
+
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;

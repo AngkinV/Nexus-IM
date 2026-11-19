@@ -35,6 +35,18 @@ public class CompanionRole {
     @Column(name = "baseline_mood", length = 50)
     private String baselineMood;
 
+    /**
+     * Where she comes from and what she carries — a few sentences of the user's
+     * own writing (or the model's, for an invited guest). Goes into the prompt
+     * verbatim; null means the card has no backstory and none is invented.
+     */
+    @Column(name = "background", columnDefinition = "TEXT")
+    private String background;
+
+    /** The first thing she says when an evening opens. Null = she waits for you. */
+    @Column(name = "greeting", columnDefinition = "TEXT")
+    private String greeting;
+
     @Column(name = "avatar_url", columnDefinition = "TEXT")
     private String avatarUrl;
 

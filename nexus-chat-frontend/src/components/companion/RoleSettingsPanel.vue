@@ -16,8 +16,8 @@
             <span v-else class="material-symbols-outlined">person</span>
           </div>
           <div class="role-current-meta">
-            <div class="role-current-name">{{ activeRole.name || activeRole.nickname || $t('companion.defaultName') }}</div>
-            <div class="role-current-sub">{{ activeRole.persona || activeRole.description || $t('companion.defaultStatus') }}</div>
+            <div class="role-current-name">{{ activeRole.name || $t('companion.defaultName') }}</div>
+            <div class="role-current-sub">{{ activeRole.presence || activeRole.tone || $t('companion.defaultStatus') }}</div>
           </div>
         </div>
       </section>

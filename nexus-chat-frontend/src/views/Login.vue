@@ -5,7 +5,7 @@
     <div class="login-card">
       <div class="logo-area">
         <div class="logo-circle">
-          <img src="@/assets/images/logo.jpg" alt="Logo" class="logo-img" />
+          <img src="@/assets/images/nexus-emblem.png" alt="Nexus" class="logo-img" />
         </div>
         <h1>{{ $t('app.name') }}</h1>
         <p>{{ $t('app.tagline') }}</p>
@@ -423,12 +423,10 @@ onUnmounted(() => {
 .logo-circle {
   width: 80px;
   height: 80px;
-  border-radius: 50%;
   display: flex;
   justify-content: center;
   align-items: center;
   margin: 0 auto 16px;
-  overflow: hidden;
 }
 
 .logo-img {

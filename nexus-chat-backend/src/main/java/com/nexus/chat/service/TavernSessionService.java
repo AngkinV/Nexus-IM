@@ -5,11 +5,14 @@ import com.nexus.chat.model.*;
 import com.nexus.chat.repository.*;
 import com.nexus.chat.util.JsonUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,6 +22,12 @@ import java.util.Optional;
  *
  * The relationship (CompanionConversation) never changes here. Only sessions and
  * the messages filed under them do.
+ *
+ * Model calls here always run outside a transaction, and the writes that follow
+ * go through {@link TransactionTemplate}. An annotation on a method of this class
+ * called from this class would not open a transaction at all (the call never
+ * passes through the proxy), which is how the two "short transactions" this
+ * service used to declare were silently not transactions.
  */
 @Slf4j
 @Service
@@ -26,68 +35,73 @@ public class TavernSessionService {
 
     /** How many past evenings the archive keeps before the oldest roll off. */
     private static final int ARCHIVE_LIMIT = 30;
+    /** How much of the evening the closing prompt reads. */
+    private static final int CLOSING_HISTORY = 30;
 
     private final TavernSessionRepository sessionRepository;
     private final CompanionRoleRepository roleRepository;
     private final CompanionMessageRepository messageRepository;
     private final CompanionMemoryRepository memoryRepository;
-    private final CompanionModelBindingRepository bindingRepository;
-    private final ModelCredentialRepository credentialRepository;
+    private final CompanionModelResolver modelResolver;
     private final CompanionModelService modelService;
     private final CompanionFallbackService fallbackService;
     private final CompanionConversationRepository conversationRepository;
+    private final CompanionStatusRepository statusRepository;
+    private final TransactionTemplate tx;
 
     public TavernSessionService(TavernSessionRepository sessionRepository,
                                 CompanionRoleRepository roleRepository,
                                 CompanionMessageRepository messageRepository,
                                 CompanionMemoryRepository memoryRepository,
-                                CompanionModelBindingRepository bindingRepository,
-                                ModelCredentialRepository credentialRepository,
+                                CompanionModelResolver modelResolver,
                                 CompanionModelService modelService,
                                 CompanionFallbackService fallbackService,
-                                CompanionConversationRepository conversationRepository) {
+                                CompanionConversationRepository conversationRepository,
+                                CompanionStatusRepository statusRepository,
+                                PlatformTransactionManager transactionManager) {
         this.sessionRepository = sessionRepository;
         this.roleRepository = roleRepository;
         this.messageRepository = messageRepository;
         this.memoryRepository = memoryRepository;
-        this.bindingRepository = bindingRepository;
-        this.credentialRepository = credentialRepository;
+        this.modelResolver = modelResolver;
         this.modelService = modelService;
         this.fallbackService = fallbackService;
         this.conversationRepository = conversationRepository;
+        this.statusRepository = statusRepository;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     /**
-     * The evening in progress, opening one if none is. Idempotent on purpose: the
-     * client calls this whenever it enters the tavern, and a second call must not
-     * start a second evening.
+     * The evening in progress, opening one if none is. Idempotent.
+     *
+     * The conversation itself opens an evening when the first line is said (see
+     * CompanionService#exchange), so the client only calls this to move an
+     * evening that is already running into another room.
      */
-    @Transactional
     public TavernSessionDTO openSession(Long userId, Long roleId, String sceneKey) {
-        CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
+        roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
 
-        Optional<TavernSession> existing = sessionRepository
-                .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.active);
+        return tx.execute(status -> {
+            TavernSession session = sessionRepository
+                    .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.active)
+                    .orElseGet(() -> {
+                        TavernSession fresh = new TavernSession();
+                        fresh.setUserId(userId);
+                        fresh.setRoleId(roleId);
+                        fresh.setSceneKey(sceneKey);
+                        fresh.setStatus(TavernSession.Status.active);
+                        fresh.setStartedAt(LocalDateTime.now());
+                        return sessionRepository.save(fresh);
+                    });
 
-        TavernSession session = existing.orElseGet(() -> {
-            TavernSession fresh = new TavernSession();
-            fresh.setUserId(userId);
-            fresh.setRoleId(roleId);
-            fresh.setSceneKey(sceneKey);
-            fresh.setStatus(TavernSession.Status.active);
-            fresh.setStartedAt(LocalDateTime.now());
-            return sessionRepository.save(fresh);
+            // Changing the room mid-evening is allowed: it is the same visit.
+            if (sceneKey != null && !sceneKey.equals(session.getSceneKey())) {
+                session.setSceneKey(sceneKey);
+                sessionRepository.save(session);
+            }
+            return toDTO(session);
         });
-
-        // Changing the room mid-evening is allowed: it is the same visit, and the
-        // prompt reads the scene per message anyway.
-        if (sceneKey != null && !sceneKey.equals(session.getSceneKey())) {
-            session.setSceneKey(sceneKey);
-            sessionRepository.save(session);
-        }
-
-        return toDTO(session, role);
     }
 
     public Optional<TavernSession> findActive(Long userId, Long roleId) {
@@ -97,8 +111,9 @@ public class TavernSessionService {
 
     /**
      * Close the evening: ask her for a last line and one sentence worth keeping,
-     * file the sentence as an unconfirmed long-term memory, and mark the session
-     * closed so the next visit starts clean.
+     * file the line as the evening's final message and the sentence as an
+     * unconfirmed long-term memory, and mark the session closed so the next
+     * visit starts clean.
      *
      * Works without a model — the closing line falls back to a plain farewell and
      * nothing is remembered. Closing must never be blocked by a failed request.
@@ -107,82 +122,95 @@ public class TavernSessionService {
         TavernSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
                 .orElseThrow(() -> new RuntimeException("session not found"));
         if (session.getStatus() == TavernSession.Status.closed) {
-            return toDTO(session, null);
+            return toDTO(session);
         }
 
-        // Read what the closing needs, then let the transaction close before the
-        // model call. Holding a DB connection open across a 20-second HTTP request
-        // starves the pool and makes every other request wait behind it.
         CompanionRole role = roleRepository.findByIdAndUserId(session.getRoleId(), userId).orElse(null);
-        Long conversationId = conversationRepository
-                .findByUserIdAndRoleId(userId, session.getRoleId())
-                .map(CompanionConversation::getId)
-                .orElse(null);
-        List<CompanionMessage> history = conversationId == null
-                ? List.of()
-                : messageRepository.findTop20ByConversationIdOrderByCreatedAtDesc(conversationId);
-        java.util.Collections.reverse(history);
 
-        CompanionModelBinding binding = bindingRepository
-                .findByUserIdAndRoleId(userId, session.getRoleId()).orElse(null);
-        ModelCredential credential = null;
-        if (binding != null) {
-            credential = credentialRepository
-                    .findByUserIdAndProviderAndPurpose(userId, binding.getProvider(), ModelCredential.PURPOSE_CHAT)
-                    .or(() -> credentialRepository.findByUserIdAndProvider(userId, binding.getProvider()))
-                    .orElse(null);
+        // This evening only — not the tail of the whole relationship.
+        List<CompanionMessage> history = new ArrayList<>(messageRepository
+                .findBySessionIdOrderByIdDesc(sessionId, PageRequest.of(0, CLOSING_HISTORY)));
+        Collections.reverse(history);
+
+        // An evening in which nothing was said has nothing to close over: no
+        // model call, no farewell to an empty room.
+        if (history.isEmpty()) {
+            return tx.execute(status -> {
+                session.setStatus(TavernSession.Status.closed);
+                session.setClosedAt(LocalDateTime.now());
+                sessionRepository.save(session);
+                return toDTO(session);
+            });
         }
 
-        CompanionModelService.ClosingReply closing =
-                modelService.generateClosing(role, history, binding, credential, session.getSceneKey());
+        CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, session.getRoleId());
+        CompanionModelService.ClosingReply closing = resolved.usable()
+                ? modelService.generateClosing(role, history, resolved.binding(), resolved.credential(), session.getSceneKey())
+                : null;
 
-        String closingLine = closing != null ? closing.closingLine() : fallbackService.generateFarewell(role);
-        String summary = closing != null ? closing.summary() : null;
+        boolean written = closing != null;
+        String closingLine = written ? closing.closingLine() : fallbackService.generateFarewell(role);
+        String summary = written ? closing.summary() : null;
+        Long conversationId = history.get(0).getConversationId();
 
-        return persistClosing(userId, session, role, closingLine, summary);
-    }
+        return tx.execute(status -> {
+            // Re-read inside the transaction: a second close that raced this one
+            // must not file a second farewell.
+            TavernSession current = sessionRepository.findByIdAndUserId(sessionId, userId).orElse(session);
+            if (current.getStatus() == TavernSession.Status.closed) return toDTO(current);
 
-    /** The write half of closing, in its own short transaction. */
-    @Transactional
-    protected TavernSessionDTO persistClosing(Long userId, TavernSession session, CompanionRole role,
-                                              String closingLine, String summary) {
-        session.setClosingLine(closingLine);
-        session.setSummary(summary);
-        session.setStatus(TavernSession.Status.closed);
-        session.setClosedAt(LocalDateTime.now());
-        sessionRepository.save(session);
+            current.setClosingLine(closingLine);
+            current.setSummary(summary);
+            current.setStatus(TavernSession.Status.closed);
+            current.setClosedAt(LocalDateTime.now());
+            sessionRepository.save(current);
 
-        // The sentence becomes a memory the user can see and delete — unconfirmed,
-        // because they may not want this evening to stick.
-        if (summary != null && !summary.isBlank()) {
-            CompanionMemory memory = new CompanionMemory();
-            memory.setUserId(userId);
-            memory.setRoleId(session.getRoleId());
-            memory.setMemoryType(CompanionMemory.MemoryType.long_term);
-            memory.setContent(summary);
-            memory.setConfirmed(false);
-            memory.setShared(false);
-            memoryRepository.save(memory);
-        }
+            // Her last line is part of the conversation, so it is stored as one —
+            // it used to exist only in the browser and vanish on reload.
+            CompanionMessage last = new CompanionMessage();
+            last.setConversationId(conversationId);
+            last.setUserId(userId);
+            last.setRoleId(current.getRoleId());
+            last.setSenderType(CompanionMessage.SenderType.role);
+            last.setContent(closingLine);
+            last.setFallback(!written);
+            last.setSessionId(current.getId());
+            messageRepository.save(last);
 
-        return toDTO(session, role);
+            // The sentence becomes a memory the user can see and delete —
+            // unconfirmed, because they may not want this evening to stick.
+            if (summary != null && !summary.isBlank()) {
+                CompanionMemory memory = new CompanionMemory();
+                memory.setUserId(userId);
+                memory.setRoleId(current.getRoleId());
+                memory.setMemoryType(CompanionMemory.MemoryType.long_term);
+                memory.setContent(summary);
+                memory.setConfirmed(false);
+                memory.setShared(false);
+                memoryRepository.save(memory);
+            }
+            return toDTO(current);
+        });
     }
 
     /** One session by id, for the client to refresh after an action. */
     public TavernSessionDTO describe(Long userId, Long sessionId) {
         TavernSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
                 .orElseThrow(() -> new RuntimeException("session not found"));
-        return toDTO(session, null);
+        return toDTO(session);
     }
 
-    /** Closed evenings, newest first. */
+    /** Closed evenings in which something was said, newest first. */
     public List<TavernSessionDTO> listClosed(Long userId, Long roleId) {
         List<TavernSession> sessions = sessionRepository
                 .findByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.closed);
         List<TavernSessionDTO> out = new ArrayList<>();
-        int limit = Math.min(sessions.size(), ARCHIVE_LIMIT);
-        for (int i = 0; i < limit; i++) {
-            out.add(toDTO(sessions.get(i), null));
+        for (TavernSession session : sessions) {
+            if (out.size() >= ARCHIVE_LIMIT) break;
+            TavernSessionDTO dto = toDTO(session);
+            // Evenings opened by merely looking at a character (before sessions
+            // waited for the first line) hold nothing worth listing.
+            if (dto.getMessageCount() != null && dto.getMessageCount() > 0) out.add(dto);
         }
         return out;
     }
@@ -192,7 +220,6 @@ public class TavernSessionService {
      * list instead of the "past encounters" group. The role itself does not
      * change otherwise — same history, same bond.
      */
-    @Transactional
     public void adoptRole(Long userId, Long roleId, Long sessionId) {
         CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
@@ -202,45 +229,49 @@ public class TavernSessionService {
     }
 
     /**
-     * Invent a guest for an empty seat. Uses the same model channel as the
-     * conversation; without one, a neutral preset is used rather than failing —
-     * an empty seat should still be fillable offline.
+     * Invent a guest for an empty seat. Uses the account's model channel; without
+     * one a neutral preset is used rather than failing — an empty seat should
+     * still be fillable offline.
      */
     public CompanionRole inviteRole(Long userId, String sceneKey) {
-        // Model call first, outside any transaction — see closeSession.
-        CompanionModelBinding binding = bindingRepository
-                .findFirstByUserIdAndEnabledTrue(userId).orElse(null);
-        ModelCredential credential = null;
-        if (binding != null) {
-            credential = credentialRepository
-                    .findByUserIdAndProviderAndPurpose(userId, binding.getProvider(), ModelCredential.PURPOSE_CHAT)
-                    .or(() -> credentialRepository.findByUserIdAndProvider(userId, binding.getProvider()))
-                    .orElse(null);
-        }
+        // Model call first, outside any transaction — see the class comment.
+        CompanionModelResolver.Resolved resolved = modelResolver.resolveForUser(userId);
+        CompanionModelService.GeneratedRole generated = resolved.usable()
+                ? modelService.generateRole(resolved.binding(), resolved.credential(), sceneKey)
+                : null;
 
-        CompanionModelService.GeneratedRole generated = modelService.generateRole(binding, credential, sceneKey);
-        return persistGuest(userId, generated);
-    }
+        return tx.execute(status -> {
+            CompanionRole role = new CompanionRole();
+            role.setUserId(userId);
+            role.setKind(CompanionRole.Kind.guest);
+            role.setActive(true);
+            role.setBaselineMood("平静");
+            if (generated != null) {
+                role.setName(generated.name());
+                role.setTraits(JsonUtil.toJson(splitTraits(generated.traits())));
+                role.setTone(generated.tone());
+                role.setBackground(generated.background());
+                role.setGreeting(generated.greeting());
+            } else {
+                role.setName("无名的旅人");
+                role.setTraits(JsonUtil.toJson(List.of("沉默", "谨慎", "不轻易开口")));
+                role.setTone("简短、慢、留白多");
+            }
+            CompanionRole saved = roleRepository.save(role);
 
-    /** The write half of inviting, in its own short transaction. */
-    @Transactional
-    protected CompanionRole persistGuest(Long userId, CompanionModelService.GeneratedRole generated) {
-        CompanionRole role = new CompanionRole();
-        role.setUserId(userId);
-        role.setKind(CompanionRole.Kind.guest);
-        role.setActive(true);
-        if (generated != null) {
-            role.setName(generated.name());
-            role.setTraits(JsonUtil.toJson(splitTraits(generated.traits())));
-            role.setTone(generated.tone());
-            role.setBaselineMood("平静");
-        } else {
-            role.setName("无名的旅人");
-            role.setTraits(JsonUtil.toJson(List.of("沉默", "谨慎", "不轻易开口")));
-            role.setTone("简短、慢、留白多");
-            role.setBaselineMood("平静");
-        }
-        return roleRepository.save(role);
+            // What the model said she is doing when you first see her. It used to
+            // be generated and then thrown away.
+            if (generated != null && generated.presence() != null && !generated.presence().isBlank()) {
+                CompanionStatus presence = new CompanionStatus();
+                presence.setUserId(userId);
+                presence.setRoleId(saved.getId());
+                presence.setStatusType(CompanionStatus.StatusType.resting);
+                presence.setSummary(generated.presence().trim());
+                presence.setSummaryAuthored(true);
+                statusRepository.save(presence);
+            }
+            return saved;
+        });
     }
 
     private List<String> splitTraits(String raw) {
@@ -253,7 +284,7 @@ public class TavernSessionService {
         return out.isEmpty() ? List.of("沉默") : out;
     }
 
-    private TavernSessionDTO toDTO(TavernSession session, CompanionRole role) {
+    private TavernSessionDTO toDTO(TavernSession session) {
         TavernSessionDTO dto = new TavernSessionDTO();
         dto.setId(session.getId());
         dto.setRoleId(session.getRoleId());

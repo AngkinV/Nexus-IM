@@ -131,7 +131,7 @@
             <span class="palette-dot">·</span>
             <span><kbd>Tab</kbd> {{ $t('palette.hintGroup') }}</span>
           </div>
-          <span class="palette-engine font-code">Prism Command Engine v2.7</span>
+          <span class="palette-engine font-code">Nexus Command Engine v2.7</span>
         </div>
       </div>
     </div>

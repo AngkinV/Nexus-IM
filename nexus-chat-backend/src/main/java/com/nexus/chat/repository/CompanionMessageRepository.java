@@ -12,4 +12,17 @@ public interface CompanionMessageRepository extends JpaRepository<CompanionMessa
     List<CompanionMessage> findByConversationIdOrderByCreatedAtDesc(Long conversationId, Pageable pageable);
     List<CompanionMessage> findBySessionIdOrderByCreatedAtAsc(Long sessionId);
     Integer countBySessionId(Long sessionId);
+
+    // created_at has one-second resolution; two rows written in the same second
+    // (an opening line and the message that prompted it) only order reliably by id.
+    List<CompanionMessage> findByConversationIdOrderByIdAsc(Long conversationId);
+    List<CompanionMessage> findBySessionIdOrderByIdDesc(Long sessionId, Pageable pageable);
+
+    /** A send the client is retrying: same character, same client id. */
+    java.util.Optional<CompanionMessage> findFirstByUserIdAndRoleIdAndClientMsgIdOrderByIdAsc(
+            Long userId, Long roleId, String clientMsgId);
+
+    /** Whatever was written right after a given message — its reply, if it got one. */
+    java.util.Optional<CompanionMessage> findFirstByConversationIdAndIdGreaterThanOrderByIdAsc(
+            Long conversationId, Long id);
 }

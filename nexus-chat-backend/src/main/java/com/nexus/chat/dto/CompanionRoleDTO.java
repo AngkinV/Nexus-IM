@@ -31,4 +31,8 @@ public class CompanionRoleDTO {
 
     /** What she is doing right now, shown as the row's subtitle. */
     private String presence;
+    /** Backstory, in the card's own words. */
+    private String background;
+    /** Her opening line for a new evening. */
+    private String greeting;
 }
