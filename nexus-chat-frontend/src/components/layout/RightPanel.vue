@@ -537,7 +537,7 @@ const closePanel = () => {
 
 .panel-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: #ffffff;
@@ -619,7 +619,7 @@ const closePanel = () => {
 
 .profile-name {
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: #ffffff;

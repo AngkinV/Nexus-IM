@@ -6,7 +6,7 @@
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2 min-w-0">
           <span class="material-symbols-outlined text-primary text-[18px]">auto_awesome</span>
-          <span class="font-headline-md text-headline-md tracking-tight text-primary font-medium truncate">{{ $t('leftPanel.ai') }}</span>
+          <span class="font-headline-md text-[14px] leading-5 tracking-tight text-primary font-medium truncate">{{ $t('leftPanel.ai') }}</span>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <span
@@ -30,7 +30,7 @@
       >
         <div class="flex items-center gap-2">
           <span class="material-symbols-outlined text-[18px] text-primary">add</span>
-          <span class="font-label-md text-label-md font-medium">{{ $t('agent.history.newConversation') }}</span>
+          <span class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium">{{ $t('agent.history.newConversation') }}</span>
         </div>
         <kbd class="px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-code text-[11px]">⌘N</kbd>
       </button>
@@ -95,11 +95,11 @@
           </div>
           <div class="flex-1 min-w-0">
             <div
-              class="font-label-md text-label-md truncate"
+              class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
               :class="s.sessionId === agentStore.sessionId ? 'text-primary font-medium' : 'group-hover:text-primary'"
             >{{ s.title || $t('agent.history.untitled') }}</div>
             <div
-              class="font-body-md text-[12px] truncate mt-0.5"
+              class="font-body-md text-[14px] truncate mt-0.5"
               :class="s.sessionId === agentStore.sessionId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
             >{{ previewOf(s) }}</div>
           </div>
@@ -128,7 +128,7 @@
         </div>
       </div>
 
-      <div v-if="!groups.length" class="px-3 py-6 text-center font-body-md text-[12px] text-on-surface-variant/60">
+      <div v-if="!groups.length" class="px-3 py-6 text-center font-body-md text-[14px] text-on-surface-variant/60">
         {{ searchQuery.trim() ? $t('agent.history.noMatch') : $t('agent.history.empty') }}
       </div>
     </div>
@@ -141,7 +141,7 @@
           <span class="material-symbols-outlined text-[16px]">memory</span>
         </div>
         <div class="min-w-0">
-          <div class="font-label-md text-label-md text-primary truncate">
+          <div class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium text-primary truncate">
             {{ activeProvider ? activeProvider.displayName || activeProvider.provider : $t('agent.providers.mock') }}
           </div>
           <div class="font-code text-[10px] text-on-surface-variant/70 truncate">

@@ -15,6 +15,7 @@
   >
     <!-- Border notch toggle -->
     <button
+      v-show="!listCollapsed"
       class="rail-notch no-drag"
       type="button"
       :title="navCollapsed ? $t('rail.expand') : $t('rail.collapse')"
@@ -144,6 +145,7 @@ const requestAddContact = inject('requestAddContact', null)
 
 // Collapse state lives in Main.vue so the top bar can mirror it.
 const navCollapsed = inject('navCollapsed', ref(false))
+const listCollapsed = inject('listCollapsed', ref(false))
 const toggleNav = inject('toggleNav', () => {})
 // Phones only ever have room for the narrow strip, so they always get the dock.
 const isMobile = inject('isMobile', ref(false))

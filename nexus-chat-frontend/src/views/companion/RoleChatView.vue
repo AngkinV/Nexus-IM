@@ -146,7 +146,10 @@
           </div>
         </div>
 
-        <div v-if="sending" class="role-stage-mesh" aria-hidden="true">
+        <div v-if="actorStatus === 'loading' || actorStatus === 'error'" class="role-stage-mesh" role="status">
+          <span>{{ $t(actorStatus === 'loading' ? 'companion.stage.loadingCharacter' : 'companion.stage.characterUnavailable') }}</span>
+        </div>
+        <div v-else-if="sending" class="role-stage-mesh" aria-hidden="true">
           <span class="role-stage-live-dot is-on"></span>
           <span>{{ $t('companion.typing') }}</span>
         </div>
@@ -501,6 +504,7 @@ const stageHost = ref(null)
 const miniHoloHost = ref(null)
 const orbitRef = ref(null)
 const stageCollapsed = ref(false)
+const actorStatus = ref('none')
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 let stage = null
 let mini = null
@@ -742,7 +746,11 @@ window.addEventListener('resize', onViewport)
 
 function mountStages() {
   if (stageHost.value && !stage) {
-    stage = mountTavernStage(stageHost.value, { shouldRender: () => !stageCollapsed.value, reducedMotion })
+    stage = mountTavernStage(stageHost.value, {
+      shouldRender: () => !stageCollapsed.value,
+      reducedMotion,
+      onActorStatus: (value) => { actorStatus.value = value }
+    })
     stage.setCharacter(activeRole.value)
     stage.setScene(sceneKey.value)
     stage.setState(stageState.value)
@@ -768,7 +776,7 @@ function teardownStages() {
   }
 }
 
-watch(() => [activeRole.value?.id, activeRole.value?.name], () => {
+watch(() => [activeRole.value?.id, activeRole.value?.name, activeRole.value?.modelUrl, activeRole.value?.modelType, activeRole.value?.kind], () => {
   stage?.setCharacter(activeRole.value)
   mini?.setCharacter(activeRole.value)
 })
@@ -940,7 +948,7 @@ function stop() {
 
 .role-chat-name {
   color: #ffffff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1452,7 +1460,7 @@ function stop() {
   margin-top: 4px;
   overflow: hidden;
   color: #ffffff;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -1464,7 +1472,7 @@ function stop() {
   margin: 7px 0 10px;
   overflow: hidden;
   color: rgba(196, 199, 200, 0.82);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -1774,7 +1782,7 @@ function stop() {
 .role-chat-empty {
   margin: auto;
   color: #6f7274;
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -1813,7 +1821,7 @@ function stop() {
   align-items: center;
   gap: 8px;
   color: #8e9192;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .role-typing .material-symbols-outlined {
@@ -1851,7 +1859,7 @@ function stop() {
 .role-text {
   margin: 0;
   color: #ffffff;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1987,7 +1995,7 @@ function stop() {
   background: transparent;
   color: #ffffff;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.55;
   resize: none;
   outline: none;
@@ -2009,7 +2017,7 @@ function stop() {
   background: #ffffff;
   color: #131316;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;

@@ -147,7 +147,7 @@ const formatTime = (time) => {
 }
 
 .empty-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #e4e1e6;
   margin: 0 0 6px;
@@ -155,7 +155,7 @@ const formatTime = (time) => {
 
 .empty-text {
   color: #8e9192;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   margin: 0;
   max-width: 200px;
@@ -247,7 +247,7 @@ const formatTime = (time) => {
 }
 
 .group-name {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 18px;
   letter-spacing: 0.01em;
   font-weight: 500;
@@ -372,16 +372,8 @@ const formatTime = (time) => {
     height: 32px;
   }
 
-  .group-name {
-    font-size: 13px;
-  }
-
   .group-time {
     font-size: 10px;
-  }
-
-  .group-message {
-    font-size: 11px;
   }
 }
 </style>

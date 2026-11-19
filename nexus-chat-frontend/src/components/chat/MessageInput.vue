@@ -300,7 +300,7 @@ const handleUploadError = (error) => {
   background: transparent;
   color: #ffffff;
   font-family: inherit;
-  font-size: 16px;
+  font-size: 12px;
   line-height: 1.625;
   letter-spacing: -0.005em;
   resize: none;
@@ -325,7 +325,7 @@ const handleUploadError = (error) => {
   border-radius: 8px;
   background: #ffffff;
   color: #2f3131;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 18px;
   letter-spacing: 0.01em;
   font-weight: 500;

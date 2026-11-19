@@ -6,7 +6,7 @@
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2 min-w-0">
           <span class="material-symbols-outlined text-primary text-[18px]">nightlife</span>
-          <span class="font-headline-md text-headline-md tracking-tight text-primary font-medium truncate">{{ $t('leftPanel.navCompanion') }}</span>
+          <span class="font-headline-md text-[14px] leading-5 tracking-tight text-primary font-medium truncate">{{ $t('leftPanel.navCompanion') }}</span>
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <span
@@ -34,7 +34,7 @@
           <span class="material-symbols-outlined text-[18px] text-primary">
             {{ inviting ? 'progress_activity' : 'add' }}
           </span>
-          <span class="font-label-md text-label-md font-medium">
+          <span class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium">
             {{ inviting ? $t('companion.seats.inviting') : $t('companion.seats.invite') }}
           </span>
         </div>
@@ -48,7 +48,7 @@
       >
         <div class="flex items-center gap-2">
           <span class="material-symbols-outlined text-[18px] text-primary">tune</span>
-          <span class="font-label-md text-label-md font-medium">{{ $t('companion.roleManage') }}</span>
+          <span class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium">{{ $t('companion.roleManage') }}</span>
         </div>
         <kbd class="px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-code text-[11px]">⌘,</kbd>
       </button>
@@ -88,11 +88,11 @@
           </div>
           <div class="flex-1 min-w-0">
             <div
-              class="font-label-md text-label-md truncate"
+              class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
               :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
             >{{ role.name || $t('companion.defaultName') }}</div>
             <div
-              class="font-body-md text-[12px] truncate mt-0.5"
+              class="font-body-md text-[14px] truncate mt-0.5"
               :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
             >{{ role.presence || role.tone || $t('companion.defaultStatus') }}</div>
           </div>
@@ -106,9 +106,9 @@
       <!-- Loading and "no characters yet" look identical without this. -->
       <div v-if="companionStore.isLoading" class="px-3 py-6 flex items-center justify-center gap-2 text-on-surface-variant/70">
         <span class="role-list-spinner"></span>
-        <span class="font-body-md text-[12px]">{{ $t('companion.loadingRoles') }}</span>
+        <span class="font-body-md text-[14px]">{{ $t('companion.loadingRoles') }}</span>
       </div>
-      <div v-else-if="!companionStore.roles.length" class="px-3 py-6 text-center font-body-md text-[12px] text-on-surface-variant/60">
+      <div v-else-if="!companionStore.roles.length" class="px-3 py-6 text-center font-body-md text-[14px] text-on-surface-variant/60">
         {{ $t('companion.emptyRole') }}
       </div>
 
@@ -146,11 +146,11 @@
           </div>
           <div class="flex-1 min-w-0">
             <div
-              class="font-label-md text-label-md truncate"
+              class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
               :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
             >{{ role.name || $t('companion.defaultName') }}</div>
             <div
-              class="font-body-md text-[12px] truncate mt-0.5"
+              class="font-body-md text-[14px] truncate mt-0.5"
               :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
             >{{ role.presence || role.tone || $t('companion.defaultStatus') }}</div>
           </div>
@@ -180,7 +180,7 @@
           <span class="material-symbols-outlined text-[16px]">person_heart</span>
         </div>
         <div class="min-w-0">
-          <div class="font-label-md text-label-md text-primary truncate">
+          <div class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium text-primary truncate">
             {{ companionStore.activeRole?.name || $t('companion.defaultName') }}
           </div>
           <div class="font-code text-[10px] text-on-surface-variant/70 truncate">

@@ -792,7 +792,7 @@ const handleReactMessage = async (msg, emoji) => {
 }
 
 .chat-name {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 18px;
   font-weight: 600;
   letter-spacing: -0.025em;
@@ -942,7 +942,7 @@ const handleReactMessage = async (msg, emoji) => {
 }
 
 .msg-state-text {
-  font-size: 13px;
+  font-size: 12px;
   color: #c4c7c8;
   margin: 0;
 }
@@ -1140,7 +1140,7 @@ const handleReactMessage = async (msg, emoji) => {
 }
 
 .welcome-title {
-  font-size: 32px;
+  font-size: 28px;
   line-height: 1.25;
   font-weight: 600;
   letter-spacing: -0.025em;
@@ -1150,7 +1150,7 @@ const handleReactMessage = async (msg, emoji) => {
 
 .welcome-subtitle {
   max-width: 448px;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1.625;
   letter-spacing: -0.005em;
   font-weight: 400;
@@ -1193,7 +1193,7 @@ const handleReactMessage = async (msg, emoji) => {
 }
 
 .standby-btn-label {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 18px;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -1321,11 +1321,11 @@ const handleReactMessage = async (msg, emoji) => {
 
 
   .welcome-title {
-    font-size: 24px;
+    font-size: 22px;
   }
 
   .welcome-subtitle {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .standby-actions {
@@ -1360,11 +1360,11 @@ const handleReactMessage = async (msg, emoji) => {
   }
 
   .welcome-title {
-    font-size: 20px;
+    font-size: 18px;
   }
 
   .welcome-subtitle {
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.55;
   }
 
@@ -1409,7 +1409,7 @@ const handleReactMessage = async (msg, emoji) => {
   }
 
   .welcome-title {
-    font-size: 22px;
+    font-size: 20px;
   }
 
   .standby-actions {

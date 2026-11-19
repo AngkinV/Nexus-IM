@@ -359,7 +359,7 @@ const deleteContact = async (contact) => {
 }
 
 .portal-label {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 18px;
   letter-spacing: 0.01em;
   font-weight: 500;
@@ -525,7 +525,7 @@ const deleteContact = async (contact) => {
 
 .contact-name {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 18px;
   letter-spacing: 0.01em;
   font-weight: 500;
@@ -537,8 +537,8 @@ const deleteContact = async (contact) => {
 
 .contact-sub {
   margin: 0;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 14px;
+  line-height: 20px;
   letter-spacing: 0.02em;
   font-weight: 500;
   color: rgba(196, 199, 200, 0.7);
@@ -675,7 +675,7 @@ const deleteContact = async (contact) => {
 
 .empty-text {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: #8e9192;
 }
 

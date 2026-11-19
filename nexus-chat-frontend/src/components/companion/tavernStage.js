@@ -1,11 +1,10 @@
 import * as THREE from 'three'
 
 /**
- * The tavern stage: the room a character is sitting in, drawn in white line.
+ * The tavern stage: a monochrome character in a room drawn in white line.
  *
  * Everything here answers to something real:
- *   - the figure's shape is derived from the character (id + name), so two
- *     characters never share a silhouette and one character always has the same;
+ *   - the figure uses the character's VRM binding or a seeded silhouette;
  *   - the room is the open scene (window and rain, hearth, back shelf, lamp);
  *   - posture and tempo follow the mood and motion the model reported with its
  *     last reply (see CompanionStateTag on the server);
@@ -114,15 +113,21 @@ const MOTIONS = {
 
 const lerp = (from, to, t) => from + (to - from) * t
 
-/**
- * Mount the stage into `container`.
- * @returns controller: setCharacter, setScene, setState, setSpeaking, sample, snapshot, destroy
- */
-export function mountTavernStage(container, { shouldRender = () => true, reducedMotion = false } = {}) {
+export function characterModelSource(character) {
+  if (!character) return null
+  const url = character.modelUrl || (character.kind === 'guest' ? null : '/models/SpringSnow.vrm')
+  if (!url || (character.modelType && character.modelType !== 'vrm')) return null
+  if (!character.modelType && !/\.vrm(?:[?#]|$)/i.test(url)) return null
+  return url
+}
+
+export function mountTavernStage(container, { shouldRender = () => true, reducedMotion = false, onActorStatus = () => {} } = {}) {
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(42, 1.5, 0.1, 100)
   camera.position.set(0, 0.1, 6.4)
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
+  renderer.localClippingEnabled = true
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
   renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block'
   container.appendChild(renderer.domElement)
@@ -163,6 +168,68 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   scene.add(figure)
   let shape = null
   let headPoints = null
+  let actor = null
+  let actorKey = null
+  let actorSource = null
+  let actorStatus = 'none'
+  let actorAbort = null
+  let actorRequest = 0
+  let destroyed = false
+
+  const ambient = new THREE.HemisphereLight(0xffffff, 0x666666, 1)
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.4)
+  keyLight.position.set(-2, 4, 5)
+  const rimLight = new THREE.DirectionalLight(0xffffff, 1.5)
+  rimLight.position.set(2, 3, -3)
+  scene.add(ambient, keyLight, rimLight)
+
+  const reportActorStatus = (status) => {
+    actorStatus = status
+    onActorStatus(status === 'queued' ? 'loading' : status)
+  }
+
+  function selectActor(character) {
+    const source = characterModelSource(character)
+    const key = `${character?.id ?? ''}|${source ?? ''}`
+    if (key === actorKey) return
+    actorKey = key
+    actorSource = source
+    actorRequest++
+    actorAbort?.abort()
+    actor?.destroy()
+    actor = null
+    figure.visible = true
+    dirty = true
+    reportActorStatus(source ? 'queued' : 'none')
+  }
+
+  async function loadActor() {
+    if (actorStatus !== 'queued') return
+    const request = actorRequest
+    const source = actorSource
+    const controller = new AbortController()
+    actorAbort = controller
+    reportActorStatus('loading')
+    try {
+      const { loadTavernActor } = await import('./tavernActor')
+      controller.signal.throwIfAborted()
+      const loaded = await loadTavernActor(source, controller.signal)
+      if (destroyed || request !== actorRequest) {
+        loaded.destroy()
+        return
+      }
+      actor = loaded
+      scene.add(actor.root)
+      figure.visible = false
+      reportActorStatus('ready')
+      dirty = true
+    } catch (error) {
+      if (controller.signal.aborted || destroyed || request !== actorRequest) return
+      console.error('[Tavern] Character model could not be loaded:', error)
+      reportActorStatus('error')
+      dirty = true
+    }
+  }
 
   function buildFigure(next) {
     disposeGroup(headPivot)
@@ -394,6 +461,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     headPivot.rotation.x = pose.pitch + nod + gazeY * 0.16 * pose.follow
     headPivot.rotation.y = pose.yaw * 0.65 + gazeX * 0.3 * pose.follow
     headPivot.rotation.z = pose.roll
+    actor?.update({ time, delta, pose, mood: moodKey, nod, gazeX, gazeY, reducedMotion, speaking, settled: ease === 1 })
     // Speaking: the face points pulse with the words coming in.
     const speakPulse = pose.speak * (0.5 + 0.5 * Math.sin(time * 14))
     if (headPoints) headPoints.scale.setScalar(0.96 + speakPulse * 0.035)
@@ -467,6 +535,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   const animate = (now) => {
     frame = requestAnimationFrame(animate)
     if (!shouldRender() || document.hidden || !drawable()) return
+    if (actorStatus === 'queued') loadActor()
     if (reducedMotion) {
       // No clock: redraw only when something actually changed, already settled.
       if (!dirty) return
@@ -486,6 +555,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   return {
     /** Whose silhouette is on stage. Rebuilds only when the character changes. */
     setCharacter(character) {
+      selectActor(character)
       const next = characterShape(character)
       if (shape && shape.seed === next.seed) return
       buildFigure(next)
@@ -523,6 +593,8 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     /** What the stage is showing, as data. */
     snapshot() {
       return {
+        character: { type: actor ? 'vrm' : 'silhouette', status: actorStatus, source: actorSource, ...actor?.snapshot() },
+        renderer: { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures },
         seed: shape?.seed ?? null,
         head: shape?.head ?? null,
         body: shape?.body ?? null,
@@ -580,6 +652,11 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       }
     },
     destroy() {
+      destroyed = true
+      actorRequest++
+      actorAbort?.abort()
+      actor?.destroy()
+      actor = null
       cancelAnimationFrame(frame)
       window.removeEventListener('mousemove', onMouseMove)
       resizeObserver.disconnect()

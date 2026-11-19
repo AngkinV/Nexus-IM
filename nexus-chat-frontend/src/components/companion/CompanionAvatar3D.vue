@@ -47,6 +47,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { VRMLoaderPlugin, VRMUtils, VRMExpressionPresetName } from '@pixiv/three-vrm'
+import { createVrmExpressions } from './vrmExpressions'
 
 const { locale } = useI18n()
 
@@ -78,6 +79,9 @@ let mixer = null
 let clock = null
 let modelRoot = null
 let vrm = null
+let vrmExpressions = null
+let modelRequest = 0
+let disposed = false
 let currentAction = null
 let availableClips = []
 let basePosition = new THREE.Vector3()
@@ -310,6 +314,7 @@ const resizeRenderer = () => {
 }
 
 const disposeModel = () => {
+  clearMotionOffsets()
   stopMotionCycle()
   if (pendingExpressionTimeout) {
     clearTimeout(pendingExpressionTimeout)
@@ -323,21 +328,10 @@ const disposeModel = () => {
   currentAction = null
   availableClips = []
   if (modelRoot && scene) scene.remove(modelRoot)
-  if (modelRoot) {
-    modelRoot.traverse((child) => {
-      if (child.isMesh) {
-        child.geometry?.dispose?.()
-        if (Array.isArray(child.material)) {
-          child.material.forEach((mat) => mat?.dispose?.())
-        } else {
-          child.material?.dispose?.()
-        }
-      }
-    })
-  }
+  if (modelRoot) VRMUtils.deepDispose(modelRoot)
   modelRoot = null
-  vrm?.dispose?.()
   vrm = null
+  vrmExpressions = null
   boneRest.clear()
   if (mixamoCurrent) {
     mixamoCurrent.fadeOut(0)
@@ -673,23 +667,32 @@ const loadMixamoClips = async () => {
   }
 
   const loader = new FBXLoader()
+  const targetVrm = vrm
+  const targetMixer = mixer
   mixamoActions = {}
 
   for (const motion of motionList.value) {
+    if (disposed || vrm !== targetVrm || mixer !== targetMixer) return
     const url = `/motions/${motion.file}`
     try {
       const fbx = await new Promise((resolve, reject) => {
         loader.load(url, resolve, undefined, reject)
       })
 
+      if (disposed || vrm !== targetVrm || mixer !== targetMixer) {
+        VRMUtils.deepDispose(fbx)
+        return
+      }
       const clip = fbx.animations?.[0]
       if (!clip) {
+        VRMUtils.deepDispose(fbx)
         console.warn(`[Companion] FBX ${motion.key}: no animations found`)
         continue
       }
       clip.name = motion.key
 
       const retargetedClip = retargetMixamoClipToVrm(clip, fbx)
+      VRMUtils.deepDispose(fbx)
 
       if (retargetedClip.tracks.length === 0) {
         console.warn(`[Companion] clip ${motion.key}: 0 matched tracks`)
@@ -759,9 +762,10 @@ const applyModel = (object, animations = []) => {
   isReady.value = true
 }
 
-const applyVRM = (loadedVrm, animations = []) => {
+const applyVRM = (loadedVrm, animations = [], json) => {
   disposeModel()
   vrm = loadedVrm
+  vrmExpressions = createVrmExpressions(vrm, json)
   VRMUtils.removeUnnecessaryVertices(vrm.scene)
   VRMUtils.removeUnnecessaryJoints(vrm.scene)
   modelRoot = vrm.scene
@@ -778,27 +782,35 @@ const applyVRM = (loadedVrm, animations = []) => {
 }
 
 const loadModel = async () => {
-  if (!hasWebGL.value || !renderer) return
+  if (!hasWebGL.value || !renderer || disposed) return
   const url = modelSource.value
   if (!url) return
-  console.log(`[Companion] loadModel: url="${url}", type="${modelType.value}"`)
+  const request = ++modelRequest
   isReady.value = false
   loadError.value = ''
   try {
     if (modelType.value === 'fbx') {
       const fbx = await loadFBX(url)
+      if (disposed || request !== modelRequest) {
+        VRMUtils.deepDispose(fbx)
+        return
+      }
       applyModel(fbx, fbx.animations || [])
       return
     }
     const isVrm = modelType.value === 'vrm'
     const gltf = await loadGLTF(url, isVrm)
+    if (disposed || request !== modelRequest) {
+      VRMUtils.deepDispose(gltf.scene)
+      return
+    }
     if (isVrm && gltf.userData?.vrm) {
-      console.log(`[Companion] loadModel: VRM loaded successfully`)
-      applyVRM(gltf.userData.vrm, gltf.animations || [])
+      applyVRM(gltf.userData.vrm, gltf.animations || [], gltf.parser.json)
     } else {
       applyModel(gltf.scene, gltf.animations || [])
     }
   } catch (error) {
+    if (disposed || request !== modelRequest) return
     console.error('Companion model load failed:', error)
     loadError.value = 'Model load failed'
     isReady.value = false
@@ -935,8 +947,8 @@ const setMorphTarget = (nameList, value) => {
 
 const setExpressionValue = (name, value) => {
   if (!name) return
-  if (vrm?.expressionManager) {
-    vrm.expressionManager.setValue(name, value)
+  if (vrmExpressions) {
+    vrmExpressions.setValue(name, value)
     return
   }
   const map = {
@@ -1042,10 +1054,30 @@ const updateFace = (time) => {
   }
 }
 
+const motionOffsets = new Map()
+
+const clearMotionOffsets = () => {
+  for (const [bone, offset] of motionOffsets) bone.quaternion.multiply(offset.invert())
+  motionOffsets.clear()
+}
+
 const updateProceduralMotion = (time) => {
   if (!modelRoot || reducedMotion) return
-  if (availableClips.length && currentAction) return
-  if (mixamoCurrent) return
+  if ((availableClips.length && currentAction) || mixamoCurrent) {
+    updateGaze(time)
+    const offsets = [
+      ['head', gazeState.pitch * 0.4, gazeState.yaw * 0.4, 0],
+      ['chest', Math.sin(time * 1.5) * 0.01, 0, 0]
+    ]
+    for (const [name, x, y, z] of offsets) {
+      const bone = getVrmBone(name)
+      if (!bone) continue
+      const offset = new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, 'YXZ'))
+      bone.quaternion.multiply(offset)
+      motionOffsets.set(bone, offset)
+    }
+    return
+  }
 
   const statusType = props.status?.statusType || 'resting'
   const motionMap = {
@@ -1129,12 +1161,14 @@ const render = () => {
   const delta = clock.getDelta()
   const elapsed = clock.elapsedTime
   // mixer targets normalized bones → vrm.update() transfers normalized → raw
+  clearMotionOffsets()
   if (mixer) mixer.update(delta)
-  if (vrm) vrm.update(delta)
   updateBlink(elapsed)
   updateMouth(elapsed)
   updateFace(elapsed)
   updateProceduralMotion(elapsed)
+  vrmExpressions?.update()
+  if (vrm) vrm.update(delta)
   updateWalkMovement(delta)
   renderer.render(scene, camera)
   rafId.value = requestAnimationFrame(render)
@@ -1179,6 +1213,7 @@ onMounted(async () => {
   initPosition()
   clampPosition()
   await fetchMotionConfig()
+  if (disposed) return
   try {
     initThree()
   } catch (error) {
@@ -1197,6 +1232,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  modelRequest++
   stopMotionCycle()
   if (rafId.value) cancelAnimationFrame(rafId.value)
   window.removeEventListener('resize', clampPosition)
@@ -1205,6 +1242,7 @@ onUnmounted(() => {
   window.removeEventListener('companion:switch-motion', handleSwitchMotionEvent)
   disposeModel()
   renderer?.dispose?.()
+  renderer?.forceContextLoss?.()
 })
 
 watch([modelSource, modelType], loadModel)
