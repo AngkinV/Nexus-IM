@@ -191,7 +191,7 @@ const title = computed(() => {
 
 const status = computed(() => {
   if (activeView.value === 'ai') return 'AI ENGINE ONLINE'
-  if (activeView.value === 'companion') return 'COMPANION ONLINE'
+  if (activeView.value === 'companion') return 'TAVERN OPEN'
   return 'SYNCED'
 })
 </script>

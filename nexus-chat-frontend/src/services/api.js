@@ -301,8 +301,42 @@ export const companionAPI = {
     getConversation: (roleId, userId) =>
         apiClient.get(`/companion/conversations/${roleId}`, { params: { userId } }),
 
-    sendMessage: (roleId, userId, content) =>
-        apiClient.post('/companion/messages', { roleId, content }, { params: { userId } }),
+    sendMessage: (roleId, userId, content, sceneKey = null) =>
+        apiClient.post('/companion/messages', { roleId, content, sceneKey }, { params: { userId } }),
+
+    // Her inner monologue. Generated on demand — one model call per open.
+    innerVoice: (roleId, userId) =>
+        apiClient.post(`/companion/inner-voice/${roleId}`, null, { params: { userId } }),
+
+    // What the role's model channel actually resolves to, and which piece is
+    // missing when it cannot reach a model. No model call.
+    modelStatus: (roleId, userId) =>
+        apiClient.get(`/companion/model-status/${roleId}`, { params: { userId } }),
+
+    // One tiny round trip through the resolved channel.
+    modelTest: (roleId, userId) =>
+        apiClient.post(`/companion/model-test/${roleId}`, null, { params: { userId } }),
+
+    // ── Tavern sessions: one evening at a time ─────────────────────────────
+    openSession: (userId, roleId, sceneKey) =>
+        apiClient.post('/tavern/sessions/open', { roleId, sceneKey }, { params: { userId } }),
+
+    activeSession: (userId, roleId) =>
+        apiClient.get('/tavern/sessions/active', { params: { userId, roleId } }),
+
+    closeSession: (sessionId, userId) =>
+        apiClient.post(`/tavern/sessions/${sessionId}/close`, null, { params: { userId }, timeout: 12000 }),
+
+    sessionHistory: (userId, roleId) =>
+        apiClient.get('/tavern/sessions', { params: { userId, roleId } }),
+
+    // Inviting and closing both end in a model call. Cap the wait on the client
+    // too, so a hung provider can never leave the UI spinning forever.
+    inviteGuest: (userId, sceneKey) =>
+        apiClient.post('/tavern/roles/invite', { sceneKey }, { params: { userId }, timeout: 12000 }),
+
+    adoptGuest: (roleId, userId, sessionId) =>
+        apiClient.post(`/tavern/roles/${roleId}/adopt`, { sessionId }, { params: { userId } }),
 
     getMemories: (roleId, userId) =>
         apiClient.get('/companion/memories', { params: { userId, roleId } }),

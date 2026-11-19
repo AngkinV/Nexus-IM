@@ -514,8 +514,8 @@ const handleAvatarClick = (senderId) => {
 }
 
 .bubble-out ::selection {
-  background: #d4d4d8;
-  color: #09090b;
+  background: #e2e2e2;
+  color: #131316;
 }
 
 .bubble-in .message-text {
@@ -805,7 +805,7 @@ const handleAvatarClick = (senderId) => {
 }
 
 .file-download-btn:hover {
-  background: #39393c;
+  background: #353438;
   color: #ffffff;
 }
 

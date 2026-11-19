@@ -34,6 +34,24 @@
         <p v-else class="dossier-empty">{{ $t('companion.emptyGrowth') }}</p>
       </section>
 
+      <!-- Past evenings. Read-only: the archive is for remembering, not editing. -->
+      <section v-if="sessions.length" class="dossier-section">
+        <div class="dossier-section-head">
+          <span>{{ $t('companion.session.history') }}</span>
+          <span class="dossier-count">{{ sessions.length }}</span>
+        </div>
+        <div class="session-list">
+          <div v-for="item in sessions" :key="item.id" class="session-row">
+            <div class="session-row-head">
+              <span class="session-scene">{{ $t(`companion.sceneNames.${item.sceneKey}`) }}</span>
+              <span class="session-when">{{ dayjs(item.closedAt).format('MM-DD HH:mm') }}</span>
+            </div>
+            <p v-if="item.closingLine" class="session-line">{{ item.closingLine }}</p>
+            <p v-if="item.summary" class="session-summary">{{ item.summary }}</p>
+          </div>
+        </div>
+      </section>
+
       <section class="dossier-section">
         <div class="dossier-section-head">
           <span>{{ $t('companion.memorySection') }}</span>
@@ -91,19 +109,34 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
+import dayjs from 'dayjs'
 
 const emit = defineEmits(['close'])
 
 const { t } = useI18n()
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
-const { activeRole, activeRoleId, memories, growth } = storeToRefs(companionStore)
+const { activeRole, activeRoleId, memories, growth, sessionHistory: sessions } = storeToRefs(companionStore)
+
+// The archive is fetched when the panel opens, not on app load — it is
+// reference material, and most visits never look at it.
+onMounted(async () => {
+  const userId = userStore.currentUser?.id
+  if (userId && activeRoleId.value) {
+    await companionStore.fetchSessionHistory(userId, activeRoleId.value)
+  }
+})
+
+watch(activeRoleId, async (roleId) => {
+  const userId = userStore.currentUser?.id
+  if (userId && roleId) await companionStore.fetchSessionHistory(userId, roleId)
+})
 
 const newMemoryType = ref('short_term')
 const newMemoryContent = ref('')
@@ -257,6 +290,57 @@ async function removeMemory(memory) {
 .dossier-scroll::-webkit-scrollbar-thumb {
   background: #353438;
   border-radius: 9999px;
+}
+
+/* Past evenings: a compact ledger. The closing line is what she said, the
+   summary is what she kept — both are hers, neither is generated on the fly. */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #131316;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+}
+
+.session-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-scene {
+  color: #e4e1e6;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.session-when {
+  color: rgba(142, 145, 146, 0.7);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.session-line {
+  margin: 4px 0 0;
+  color: rgba(196, 199, 200, 0.85);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.session-summary {
+  margin: 4px 0 0;
+  padding-left: 8px;
+  border-left: 1px solid rgba(68, 71, 72, 0.5);
+  color: rgba(142, 145, 146, 0.8);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .dossier-section-head {

@@ -32,7 +32,9 @@ class Settings(BaseSettings):
 
     # ----- Agent loop -----
     max_iterations: int = 6
-    model_timeout_sec: int = 20
+    # Idle timeout: max wait for the first byte / between stream chunks,
+    # not a cap on total generation time.
+    model_timeout_sec: int = 120
     tool_timeout_sec: int = 3
     enable_parallel_tool_calls: bool = True
 

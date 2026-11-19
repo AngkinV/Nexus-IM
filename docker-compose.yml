@@ -65,11 +65,49 @@ services:
       - COMPANION_API_KEY_SECRET=${COMPANION_API_KEY_SECRET}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # Java <-> Python Agent 内部通道：两个密钥必须与 agent 服务一致，
+      # 未设置时后端拒绝启动（application-docker.properties 无默认值）。
+      - AGENT_PYTHON_BASE_URL=http://agent:8100
+      - AGENT_INTERNAL_SIGNING_SECRET=${AGENT_INTERNAL_SIGNING_SECRET}
+      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN}
       - TZ=Asia/Shanghai
     volumes:
       - uploads_data:/app/uploads
     networks:
       - nexus-network
+
+  # ==================== Python Agent 后端 ====================
+  agent:
+    build:
+      context: ./nexus-agent-backend
+      dockerfile: Dockerfile
+    container_name: nexus-agent
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # 与 backend 的 AGENT_INTERNAL_SIGNING_SECRET / AGENT_INTERNAL_TOKEN 同源
+      - INTERNAL_SIGNING_SECRET=${AGENT_INTERNAL_SIGNING_SECRET}
+      - JAVA_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN}
+      - JAVA_INTERNAL_BASE_URL=http://backend:8080/internal/agent
+      - REDIS_URL=redis://redis:6379/2
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+      # 可选 embedding 配置；留空则走服务内回退逻辑
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
+      - TZ=Asia/Shanghai
+    volumes:
+      - agent_data:/app/data
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/v1/agent/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # ==================== Vue 前端 + Nginx ====================
   frontend:
@@ -123,4 +161,6 @@ volumes:
     name: nexus-redis-data
   uploads_data:
     name: nexus-uploads-data
+  agent_data:
+    name: nexus-agent-data
  

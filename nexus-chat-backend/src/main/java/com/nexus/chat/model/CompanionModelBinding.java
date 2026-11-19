@@ -34,4 +34,26 @@ public class CompanionModelBinding {
 
     @Column(nullable = false)
     private Boolean enabled = true;
+
+    // ── Inference dynamics ──────────────────────────────────────────────────
+    // The tavern's own sampling knobs, kept per role so two characters can run
+    // at different temperatures. Null means "use the default for that field".
+
+    @Column(name = "temperature")
+    private Double temperature;
+
+    /** How hard the reply is held to the character's persona, 50–100. */
+    @Column(name = "persona_lock")
+    private Integer personaLock;
+
+    /** Token budget for the inner monologue, 256–4096. */
+    @Column(name = "reasoning_budget")
+    private Integer reasoningBudget;
+
+    /** Context window in tokens: 32000 / 64000 / 128000. */
+    @Column(name = "context_horizon")
+    private Integer contextHorizon;
+
+    @Column(name = "stream_enabled")
+    private Boolean streamEnabled;
 }

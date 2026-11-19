@@ -39,7 +39,9 @@ class LLMChunk:
       - "reasoning"   : text is the model's own thinking, shown but never part of the answer
       - "tool_call"   : tool_call holds the requested call
       - "usage"       : usage holds prompt/completion tokens (final)
-      - "finish"      : the model has finished this turn (no more tools)
+      - "finish"      : the model has finished this turn (no more tools);
+                        finish_reason is "stop" / "tool_calls" / "timeout" / "error"
+      - "error"       : text holds the failure reason; display-only, never memory
       - "tool_result" : (only used when adapter wants to round-trip a tool result back)
     """
     kind: str

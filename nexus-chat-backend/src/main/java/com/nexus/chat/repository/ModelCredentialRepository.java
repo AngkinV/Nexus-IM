@@ -25,5 +25,8 @@ public interface ModelCredentialRepository extends JpaRepository<ModelCredential
 
     Optional<ModelCredential> findFirstByUserIdAndPurposeAndIsDefaultTrue(Long userId, String purpose);
 
+    /** Any chat credential, default first — used when nothing is marked default. */
+    Optional<ModelCredential> findFirstByUserIdAndPurposeOrderByIsDefaultDescUpdatedAtDesc(Long userId, String purpose);
+
     Optional<ModelCredential> findByIdAndUserId(Long id, Long userId);
 }

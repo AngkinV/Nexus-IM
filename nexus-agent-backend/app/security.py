@@ -34,6 +34,25 @@ def _hmac_sha256_hex(secret: str, content: str) -> str:
     return hmac.new(secret.encode("utf-8"), content.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+# Nonces already accepted, mapped to their expiry (ms). A valid signature alone
+# is replayable within the timestamp skew window, so each nonce may be used
+# once. Entries are only recorded AFTER signature verification passes —
+# unauthenticated traffic cannot grow the cache. Single-process by design
+# (uvicorn runs one worker); a multi-worker deployment must move this to Redis.
+_seen_nonces: dict[str, int] = {}
+
+
+def _accept_nonce(nonce: str, now_ms: int, window_ms: int) -> bool:
+    """Record the nonce; return False if it was already seen within the window."""
+    expired = [n for n, expiry in _seen_nonces.items() if expiry <= now_ms]
+    for n in expired:
+        del _seen_nonces[n]
+    if nonce in _seen_nonces:
+        return False
+    _seen_nonces[nonce] = now_ms + window_ms
+    return True
+
+
 async def verify_internal_signature(
     request: Request,
     x_internal_service: str = Header(..., alias="X-Internal-Service"),
@@ -78,6 +97,9 @@ async def verify_internal_signature(
     expected = _hmac_sha256_hex(settings.internal_signing_secret, sig_input)
     if not hmac.compare_digest(expected, x_internal_signature):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"code": "AGENT_AUTHZ_40301", "message": "bad signature"})
+
+    if not _accept_nonce(x_internal_nonce, now_ms, settings.nonce_skew_ms):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"code": "AGENT_AUTHZ_40301", "message": "replayed nonce"})
 
     api_key_plain: str | None = None
     if x_model_api_key:

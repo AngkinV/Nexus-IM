@@ -47,9 +47,25 @@ public class CompanionRole {
     @Column(name = "is_active", nullable = false)
     private Boolean active = true;
 
+    /**
+     * Whether this character lives here or was met once.
+     * regular = 常驻 (the "home" side), guest = 过客 (came back from one evening).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "kind", length = 20)
+    private Kind kind = Kind.regular;
+
+    /** The session this guest was adopted from. Null for regulars. */
+    @Column(name = "origin_session_id")
+    private Long originSessionId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    public enum Kind {
+        regular, guest
+    }
 
     @UpdateTimestamp
     @Column(name = "updated_at")

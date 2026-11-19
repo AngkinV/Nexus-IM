@@ -52,7 +52,14 @@ const { locale } = useI18n()
 
 const props = defineProps({
   activeRole: Object,
-  status: Object
+  status: Object,
+  // Bond figures from the server. They colour the face and the breathing rate:
+  // a closer bond reads as a softer, more settled presence. Null means "no
+  // data yet", and then nothing is assumed.
+  growth: Object,
+  // 'idle' | 'listening' | 'warm' | 'charged' — derived from what is being said
+  // in the tavern. Optional; without it the model follows `status` alone.
+  mood: { type: String, default: '' }
 })
 
 const emit = defineEmits(['open'])
@@ -994,6 +1001,47 @@ const updateMouth = (time) => {
   setExpressionValue(mouthExpression, value)
 }
 
+// ── Mood layer ───────────────────────────────────────────────────────────────
+// Bond and mood bend the face and the tempo, on top of whatever `status` is
+// doing. Two inputs, one continuous blend, so nothing snaps between poses.
+const MOOD_FACE = {
+  idle: { relaxed: 0.35, happy: 0.1 },
+  listening: { relaxed: 0.5, happy: 0.15 },
+  warm: { relaxed: 0.3, happy: 0.55 },
+  charged: { surprised: 0.3, happy: 0.3 }
+}
+
+// 0..1 how settled the bond is, from the real growth figures. Every stat is
+// optional; the mean is taken over whatever the server actually returned.
+const bondLevel = computed(() => {
+  const g = props.growth
+  if (!g) return null
+  const values = [g.intimacy, g.trust, g.stability, g.coGrowth]
+    .filter((v) => typeof v === 'number' && Number.isFinite(v))
+  if (!values.length) return null
+  return values.reduce((sum, v) => sum + v, 0) / values.length / 100
+})
+
+const faceTargets = {}
+const updateFace = (time) => {
+  const level = bondLevel.value
+  const mood = MOOD_FACE[props.mood] || MOOD_FACE.idle
+  // No growth data → keep the face neutral-but-present, not blank.
+  const warm = level == null ? 0 : level
+  const targets = {
+    relaxed: mood.relaxed + warm * 0.35,
+    happy: mood.happy + warm * 0.5,
+    surprised: mood.surprised || 0
+  }
+  // A slow breath makes the smile come and go instead of freezing at one value.
+  const pulse = 0.06 * Math.sin(time * 0.7)
+  for (const [name, target] of Object.entries(targets)) {
+    const clamped = Math.max(0, Math.min(1, target + pulse))
+    faceTargets[name] = (faceTargets[name] ?? 0) + (clamped - (faceTargets[name] ?? 0)) * 0.02
+    if (faceTargets[name] > 0.001) setExpressionValue(name, faceTargets[name])
+  }
+}
+
 const updateProceduralMotion = (time) => {
   if (!modelRoot || reducedMotion) return
   if (availableClips.length && currentAction) return
@@ -1014,7 +1062,10 @@ const updateProceduralMotion = (time) => {
   const motion = motionMap[statusType] || motionMap.resting
   updateGaze(time)
 
-  const breath = Math.sin(time * 1.6) * 0.02
+  // A settled bond breathes slower and deeper; a charged exchange speeds it up.
+  const bond = bondLevel.value ?? 0.3
+  const moodRate = props.mood === 'charged' ? 2.2 : props.mood === 'warm' ? 1.35 : 1.6
+  const breath = Math.sin(time * (moodRate - bond * 0.25)) * (0.016 + bond * 0.012)
   const bob = Math.sin(time * 2.4) * motion.bob
   const sway = Math.sin(time * 1.2) * motion.sway
   const headYaw = Math.sin(time * 1.1) * motion.headYaw + gazeState.yaw
@@ -1082,6 +1133,7 @@ const render = () => {
   if (vrm) vrm.update(delta)
   updateBlink(elapsed)
   updateMouth(elapsed)
+  updateFace(elapsed)
   updateProceduralMotion(elapsed)
   updateWalkMovement(delta)
   renderer.render(scene, camera)

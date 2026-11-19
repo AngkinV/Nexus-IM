@@ -660,7 +660,8 @@ const goToProfile = () => router.push('/profile')
   width: 6px;
   height: 6px;
   border-radius: 9999px;
-  background: #34d399;
+  /* Monochrome only: this is an unread marker, not a status colour. */
+  background: #ffffff;
   box-shadow: 0 0 0 2px #09090b;
   opacity: 0;
   transform: scale(0.4);

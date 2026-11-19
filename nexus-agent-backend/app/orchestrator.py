@@ -20,7 +20,7 @@ from typing import Any, AsyncIterator
 
 from .config import get_settings
 from .knowledge.qa import build_kb_context
-from .llm import LLMChunk, ProviderConfig, build_client
+from .llm import ProviderConfig, build_client
 from .memory import get_memory
 from .mock import mock_answer
 from .prompts import build_messages
@@ -151,6 +151,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
     structured: dict[str, Any] = {}
 
     cfg = _resolve_provider_config(provider)
+    finish_reason = "stop"
 
     if cfg is None:
         # ----- Mock pathway (no provider, no API key) -----
@@ -182,6 +183,8 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
                            totalTokens=320 + max(8, len(final_answer)))
     else:
         # ----- Real LLM pathway via abstraction layer -----
+        # Text deltas are emitted live inside _run_real_loop; the answer here
+        # is exactly the concatenation of what was streamed.
         async for ev in _run_real_loop(request, base_messages, cfg):
             if ev.name != "__loop__":
                 yield ev
@@ -190,18 +193,19 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
             final_answer = ev.data["answer"]
             tool_calls_summary = ev.data["toolCalls"]
             structured = ev.data["structured"]
-        if final_answer:
-            yield Event("delta", {"text": final_answer})
+            finish_reason = ev.data["finishReason"]
 
     yield Event("usage", usage.model_dump())
     memory.append(request.actor.userId, request.session.sessionId, "user", request.input.text)
-    if final_answer:
+    # Failure/timeout placeholders and partial output must not pollute memory:
+    # only a cleanly finished turn is remembered.
+    if final_answer and finish_reason == "stop":
         memory.append(request.actor.userId, request.session.sessionId, "assistant", final_answer)
 
     # Module A: persist this exchange as a long-term semantic memory chunk.
     # Fire-and-forget so the SSE `done` event isn't blocked by the embedding call;
     # errors are already swallowed inside memory_rag.write.
-    if settings.memory_rag_enabled and final_answer and request.input.text:
+    if settings.memory_rag_enabled and final_answer and request.input.text and finish_reason == "stop":
         task = asyncio.create_task(memory_rag.write(
             request.actor.userId,
             request.session.sessionId,
@@ -213,14 +217,14 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
         _pending_rag_writes.add(task)
         task.add_done_callback(_pending_rag_writes.discard)
 
-    yield Event("done", {"finishReason": "stop"})
+    yield Event("done", {"finishReason": finish_reason})
 
     yield Event("__final__", {
         "result": InvokeResult(
             answer=final_answer,
             toolCalls=tool_calls_summary,
             usage=usage,
-            finishReason="stop",
+            finishReason=finish_reason,
             todos=structured.get("todos"),
             draft=structured.get("draft"),
             alternatives=structured.get("alternatives"),
@@ -235,10 +239,11 @@ async def _run_real_loop(
 ) -> AsyncIterator[Event]:
     """Run the agent loop against a real LLM provider.
 
-    Yields `stage` / `reasoning` / `tool_call` / `tool_result` events the moment
-    they happen, so the SSE stream shows the turn progressing instead of going
-    silent until the answer is ready. The last event is the internal `__loop__`
-    record carrying (usage, answer, toolCalls, structured) for the caller.
+    Text deltas are yielded live as the model streams; `stage` / `reasoning` /
+    `tool_call` / `tool_result` / `error` events fire the moment they happen.
+    The last event is the internal `__loop__` record carrying
+    (usage, answer, toolCalls, structured, finishReason) for the caller.
+    `answer` is exactly the concatenation of every streamed text delta.
     """
     settings = get_settings()
     client = build_client(cfg)
@@ -246,7 +251,8 @@ async def _run_real_loop(
     messages = list(base_messages)
     usage_in = 0
     usage_out = 0
-    final_answer = ""
+    streamed_parts: list[str] = []
+    finish_reason = "stop"
     structured: dict[str, Any] = {}
     tool_calls_summary: list[ToolCallSummary] = []
     forced = _operation_required_tool(request.session.operationType)
@@ -255,7 +261,12 @@ async def _run_real_loop(
         for iteration in range(min(request.options.maxIterations, settings.max_iterations)):
             tool_choice = "required" if (iteration == 0 and forced) else "auto"
             saw_tool_call = False
+            # Reset per iteration: adapters may omit the finish chunk, and a
+            # stale "tool_calls" from the previous turn must not leak into the
+            # final result (it gates memory writes).
+            finish_reason = "stop"
             iteration_text_parts: list[str] = []
+            iteration_tool_calls: list = []
 
             yield Event("stage", {
                 "phase": "model",
@@ -265,7 +276,8 @@ async def _run_real_loop(
                 "model": cfg.model,
             })
             call_started = time.monotonic()
-            chunks: list[LLMChunk] = []
+            iteration_in = 0
+            iteration_out = 0
             try:
                 async for chunk in client.complete(
                     messages,
@@ -275,55 +287,49 @@ async def _run_real_loop(
                     max_tokens=min(request.options.maxOutputTokens, settings.max_output_tokens),
                     timeout_sec=settings.model_timeout_sec,
                 ):
-                    chunks.append(chunk)
+                    if chunk.kind == "text" and chunk.text:
+                        iteration_text_parts.append(chunk.text)
+                        streamed_parts.append(chunk.text)
+                        yield Event("delta", {"text": chunk.text})
+                    elif chunk.kind == "reasoning" and chunk.text:
+                        yield Event("reasoning", {"iteration": iteration + 1, "text": chunk.text})
+                    elif chunk.kind == "tool_call" and chunk.tool_call:
+                        saw_tool_call = True
+                        iteration_tool_calls.append(chunk.tool_call)
+                    elif chunk.kind == "usage" and chunk.usage:
+                        iteration_in += chunk.usage.input_tokens
+                        iteration_out += chunk.usage.output_tokens
+                    elif chunk.kind == "error":
+                        yield Event("error", {
+                            "code": "AGENT_MODEL_50202",
+                            "message": (chunk.text or "model call failed")[:200],
+                        })
+                    elif chunk.kind == "finish":
+                        finish_reason = chunk.finish_reason or "stop"
             except Exception as exc:
                 log.warning("LLM client failed: %s", exc)
-                final_answer = f"（模型调用失败：{exc}）"
-                yield Event("stage", {
-                    "phase": "model",
-                    "status": "failed",
-                    "iteration": iteration + 1,
-                    "ms": int((time.monotonic() - call_started) * 1000),
-                })
-                break
-
-            iteration_in = 0
-            iteration_out = 0
-            requested_tools = 0
-            finish_reason = None
-            for chunk in chunks:
-                if chunk.kind == "text" and chunk.text:
-                    iteration_text_parts.append(chunk.text)
-                elif chunk.kind == "reasoning" and chunk.text:
-                    yield Event("reasoning", {"iteration": iteration + 1, "text": chunk.text})
-                elif chunk.kind == "tool_call" and chunk.tool_call:
-                    saw_tool_call = True
-                    requested_tools += 1
-                elif chunk.kind == "usage" and chunk.usage:
-                    iteration_in += chunk.usage.input_tokens
-                    iteration_out += chunk.usage.output_tokens
-                elif chunk.kind == "finish":
-                    finish_reason = chunk.finish_reason
+                yield Event("error", {"code": "AGENT_MODEL_50202", "message": str(exc)[:200]})
+                finish_reason = "error"
             usage_in += iteration_in
             usage_out += iteration_out
             yield Event("stage", {
                 "phase": "model",
-                "status": "done",
+                "status": "failed" if finish_reason in ("error", "timeout") else "done",
                 "iteration": iteration + 1,
                 "ms": int((time.monotonic() - call_started) * 1000),
                 "inputTokens": iteration_in,
                 "outputTokens": iteration_out,
-                "toolCalls": requested_tools,
+                "toolCalls": len(iteration_tool_calls),
                 "finishReason": finish_reason,
             })
+
+            if finish_reason in ("error", "timeout"):
+                break
 
             if saw_tool_call:
                 # Append the assistant turn (with tool_calls) to history for the next iteration
                 tool_calls_for_history = []
-                for chunk in chunks:
-                    if chunk.kind != "tool_call" or not chunk.tool_call:
-                        continue
-                    tc = chunk.tool_call
+                for tc in iteration_tool_calls:
                     tool_calls_for_history.append({
                         "id": tc.id,
                         "type": "function",
@@ -335,10 +341,7 @@ async def _run_real_loop(
                     "tool_calls": tool_calls_for_history,
                 })
 
-                for chunk in chunks:
-                    if chunk.kind != "tool_call" or not chunk.tool_call:
-                        continue
-                    tc = chunk.tool_call
+                for tc in iteration_tool_calls:
                     yield Event("tool_call", {"toolName": tc.name, "args": tc.arguments})
                     try:
                         payload, latency = await ex.execute(tc.name, tc.arguments)
@@ -361,20 +364,23 @@ async def _run_real_loop(
                         })
                 continue
 
-            # No tool calls - this is the final answer
-            final_answer = "".join(iteration_text_parts)
-            structured = _parse_structured(request.session.operationType, final_answer)
+            # No tool calls — everything streamed so far is the final answer
+            structured = _parse_structured(request.session.operationType, "".join(streamed_parts))
             break
         else:
-            if not final_answer:
-                final_answer = "（已达到最大工具调用轮数，返回当前已知信息）"
+            finish_reason = "max_iterations"
+            if not streamed_parts:
+                note = "（已达到最大工具调用轮数，返回当前已知信息）"
+                streamed_parts.append(note)
+                yield Event("delta", {"text": note})
 
     usage = TokenUsage(inputTokens=usage_in, outputTokens=usage_out, totalTokens=usage_in + usage_out)
     yield Event("__loop__", {
         "usage": usage,
-        "answer": final_answer,
+        "answer": "".join(streamed_parts),
         "toolCalls": tool_calls_summary,
         "structured": structured,
+        "finishReason": finish_reason,
     })
 
 

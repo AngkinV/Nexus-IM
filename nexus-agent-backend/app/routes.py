@@ -77,11 +77,18 @@ async def invoke(request: InvokeRequest, ctx: dict = Depends(verify_internal_sig
 
     runner = _resolve_engine()
     final: dict | None = None
+    error_message: str | None = None
     async for event in runner(request, provider=ctx.get("provider")):
         if event.name == "__final__":
             final = event.data["result"]
+        elif event.name == "error":
+            error_message = event.data.get("message") or "model call failed"
     if final is None:
         final = InvokeResult(answer="", usage=TokenUsage()).model_dump()
+    if error_message and not final.get("answer"):
+        # Display-only note for the non-streaming caller; engines never
+        # persist error text to memory. Partial streamed text is kept as-is.
+        final["answer"] = f"（模型调用失败：{error_message}）"
     return InvokeResponse(traceId=request.traceId, result=InvokeResult(**final))
 
 
