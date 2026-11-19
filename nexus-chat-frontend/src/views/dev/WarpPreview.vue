@@ -5,7 +5,7 @@
   -->
   <div class="wp">
     <header class="wp-bar">
-      <span class="wp-brand">Prism</span>
+      <span class="wp-brand">Nexus</span>
       <span class="wp-crumb">Workspace › Creator's Eye warp</span>
       <span class="wp-state" data-testid="warp-phase">phase: {{ state.phase }}</span>
     </header>
