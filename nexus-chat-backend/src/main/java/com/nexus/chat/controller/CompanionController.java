@@ -19,6 +19,9 @@ import java.util.Map;
 public class CompanionController {
 
     private final CompanionService companionService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     @PostMapping("/roles/init")
     public ResponseEntity<List<CompanionRoleDTO>> initRoles(@RequestParam(name = "userId", required = false) Long claimedUserId) {
@@ -77,11 +80,103 @@ public class CompanionController {
         try {
             Long roleId = Long.valueOf(request.get("roleId").toString());
             String content = request.get("content") == null ? "" : request.get("content").toString();
-            return ResponseEntity.ok(companionService.sendMessage(userId, roleId, content));
+            String sceneKey = request.get("sceneKey") == null ? null : request.get("sceneKey").toString();
+            return ResponseEntity.ok(companionService.sendMessage(userId, roleId, content, sceneKey));
         } catch (Exception e) {
             log.error("Send companion message failed", e);
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    /**
+     * Streaming chat. Mirrors /api/agent's stream endpoint: written straight onto
+     * the response stream, with one `data:` event per delta and a final `done`
+     * carrying the persisted messages so the client can settle on server state.
+     */
+    @PostMapping(value = "/messages/stream", produces = "text/event-stream")
+    public void sendMessageStream(
+            @RequestBody Map<String, Object> request,
+            @RequestParam(name = "userId", required = false) Long claimedUserId,
+            jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        Long userId = CurrentUser.require(claimedUserId);
+        Object roleIdRaw = request.get("roleId");
+        Object contentRaw = request.get("content");
+        if (roleIdRaw == null || contentRaw == null) {
+            response.setStatus(400);
+            return;
+        }
+        Long roleId = Long.valueOf(roleIdRaw.toString());
+        String content = contentRaw.toString();
+        Object sceneRaw = request.get("sceneKey");
+        String sceneKey = sceneRaw == null ? null : sceneRaw.toString();
+
+        response.setStatus(200);
+        response.setContentType("text/event-stream;charset=UTF-8");
+        response.setHeader("Cache-Control", "no-cache, no-transform");
+        response.setHeader("Connection", "keep-alive");
+        response.setHeader("X-Accel-Buffering", "no");
+
+        java.io.PrintWriter writer = response.getWriter();
+        java.util.concurrent.atomic.AtomicBoolean open = new java.util.concurrent.atomic.AtomicBoolean(true);
+        try {
+            CompanionChatResponse result = companionService.sendMessageStreaming(userId, roleId, content, sceneKey, piece -> {
+                if (!open.get()) return;
+                try {
+                    writer.write("event: delta\ndata: " + escapeJson(piece) + "\n\n");
+                    writer.flush();
+                } catch (Exception e) {
+                    open.set(false);
+                }
+            });
+            if (open.get()) {
+                writer.write("event: done\ndata: " + objectMapper.writeValueAsString(result) + "\n\n");
+                writer.flush();
+            }
+        } catch (Exception e) {
+            log.error("Companion stream failed", e);
+            if (open.get()) {
+                writer.write("event: error\ndata: " + escapeJson(e.getMessage() == null ? "failed" : e.getMessage()) + "\n\n");
+                writer.flush();
+            }
+        }
+    }
+
+    private static Double asDouble(Object value) {
+        if (value == null) return null;
+        try {
+            return Double.valueOf(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Integer asInt(Object value) {
+        if (value == null) return null;
+        try {
+            return Integer.valueOf(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Minimal JSON string escaping for a single SSE payload. */
+    private static String escapeJson(String value) {
+        StringBuilder out = new StringBuilder(value.length() + 16);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
+                    else out.append(c);
+                }
+            }
+        }
+        return "\"" + out + "\"";
     }
 
     @GetMapping("/memories")
@@ -150,6 +245,57 @@ public class CompanionController {
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("Clear memories failed", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * Her inner monologue, generated on demand. Called only when the user opens
+     * the whisper layer — it is a model call, so it must not run on page load.
+     */
+    @PostMapping("/inner-voice/{roleId}")
+    public ResponseEntity<CompanionInnerVoiceDTO> innerVoice(
+            @PathVariable Long roleId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
+        try {
+            return ResponseEntity.ok(companionService.generateInnerVoice(userId, roleId));
+        } catch (Exception e) {
+            log.error("Inner voice failed", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * What the tavern is wired to, and which piece is missing when it is not.
+     * No model call — safe to poll from the settings panel.
+     */
+    @GetMapping("/model-status/{roleId}")
+    public ResponseEntity<Map<String, Object>> modelStatus(
+            @PathVariable Long roleId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
+        try {
+            return ResponseEntity.ok(companionService.describeModel(userId, roleId));
+        } catch (Exception e) {
+            log.error("Describe model failed", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * Probe the model channel with one tiny request, so "cannot reach the model"
+     * stops being a guess. Returns ok / the provider's own error text.
+     */
+    @PostMapping("/model-test/{roleId}")
+    public ResponseEntity<Map<String, Object>> modelTest(
+            @PathVariable Long roleId,
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        Long userId = CurrentUser.require(claimedUserId);
+        try {
+            return ResponseEntity.ok(companionService.testModelChannel(userId, roleId));
+        } catch (Exception e) {
+            log.error("Model test failed", e);
             return ResponseEntity.badRequest().build();
         }
     }
@@ -237,7 +383,11 @@ public class CompanionController {
             String provider = request.get("provider") != null ? request.get("provider").toString() : "openai-compatible";
             String modelName = request.get("modelName") != null ? request.get("modelName").toString() : null;
             String endpoint = request.get("endpoint") != null ? request.get("endpoint").toString() : null;
-            return ResponseEntity.ok(companionService.bindModel(userId, roleId, provider, modelName, endpoint));
+            return ResponseEntity.ok(companionService.bindModel(
+                    userId, roleId, provider, modelName, endpoint,
+                    asDouble(request.get("temperature")),
+                    asInt(request.get("personaLock")),
+                    asInt(request.get("contextHorizon"))));
         } catch (Exception e) {
             log.error("Bind model failed", e);
             return ResponseEntity.badRequest().build();

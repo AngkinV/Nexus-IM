@@ -7,4 +7,5 @@ import java.util.Optional;
 
 public interface CompanionModelBindingRepository extends JpaRepository<CompanionModelBinding, Long> {
     Optional<CompanionModelBinding> findByUserIdAndRoleId(Long userId, Long roleId);
+    Optional<CompanionModelBinding> findFirstByUserIdAndEnabledTrue(Long userId);
 }

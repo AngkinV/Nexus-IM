@@ -28,6 +28,16 @@ public class CompanionFallbackService {
         return "我在的。你可以继续说，我会认真听。";
     }
 
+    /**
+     * The line used when the evening closes without a model to write one.
+     * Plain, in character, and never pretending to summarise a conversation it
+     * did not read.
+     */
+    public String generateFarewell(CompanionRole role) {
+        String name = role != null && role.getName() != null ? role.getName() : "她";
+        return name + "把杯子收了回去，朝你点了点头。「路上小心。」";
+    }
+
     public CompanionStatus.StatusType pickStatus(LocalDateTime now) {
         int hour = now.getHour();
         if (hour >= 6 && hour < 9) return CompanionStatus.StatusType.writing;

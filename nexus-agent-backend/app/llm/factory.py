@@ -5,9 +5,12 @@ from .base import LLMClient, ProviderConfig
 from .openai_like import OpenAILikeClient
 
 # Provider names that ship with built-in OpenAI-compatible defaults if base_url is omitted.
+# When a request comes through the Java gateway, X-Model-Base-URL is already
+# normalized by com.nexus.chat.util.ModelUrls (versioned OpenAI-compatible root);
+# these defaults only apply to direct/local invocations without that header.
 OPENAI_COMPATIBLE_DEFAULT_BASE_URLS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
-    "deepseek": "https://api.deepseek.com",
+    "deepseek": "https://api.deepseek.com/v1",
     "moonshot": "https://api.moonshot.cn/v1",
     "zhipu": "https://open.bigmodel.cn/api/paas/v4",
     "tongyi": "https://dashscope.aliyuncs.com/compatible-mode/v1",

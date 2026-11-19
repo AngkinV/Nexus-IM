@@ -38,6 +38,14 @@ public class CompanionMessage {
     @Column(name = "is_fallback", nullable = false)
     private Boolean fallback = false;
 
+    /**
+     * Which tavern session this message belongs to. Null for everything written
+     * before sessions existed — those still render, they just belong to no
+     * particular evening.
+     */
+    @Column(name = "session_id")
+    private Long sessionId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

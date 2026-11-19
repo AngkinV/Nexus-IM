@@ -6,8 +6,8 @@ import com.nexus.chat.model.agent.AgentLongMemory;
 import com.nexus.chat.model.agent.AgentMemoryAudit;
 import com.nexus.chat.repository.agent.AgentLongMemoryRepository;
 import com.nexus.chat.repository.agent.AgentMemoryAuditRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -18,15 +18,27 @@ import java.util.Map;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AgentMemoryService {
 
     private static final Duration SHORT_TTL = Duration.ofDays(7);
 
+    // This template is pinned to the Redis DB the Python agent writes to, not the
+    // app's default one. See AgentMemoryRedisConfig.
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final AgentLongMemoryRepository longMemoryRepository;
     private final AgentMemoryAuditRepository memoryAuditRepository;
+
+    public AgentMemoryService(
+            @Qualifier("agentMemoryRedisTemplate") StringRedisTemplate redisTemplate,
+            ObjectMapper objectMapper,
+            AgentLongMemoryRepository longMemoryRepository,
+            AgentMemoryAuditRepository memoryAuditRepository) {
+        this.redisTemplate = redisTemplate;
+        this.objectMapper = objectMapper;
+        this.longMemoryRepository = longMemoryRepository;
+        this.memoryAuditRepository = memoryAuditRepository;
+    }
 
     public void appendShortTermMessage(Long userId, String sessionId, String role, String content) {
         String key = "agent:ctx:" + userId + ":" + sessionId + ":messages";

@@ -30,11 +30,19 @@ class GeminiClient(LLMClient):
         try:
             import google.generativeai as genai
         except ImportError:
-            yield LLMChunk(kind="text", text="（未安装 google-generativeai，请运行 pip install google-generativeai）")
+            yield LLMChunk(kind="error", text="未安装 google-generativeai，请运行 pip install google-generativeai")
             yield LLMChunk(kind="finish", finish_reason="error")
             return
 
-        genai.configure(api_key=self.cfg.api_key)
+        # cfg.base_url (normalized to the API root by the Java gateway) must be
+        # honored, otherwise a proxy endpoint silently falls back to Google.
+        if self.cfg.base_url:
+            genai.configure(
+                api_key=self.cfg.api_key,
+                client_options={"api_endpoint": self.cfg.base_url},
+            )
+        else:
+            genai.configure(api_key=self.cfg.api_key)
 
         # Translate messages → Gemini's "contents" + system_instruction
         system_text = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
@@ -87,12 +95,12 @@ class GeminiClient(LLMClient):
                 timeout=timeout_sec,
             )
         except asyncio.TimeoutError:
-            yield LLMChunk(kind="text", text="（模型调用超时）")
+            yield LLMChunk(kind="error", text=f"model call timeout after {timeout_sec}s")
             yield LLMChunk(kind="finish", finish_reason="timeout")
             return
         except Exception as exc:
             log.warning("gemini call failed: %s", exc)
-            yield LLMChunk(kind="text", text=f"（Gemini 调用失败：{exc}）")
+            yield LLMChunk(kind="error", text=f"Gemini 调用失败：{exc}")
             yield LLMChunk(kind="finish", finish_reason="error")
             return
 

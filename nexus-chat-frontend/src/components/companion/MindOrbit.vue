@@ -60,7 +60,9 @@
     <Transition name="orbit-fold">
       <div v-if="whisperOpen" class="orbit-whisper">
         <div class="orbit-quote-block">
-          <p class="orbit-quote">{{ whisperQuote }}</p>
+          <p v-if="whisperLoading" class="orbit-quote is-loading">{{ $t('companion.orbit.whisperLoading') }}</p>
+          <p v-else class="orbit-quote">{{ whisperQuote }}</p>
+          <p v-if="whisperUnavailable" class="orbit-note">{{ $t('companion.orbit.whisperUnavailable') }}</p>
           <div class="orbit-meta">
             <span class="orbit-meta-freq">
               <span class="material-symbols-outlined">neurology</span>
@@ -88,16 +90,20 @@ const props = defineProps({
   sending: { type: Boolean, default: false },
   /** Real figures from the server. Missing values render as a dash, never a guess. */
   intimacy: { type: Number, default: null },
-  trust: { type: Number, default: null },
   statusType: { type: String, default: '' },
   statusSummary: { type: String, default: '' },
   /** Latest memory fragment: { id, content }. */
   memory: { type: Object, default: null },
   /** The character's most recent reply, used as the whisper body while no model
    *  is configured to write an inner monologue. It is her own words, not ours. */
-  lastRoleReply: { type: String, default: '' }
+  lastRoleReply: { type: String, default: '' },
+  /** Async loader for the real monologue. Called the first time the whisper
+   *  layer opens, never on mount — it costs a model call. Resolves to
+   *  { text, generated } or null. */
+  loadWhisper: { type: Function, default: null }
 })
 
+const emit = defineEmits(['mood'])
 const { t } = useI18n()
 
 // ── CPS: keystroke density over the last two seconds ─────────────────────────
@@ -131,8 +137,6 @@ function recompute() {
   const span = (keyTimes[keyTimes.length - 1] - keyTimes[0]) / 1000
   cps.value = span <= 0.05 ? keyTimes.length : keyTimes.length / Math.max(span, 0.5)
 }
-
-defineExpose({ noteKeystroke })
 
 onUnmounted(() => clearTimeout(decayTimer))
 
@@ -170,6 +174,20 @@ const themeVars = computed(() => {
     '--orbit-text-shadow': theme.shadow
   }
 })
+
+// The same branch that drives the light drives the companion's face, so the two
+// cannot drift apart. Declared after `themeKey` on purpose: an immediate watcher
+// here would read a binding that is still in its temporal dead zone.
+const mood = computed(() => {
+  if (themeKey.value === 'fast') return 'charged'
+  if (themeKey.value === 'action') return 'warm'
+  if (themeKey.value === 'deliberate') return 'listening'
+  return 'idle'
+})
+
+watch(mood, (value) => emit('mood', value), { immediate: true })
+
+defineExpose({ noteKeystroke, mood })
 
 // ── Wave bars: height and cadence scale with CPS ─────────────────────────────
 const waves = computed(() => {
@@ -214,7 +232,39 @@ const whisperFragment = computed(() =>
     : t('companion.orbit.fragEmpty')
 )
 
-const whisperQuote = computed(() => props.lastRoleReply || t('companion.orbit.quoteEmpty'))
+// The model-written monologue wins when it exists. Until it arrives — or when
+// no model is configured — her own last reply stands in, clearly labelled.
+const whisperText = ref(null)
+const whisperLoading = ref(false)
+const whisperUnavailable = ref(false)
+let whisperRequested = false
+
+const whisperQuote = computed(
+  () => whisperText.value || props.lastRoleReply || t('companion.orbit.quoteEmpty')
+)
+
+async function loadWhisperOnce() {
+  if (whisperRequested || !props.loadWhisper) return
+  whisperRequested = true
+  whisperLoading.value = true
+  try {
+    const result = await props.loadWhisper()
+    if (result?.generated && result.text) {
+      whisperText.value = result.text
+      whisperUnavailable.value = false
+    } else {
+      whisperUnavailable.value = true
+    }
+  } catch {
+    whisperUnavailable.value = true
+  } finally {
+    whisperLoading.value = false
+  }
+}
+
+watch(whisperOpen, (open) => {
+  if (open) loadWhisperOnce()
+})
 
 // Leaving the field with an empty composer drops straight back to idle.
 watch(
@@ -462,6 +512,17 @@ watch(
   line-height: 1.75;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.orbit-quote.is-loading {
+  color: rgba(142, 145, 146, 0.8);
+}
+
+.orbit-note {
+  margin: 4px 0 0;
+  color: rgba(142, 145, 146, 0.7);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
 }
 
 .orbit-meta {

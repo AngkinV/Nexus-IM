@@ -86,7 +86,7 @@ void main() {
  * Mount the stage into `container` and return a teardown function.
  * @param {HTMLElement} container positioned element that sizes the stage
  */
-export function mountAbyssStage(container) {
+export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   // ── Layer 1: glyph-ring shader ──────────────────────────────────────────────
   const shaderCanvas = document.createElement('canvas')
   shaderCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:0.5;pointer-events:none'
@@ -206,7 +206,7 @@ export function mountAbyssStage(container) {
   let frame = 0
   const animate = () => {
     frame = requestAnimationFrame(animate)
-    if (!container.clientWidth || document.hidden) return
+    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
     const time = clock.getElapsedTime()
 
     gl.uniform1f(uTime, time)
@@ -243,5 +243,67 @@ export function mountAbyssStage(container) {
     renderer.domElement.remove()
     gl.getExtension('WEBGL_lose_context')?.loseContext()
     shaderCanvas.remove()
+  }
+}
+
+export function mountMiniHologram(container, { shouldRender = () => true } = {}) {
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 20)
+  camera.position.z = 2.8
+
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setClearColor(0x000000, 0)
+  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%'
+  container.appendChild(renderer.domElement)
+
+  const group = new THREE.Group()
+  const head = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(0.82, 1)),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
+  )
+  const ring = new THREE.LineSegments(
+    new THREE.WireframeGeometry(new THREE.TorusGeometry(1.08, 0.015, 6, 32)),
+    new THREE.LineBasicMaterial({ color: 0xc4c7c8, transparent: true, opacity: 0.42 })
+  )
+  ring.rotation.x = Math.PI * 0.36
+  group.add(head, ring)
+  scene.add(group)
+
+  const resize = () => {
+    const width = container.clientWidth
+    const height = container.clientHeight
+    if (!width || !height) return
+    renderer.setSize(width, height, false)
+    camera.aspect = width / height
+    camera.updateProjectionMatrix()
+  }
+  const resizeObserver = new ResizeObserver(resize)
+  resizeObserver.observe(container)
+  resize()
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const clock = new THREE.Clock()
+  let frame = 0
+  const animate = () => {
+    frame = requestAnimationFrame(animate)
+    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
+    const time = reducedMotion ? 0 : clock.getElapsedTime()
+    group.rotation.y = time * 0.55
+    group.rotation.x = 0.2 + Math.sin(time * 0.7) * 0.08
+    ring.rotation.z = time * 0.35
+    renderer.render(scene, camera)
+  }
+  animate()
+
+  return () => {
+    cancelAnimationFrame(frame)
+    resizeObserver.disconnect()
+    scene.traverse((node) => {
+      node.geometry?.dispose()
+      node.material?.dispose()
+    })
+    renderer.dispose()
+    renderer.domElement.remove()
   }
 }

@@ -124,6 +124,16 @@ async def retrieve(
     if store is None:
         return []
 
+    # An empty collection cannot match anything, and asking costs an embedding
+    # round trip (~2s) on every single turn. Once memory has been written this
+    # is a no-op; before then it saves the wait.
+    try:
+        if await asyncio.to_thread(store._collection.count) == 0:
+            return []
+    except Exception:
+        # Counting is an optimisation, never a reason to skip retrieval.
+        pass
+
     try:
         results = await asyncio.to_thread(
             store.similarity_search,

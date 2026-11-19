@@ -12,6 +12,7 @@
           class="panel-middle"
           @back="closeRoleChat"
           @go-ai="openAiAssistant"
+          @mood="tavernMood = $event"
         />
         <MiddlePanel
           v-else
@@ -29,6 +30,8 @@
       v-if="companionStore.petVisible"
       :active-role="companionStore.activeRole"
       :status="companionStore.status"
+      :growth="companionStore.growth"
+      :mood="tavernMood"
       @open="openRoleChat"
     />
 
@@ -121,8 +124,32 @@ const showRightPanel = ref(false)
 // there is exactly one way in and one source of truth for "where am I".
 const openRoleChat = () => setActiveView('companion')
 
-const closeRoleChat = () => setActiveView('chats')
+// ── Going back, one level ────────────────────────────────────────────────────
+// The back arrow in the tavern is a step out of a room, not a jump to the front
+// door. Where you were before you walked in is remembered and restored; falling
+// back to the chat list only when there is nothing to return to (a cold start
+// straight into the tavern, e.g. from a deep link).
+const viewBeforeTavern = ref(null)
+// The conversation that was open when the user walked into the tavern. Entering
+// clears the active chat (the tavern draws its own canvas), so without this the
+// chat list comes back with nothing selected.
+const chatBeforeTavern = ref(null)
+
+const closeRoleChat = () => {
+  const previous = viewBeforeTavern.value
+  const previousChat = chatBeforeTavern.value
+  viewBeforeTavern.value = null
+  chatBeforeTavern.value = null
+  const target = previous && previous !== 'companion' ? previous : 'chats'
+  setActiveView(target)
+  // Restore the conversation the user was reading, once the shell is back.
+  if (previousChat && target === 'chats') chatStore.setActiveChat(previousChat)
+}
 const paletteOpen = ref(false)
+
+// What the tavern's mind orbit reads right now. The desktop pet's face follows
+// it, so the character on screen and the character in the pet agree.
+const tavernMood = ref('idle')
 
 // Active left-nav view, driven by the NavRail and consumed by the LeftPanel.
 const activeView = ref('chats')
@@ -140,8 +167,18 @@ const applyActiveView = (view) => {
 }
 
 const setActiveView = (view) => {
-  if (view === 'companion') enterTavern(() => applyActiveView('companion'))
-  else applyActiveView(view)
+  if (view === 'companion') {
+    // Remember where we came from, so the back arrow can return there. Only the
+    // first step in counts: navigating around inside the tavern must not
+    // overwrite the place we are eventually returning to.
+    if (activeView.value !== 'companion') {
+      viewBeforeTavern.value = activeView.value
+      chatBeforeTavern.value = chatStore.activeChat || null
+    }
+    enterTavern(() => applyActiveView('companion'))
+    return
+  }
+  applyActiveView(view)
 }
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.

@@ -54,7 +54,7 @@ public class AgentGatewayService {
     @Value("${agent.python.connect-timeout-ms:3000}")
     private long connectTimeoutMs;
 
-    @Value("${agent.python.read-timeout-ms:30000}")
+    @Value("${agent.python.read-timeout-ms:120000}")
     private long readTimeoutMs;
 
     private RestTemplate restTemplate;

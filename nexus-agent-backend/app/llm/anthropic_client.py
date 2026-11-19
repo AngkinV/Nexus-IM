@@ -32,7 +32,7 @@ class AnthropicClient(LLMClient):
         try:
             from anthropic import AsyncAnthropic
         except ImportError:
-            yield LLMChunk(kind="text", text="（未安装 anthropic SDK，请运行 pip install anthropic）")
+            yield LLMChunk(kind="error", text="未安装 anthropic SDK，请运行 pip install anthropic")
             yield LLMChunk(kind="finish", finish_reason="error")
             return
 
@@ -85,12 +85,12 @@ class AnthropicClient(LLMClient):
                 timeout=timeout_sec,
             )
         except asyncio.TimeoutError:
-            yield LLMChunk(kind="text", text="（模型调用超时）")
+            yield LLMChunk(kind="error", text=f"model call timeout after {timeout_sec}s")
             yield LLMChunk(kind="finish", finish_reason="timeout")
             return
         except Exception as exc:
             log.warning("anthropic call failed: %s", exc)
-            yield LLMChunk(kind="text", text=f"（Claude 调用失败：{exc}）")
+            yield LLMChunk(kind="error", text=f"Claude 调用失败：{exc}")
             yield LLMChunk(kind="finish", finish_reason="error")
             return
 

@@ -32,7 +32,7 @@ from langgraph.graph import END, StateGraph
 from .config import get_settings
 from .knowledge.qa import build_kb_context
 from .langchain_tools import convert_langchain_tools_to_openai
-from .llm import LLMChunk, ProviderConfig, build_client
+from .llm import ProviderConfig, build_client
 from .memory import get_memory
 from .mock import mock_answer
 from .orchestrator import (
@@ -68,6 +68,7 @@ class AgentState(TypedDict, total=False):
     structured: dict[str, Any]
     usage_in: int
     usage_out: int
+    finish_reason: str
     tool_calls_summary: Annotated[list[ToolCallSummary], operator.add]
     side_events: Annotated[list[Event], operator.add]
 
@@ -117,7 +118,12 @@ async def reason_node(state: AgentState) -> dict[str, Any]:
         state["actor_user_id"], state["trace_id"],
     )
 
-    chunks: list[LLMChunk] = []
+    text_parts: list[str] = []
+    raw_tool_calls: list[dict[str, Any]] = []
+    usage_in = 0
+    usage_out = 0
+    error_message: str | None = None
+    finish_reason = "stop"
     try:
         async for chunk in client.complete(
             state["messages"],
@@ -130,39 +136,49 @@ async def reason_node(state: AgentState) -> dict[str, Any]:
             ),
             timeout_sec=settings.model_timeout_sec,
         ):
-            chunks.append(chunk)
+            if chunk.kind == "text" and chunk.text:
+                text_parts.append(chunk.text)
+            elif chunk.kind == "tool_call" and chunk.tool_call:
+                raw_tool_calls.append({
+                    "id": chunk.tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": chunk.tool_call.name,
+                        "arguments": json.dumps(chunk.tool_call.arguments),
+                    },
+                })
+            elif chunk.kind == "usage" and chunk.usage:
+                usage_in += chunk.usage.input_tokens
+                usage_out += chunk.usage.output_tokens
+            elif chunk.kind == "error":
+                error_message = chunk.text or "model call failed"
+            elif chunk.kind == "finish":
+                finish_reason = chunk.finish_reason or "stop"
     except Exception as exc:
         log.warning("LLM client failed in langgraph engine: %s", exc)
-        msg = f"（模型调用失败：{exc}）"
-        return {
-            "messages": [{"role": "assistant", "content": msg}],
-            "iteration": iteration + 1,
-            "final_answer": msg,
-        }
-
-    text_parts: list[str] = []
-    raw_tool_calls: list[dict[str, Any]] = []
-    usage_in = 0
-    usage_out = 0
-    for chunk in chunks:
-        if chunk.kind == "text" and chunk.text:
-            text_parts.append(chunk.text)
-        elif chunk.kind == "tool_call" and chunk.tool_call:
-            raw_tool_calls.append({
-                "id": chunk.tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": chunk.tool_call.name,
-                    "arguments": json.dumps(chunk.tool_call.arguments),
-                },
-            })
-        elif chunk.kind == "usage" and chunk.usage:
-            usage_in += chunk.usage.input_tokens
-            usage_out += chunk.usage.output_tokens
+        error_message = str(exc)
+        finish_reason = "error"
 
     text = "".join(text_parts)
 
-    if raw_tool_calls:
+    if error_message is not None:
+        # Display-only error event. Any partial text is kept as the answer,
+        # but the failed finish_reason keeps it out of memory. No assistant
+        # message is appended, so the route function ends the graph.
+        return {
+            "messages": [],
+            "iteration": iteration + 1,
+            "final_answer": text,
+            "structured": _parse_structured(state["request"].session.operationType, text) if text else {},
+            "usage_in": state.get("usage_in", 0) + usage_in,
+            "usage_out": state.get("usage_out", 0) + usage_out,
+            "finish_reason": "error",
+            "side_events": [Event("error", {
+                "code": "AGENT_MODEL_50202", "message": error_message[:200],
+            })],
+        }
+
+    if raw_tool_calls and finish_reason != "timeout":
         # Loop continues. Emit tool_call side-events now so the SSE stream
         # surfaces them before the (slower) tool execution in tool_node.
         side_events: list[Event] = []
@@ -180,10 +196,11 @@ async def reason_node(state: AgentState) -> dict[str, Any]:
             "iteration": iteration + 1,
             "usage_in": state.get("usage_in", 0) + usage_in,
             "usage_out": state.get("usage_out", 0) + usage_out,
+            "finish_reason": "tool_calls",
             "side_events": side_events,
         }
 
-    # Final assistant answer.
+    # Final assistant answer (possibly partial on timeout).
     structured = _parse_structured(state["request"].session.operationType, text)
     return {
         "messages": [{"role": "assistant", "content": text}],
@@ -192,6 +209,7 @@ async def reason_node(state: AgentState) -> dict[str, Any]:
         "structured": structured,
         "usage_in": state.get("usage_in", 0) + usage_in,
         "usage_out": state.get("usage_out", 0) + usage_out,
+        "finish_reason": finish_reason,
     }
 
 
@@ -401,6 +419,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
         "structured": {},
         "usage_in": 0,
         "usage_out": 0,
+        "finish_reason": "stop",
         "tool_calls_summary": [],
         "side_events": [],
         "request": request,
@@ -430,8 +449,13 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
         yield Event("error", {"code": "AGENT_SYS_50001", "message": str(exc)[:200]})
         return
 
+    finish_reason = final_state.get("finish_reason") or "stop"
+    if finish_reason not in ("stop", "timeout", "error"):
+        # e.g. "tool_calls" left over when the iteration cap cut the loop.
+        finish_reason = "max_iterations"
+
     final_answer = final_state.get("final_answer") or ""
-    if not final_answer:
+    if not final_answer and finish_reason == "max_iterations":
         # Hard-cap reached without a clean answer — keep parity with the
         # handcrafted engine's for-else fallback.
         final_answer = "（已达到最大工具调用轮数，返回当前已知信息）"
@@ -447,9 +471,10 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
 
     # Persist the turn to short-term + long-term memory, same as the
     # handcrafted path. Memory writes are fire-and-forget so the SSE
-    # `done` event isn't blocked on the embedding call.
+    # `done` event isn't blocked on the embedding call. Failed/timed-out
+    # turns (including partial output) are never remembered.
     memory.append(request.actor.userId, request.session.sessionId, "user", request.input.text)
-    if final_answer:
+    if final_answer and finish_reason == "stop":
         memory.append(request.actor.userId, request.session.sessionId, "assistant", final_answer)
         if settings.memory_rag_enabled and request.input.text:
             task = asyncio.create_task(memory_rag.write(
@@ -463,7 +488,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
             _pending_rag_writes.add(task)
             task.add_done_callback(_pending_rag_writes.discard)
 
-    yield Event("done", {"finishReason": "stop"})
+    yield Event("done", {"finishReason": finish_reason})
 
     structured = final_state.get("structured") or {}
     yield Event("__final__", {
@@ -471,7 +496,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
             answer=final_answer,
             toolCalls=list(final_state.get("tool_calls_summary") or []),
             usage=usage,
-            finishReason="stop",
+            finishReason=finish_reason,
             todos=structured.get("todos"),
             draft=structured.get("draft"),
             alternatives=structured.get("alternatives"),
