@@ -37,6 +37,30 @@
           <el-switch v-model="notifications" />
         </div>
 
+        <!-- Desktop pet: the only switch that actually frees resources when off -->
+        <div class="setting-item">
+          <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
+            <el-icon color="white"><UserFilled /></el-icon>
+          </div>
+          <div class="setting-text">
+            <span>{{ $t('settings.desktopPet') }}</span>
+            <span class="setting-hint">{{ $t('settings.desktopPetHint') }}</span>
+          </div>
+          <el-switch
+            :model-value="companionStore.petVisible"
+            @update:model-value="companionStore.setPetVisible"
+          />
+        </div>
+
+        <!-- Companion role + 3D model (moved out of the floating companion panel) -->
+        <div class="setting-item" @click="showRoleDialog = true">
+          <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
+            <el-icon color="white"><UserFilled /></el-icon>
+          </div>
+          <span>{{ $t('settings.roleAndModel') }}</span>
+          <el-icon class="arrow"><ArrowRight /></el-icon>
+        </div>
+
         <!-- Privacy and Security -->
         <div class="setting-item" @click="showPrivacyDialog = true">
           <div class="setting-icon" style="background: rgba(255, 255, 255, 0.08)">
@@ -66,6 +90,18 @@
         </div>
       </div>
     </div>
+
+    <!-- Role & Model Dialog -->
+    <el-dialog
+      v-model="showRoleDialog"
+      :title="$t('settings.roleAndModel')"
+      width="560px"
+      :close-on-click-modal="false"
+      append-to-body
+      class="role-settings-dialog"
+    >
+      <RoleSettingsPanel />
+    </el-dialog>
 
     <!-- Privacy Settings Dialog -->
     <el-dialog
@@ -185,7 +221,9 @@ import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { userAPI } from '@/services/api'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ArrowRight, Bell, Lock, SwitchButton, Refresh, Loading, CircleCheck } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Bell, Lock, SwitchButton, Refresh, Loading, CircleCheck, UserFilled } from '@element-plus/icons-vue'
+import RoleSettingsPanel from '@/components/companion/RoleSettingsPanel.vue'
+import { useCompanionStore } from '@/stores/companion'
 
 // Globe icon for language using Vue's h() function
 const Globe = {
@@ -208,8 +246,10 @@ const Globe = {
 const router = useRouter()
 const { locale, t } = useI18n()
 const userStore = useUserStore()
+const companionStore = useCompanionStore()
 const notifications = ref(true)
 const showPrivacyDialog = ref(false)
+const showRoleDialog = ref(false)
 
 // Update checking
 const showUpdateDialog = ref(false)
@@ -398,6 +438,18 @@ const downloadUpdate = () => {
 
 .setting-item:hover {
   background: #222225;
+}
+.setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.setting-hint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8e9192;
 }
 
 .setting-icon {

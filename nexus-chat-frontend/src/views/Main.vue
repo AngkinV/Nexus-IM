@@ -7,7 +7,14 @@
       <TopBar @open-command="openPalette" />
       <div class="shell-panes">
         <LeftPanel class="panel-left" />
+        <RoleChatView
+          v-if="activeView === 'companion'"
+          class="panel-middle"
+          @back="closeRoleChat"
+          @go-ai="openAiAssistant"
+        />
         <MiddlePanel
+          v-else
           class="panel-middle"
           :class="{ 'mobile-active': isMobile && chatStore.activeChat }"
           @open-new-chat="handleOpenNewChat"
@@ -16,13 +23,14 @@
       </div>
     </div>
 
-    <!-- Companion 3D avatar + panel -->
+    <!-- Desktop pet. v-if, not v-show: turning it off must release the WebGL
+         context and the loaded VRM, not just hide them. -->
     <CompanionAvatar3D
+      v-if="companionStore.petVisible"
       :active-role="companionStore.activeRole"
       :status="companionStore.status"
-      @open="showCompanion = true"
+      @open="openRoleChat"
     />
-    <CompanionPanel v-model="showCompanion" />
 
     <!-- Prism c5: ⌘K command palette (global, overlays whatever is beneath). -->
     <CommandPalette v-model="paletteOpen" @action="handlePaletteAction" />
@@ -57,7 +65,7 @@ import OutgoingCallModal from '@/components/call/OutgoingCallModal.vue'
 import CallView from '@/components/call/CallView.vue'
 import CallEndModal from '@/components/call/CallEndModal.vue'
 import CompanionAvatar3D from '@/components/companion/CompanionAvatar3D.vue'
-import CompanionPanel from '@/components/companion/CompanionPanel.vue'
+import RoleChatView from '@/views/companion/RoleChatView.vue'
 import CommandPalette from '@/components/layout/CommandPalette.vue'
 import CreatorEyeWarp from '@/components/warp/CreatorEyeWarp.vue'
 import { useCreatorWarp, WARP_PHASE } from '@/composables/useCreatorWarp'
@@ -81,47 +89,85 @@ const companionStore = useCompanionStore()
 const agentStore = useAgentStore()
 const creatorWarp = useCreatorWarp()
 
+// ── Dual collapse (design: 200px<->64px dock, 320px<->44px blade) ───────────
+// [ toggles the global rail, ] toggles the message-list blade. Both live here so
+// the top bar / chat header can render their restore affordances.
+const NAV_COLLAPSE_KEY = 'prism.navCollapsed'
+const LIST_COLLAPSE_KEY = 'prism.listCollapsed'
+
+const navCollapsed = ref(localStorage.getItem(NAV_COLLAPSE_KEY) === '1')
+const listCollapsed = ref(localStorage.getItem(LIST_COLLAPSE_KEY) === '1')
+
+const toggleNav = () => {
+  navCollapsed.value = !navCollapsed.value
+  localStorage.setItem(NAV_COLLAPSE_KEY, navCollapsed.value ? '1' : '0')
+}
+const toggleList = () => {
+  listCollapsed.value = !listCollapsed.value
+  localStorage.setItem(LIST_COLLAPSE_KEY, listCollapsed.value ? '1' : '0')
+}
+
+// One keystroke into a clean canvas: collapse both, or restore both.
+const toggleCinematic = () => {
+  const collapsing = !(navCollapsed.value && listCollapsed.value)
+  navCollapsed.value = collapsing
+  listCollapsed.value = collapsing
+  localStorage.setItem(NAV_COLLAPSE_KEY, collapsing ? '1' : '0')
+  localStorage.setItem(LIST_COLLAPSE_KEY, collapsing ? '1' : '0')
+}
+
 const showRightPanel = ref(false)
-const showCompanion = ref(false)
+// The on-screen companion is a shortcut into the same place the nav goes, so
+// there is exactly one way in and one source of truth for "where am I".
+const openRoleChat = () => setActiveView('companion')
+
+const closeRoleChat = () => setActiveView('chats')
 const paletteOpen = ref(false)
 
 // Active left-nav view, driven by the NavRail and consumed by the LeftPanel.
 const activeView = ref('chats')
 const applyActiveView = (view) => {
   activeView.value = view
-  // The AI section is a single canvas: opening it shows the assistant right away.
-  // On phones the session list stays in front until one is picked.
+  // The companion and the AI section are both single canvases: entering either
+  // one must clear a chat that would otherwise render underneath it.
+  if (view === 'companion') {
+    chatStore.clearActiveChat()
+    return
+  }
+  // On phones the AI session list stays in front until one is picked.
   if (view !== 'ai' || isMobile.value) return
   chatStore.setActiveChat(chatStore.sortedChats.find((c) => c.id === 'ai-assistant'))
 }
 
 const setActiveView = (view) => {
-  if (view === 'ai') enterAi(() => applyActiveView('ai'))
+  if (view === 'companion') enterTavern(() => applyActiveView('companion'))
   else applyActiveView(view)
 }
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
 const isAiChat = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
 
-// ── Entering the AI section ──────────────────────────────────────────────────
-// Every way into AI goes through here. Coming from outside, the Creator's Eye plays
-// first and `commit` (the caller's own way of opening AI) only runs once the user
-// confirms on the arrival stage; ESC backs out and nothing changes. Already inside
-// AI, `commit` runs straight away.
-let enteringAi = false
-const enterAi = (commit) => {
-  if (enteringAi || activeView.value === 'ai' || isAiChat.value) {
+// ── Entering the tavern ──────────────────────────────────────────────────────
+// The Creator's Eye announces a tavern and a character, so it guards the place
+// where characters actually are: the companion roles. The AI assistant is a
+// work tool and opens directly. Coming from outside, the warp plays first and
+// `commit` only runs once the user confirms on the arrival stage; ESC backs out
+// and nothing changes. Already inside, `commit` runs straight away.
+let enteringTavern = false
+const enterTavern = (commit) => {
+  if (enteringTavern || activeView.value === 'companion') {
     commit()
     return
   }
   if (creatorWarp.state.phase !== WARP_PHASE.IDLE) return
   creatorWarp.trigger({
+    target: companionStore.activeRole?.name,
     onEnter: () => {
-      enteringAi = true
+      enteringTavern = true
       try {
         commit()
       } finally {
-        enteringAi = false
+        enteringTavern = false
       }
     }
   })
@@ -152,11 +198,11 @@ const openPalette = () => {
   paletteOpen.value = true
 }
 
-const openAiAssistant = () => enterAi(() => {
+const openAiAssistant = () => {
   activeView.value = 'ai'
   // AI 助手是 sortedChats 里的虚拟条目，不在 chats 数组里
   chatStore.setActiveChat(chatStore.sortedChats.find((c) => c.id === 'ai-assistant'))
-})
+}
 
 const markAllRead = () => {
   ;(chatStore.chats || []).forEach((c) => { c.unreadCount = 0 })
@@ -195,6 +241,9 @@ const handlePaletteAction = (command) => {
     case 'nav-4':
       setActiveView('ai')
       break
+    case 'nav-5':
+      setActiveView('companion')
+      break
     case 'help':
     case 'palette':
       paletteOpen.value = true
@@ -204,8 +253,26 @@ const handlePaletteAction = (command) => {
   }
 }
 
+// Bare [ / ] collapse the rail and the message blade, as in the design.
+const isTypingTarget = (el) =>
+  !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+
+const handleCollapseKey = (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  if (isTypingTarget(event.target)) return
+  if (paletteOpen.value) return
+  if (event.key === '[') {
+    event.preventDefault()
+    toggleNav()
+  } else if (event.key === ']') {
+    event.preventDefault()
+    toggleList()
+  }
+}
+
 // Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
 const handleGlobalKeydown = (event) => {
+  handleCollapseKey(event)
   const mod = event.metaKey || event.ctrlKey
   if (!mod) return
   const key = event.key.toLowerCase()
@@ -231,7 +298,7 @@ const handleGlobalKeydown = (event) => {
   } else if (key === '/') {
     event.preventDefault()
     paletteOpen.value = true
-  } else if (['1', '2', '3', '4'].includes(key)) {
+  } else if (['1', '2', '3', '4', '5'].includes(key)) {
     event.preventDefault()
     handlePaletteAction(`nav-${key}`)
   }
@@ -246,8 +313,12 @@ provide('showRightPanel', showRightPanel)
 provide('isMobile', isMobile)
 provide('activeView', activeView)
 provide('setActiveView', setActiveView)
-provide('enterAi', enterAi)
 provide('openPalette', openPalette)
+provide('navCollapsed', navCollapsed)
+provide('toggleNav', toggleNav)
+provide('listCollapsed', listCollapsed)
+provide('toggleList', toggleList)
+provide('toggleCinematic', toggleCinematic)
 
 // A tiny event counter used by the standby screen to ask the left pane to open
 // its create-group dialog (the dialog instance lives inside LeftPanel).
@@ -395,15 +466,10 @@ onUnmounted(() => {
   z-index: 11;
 }
 
+/* The blade owns its own 320px <-> 44px width (see LeftPanel). */
 .panel-left {
-  width: 320px;
-  min-width: 280px;
-  max-width: 380px;
-  border-right: 1px solid rgba(68, 71, 72, 0.2);
+  flex-shrink: 0;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #0e0e11;
   z-index: 10;
   position: relative;
 }
@@ -438,11 +504,6 @@ onUnmounted(() => {
 /* Dark Mode */
 /* Tablet breakpoint */
 @media (max-width: 1024px) {
-  .panel-left {
-    width: 300px;
-    min-width: 260px;
-  }
-
   .panel-right {
     width: 280px;
     min-width: 260px;
@@ -458,12 +519,9 @@ onUnmounted(() => {
   .panel-left {
     position: relative;
     flex: 1;
-    width: auto;
-    max-width: none;
-    min-width: 0;
     height: 100%;
     z-index: 10;
-    border-right: none;
+    min-width: 0;
   }
 
   .panel-middle {

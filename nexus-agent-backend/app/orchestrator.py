@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import time
 from typing import Any, AsyncIterator
 
 from .config import get_settings
@@ -36,7 +37,7 @@ _pending_rag_writes: set[asyncio.Task] = set()
 
 @dataclasses.dataclass
 class Event:
-    name: str  # meta | tool_call | tool_result | delta | usage | done | error
+    name: str  # meta | stage | reasoning | tool_call | tool_result | delta | usage | done | error
     data: dict[str, Any]
 
 
@@ -81,6 +82,15 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
     finally to the mock pathway.
     """
     settings = get_settings()
+    # Announce the turn before any retrieval so the client can show progress
+    # while the memory / knowledge lookups are still running.
+    yield Event("meta", {
+        "traceId": request.traceId,
+        "sessionId": request.session.sessionId,
+        "operationType": request.session.operationType,
+    })
+
+    context_started = time.monotonic()
     memory = get_memory()
     short_term = memory.recent(request.actor.userId, request.session.sessionId)
     long_term: list[dict[str, Any]] = []  # filled by Java side via memory_context if needed
@@ -104,6 +114,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
     # second-line guardrail so a forged kbId from another tenant returns
     # zero hits even if it slipped past the Java ownership check.
     kb_context: str = ""
+    kb_chunks: int | None = None
     linked_kb_id = getattr(request.session, "linkedKbId", None)
     if settings.knowledge_rag_enabled and linked_kb_id and request.input.text:
         try:
@@ -114,6 +125,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
                 provider=provider,
             )
             kb_context = build_kb_context(chunks)
+            kb_chunks = len(chunks)
         except Exception:
             log.exception("knowledge rag retrieve failed; degrading without kb context")
 
@@ -123,11 +135,15 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
         kb_context=kb_context,
     )
 
-    yield Event("meta", {
-        "traceId": request.traceId,
-        "sessionId": request.session.sessionId,
-        "operationType": request.session.operationType,
+    yield Event("stage", {
+        "phase": "context",
+        "shortTerm": len(short_term),
+        "recalled": len(relevant_history),
+        "ms": int((time.monotonic() - context_started) * 1000),
     })
+    if linked_kb_id:
+        # chunks is None when retrieval was skipped or failed and the turn degraded.
+        yield Event("stage", {"phase": "knowledge", "kbId": linked_kb_id, "chunks": kb_chunks})
 
     tool_calls_summary: list[ToolCallSummary] = []
     tool_payloads: list[dict[str, Any]] = []
@@ -138,6 +154,7 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
 
     if cfg is None:
         # ----- Mock pathway (no provider, no API key) -----
+        yield Event("stage", {"phase": "mock"})
         forced = _operation_required_tool(request.session.operationType)
         if forced and request.input.chatId is not None:
             async with ToolExecutor(request.actor.userId, request.traceId) as ex:
@@ -165,11 +182,14 @@ async def run_agent(request: InvokeRequest, provider: dict | None = None) -> Asy
                            totalTokens=320 + max(8, len(final_answer)))
     else:
         # ----- Real LLM pathway via abstraction layer -----
-        usage, final_answer, tool_calls_summary, structured, real_events = await _run_real_loop(
-            request, base_messages, cfg
-        )
-        for ev in real_events:
-            yield ev
+        async for ev in _run_real_loop(request, base_messages, cfg):
+            if ev.name != "__loop__":
+                yield ev
+                continue
+            usage = ev.data["usage"]
+            final_answer = ev.data["answer"]
+            tool_calls_summary = ev.data["toolCalls"]
+            structured = ev.data["structured"]
         if final_answer:
             yield Event("delta", {"text": final_answer})
 
@@ -212,13 +232,13 @@ async def _run_real_loop(
     request: InvokeRequest,
     base_messages: list[dict[str, Any]],
     cfg: ProviderConfig,
-) -> tuple[TokenUsage, str, list[ToolCallSummary], dict[str, Any], list[Event]]:
+) -> AsyncIterator[Event]:
     """Run the agent loop against a real LLM provider.
 
-    Returns:
-      (usage, final_answer, tool_call_summaries, structured_payload, side_events)
-      where `side_events` are tool_call/tool_result events to forward to the SSE stream
-      *before* the final delta.
+    Yields `stage` / `reasoning` / `tool_call` / `tool_result` events the moment
+    they happen, so the SSE stream shows the turn progressing instead of going
+    silent until the answer is ready. The last event is the internal `__loop__`
+    record carrying (usage, answer, toolCalls, structured) for the caller.
     """
     settings = get_settings()
     client = build_client(cfg)
@@ -229,7 +249,6 @@ async def _run_real_loop(
     final_answer = ""
     structured: dict[str, Any] = {}
     tool_calls_summary: list[ToolCallSummary] = []
-    side_events: list[Event] = []
     forced = _operation_required_tool(request.session.operationType)
 
     async with ToolExecutor(request.actor.userId, request.traceId) as ex:
@@ -238,6 +257,14 @@ async def _run_real_loop(
             saw_tool_call = False
             iteration_text_parts: list[str] = []
 
+            yield Event("stage", {
+                "phase": "model",
+                "status": "start",
+                "iteration": iteration + 1,
+                "provider": cfg.name,
+                "model": cfg.model,
+            })
+            call_started = time.monotonic()
             chunks: list[LLMChunk] = []
             try:
                 async for chunk in client.complete(
@@ -252,16 +279,43 @@ async def _run_real_loop(
             except Exception as exc:
                 log.warning("LLM client failed: %s", exc)
                 final_answer = f"（模型调用失败：{exc}）"
+                yield Event("stage", {
+                    "phase": "model",
+                    "status": "failed",
+                    "iteration": iteration + 1,
+                    "ms": int((time.monotonic() - call_started) * 1000),
+                })
                 break
 
+            iteration_in = 0
+            iteration_out = 0
+            requested_tools = 0
+            finish_reason = None
             for chunk in chunks:
                 if chunk.kind == "text" and chunk.text:
                     iteration_text_parts.append(chunk.text)
+                elif chunk.kind == "reasoning" and chunk.text:
+                    yield Event("reasoning", {"iteration": iteration + 1, "text": chunk.text})
                 elif chunk.kind == "tool_call" and chunk.tool_call:
                     saw_tool_call = True
+                    requested_tools += 1
                 elif chunk.kind == "usage" and chunk.usage:
-                    usage_in += chunk.usage.input_tokens
-                    usage_out += chunk.usage.output_tokens
+                    iteration_in += chunk.usage.input_tokens
+                    iteration_out += chunk.usage.output_tokens
+                elif chunk.kind == "finish":
+                    finish_reason = chunk.finish_reason
+            usage_in += iteration_in
+            usage_out += iteration_out
+            yield Event("stage", {
+                "phase": "model",
+                "status": "done",
+                "iteration": iteration + 1,
+                "ms": int((time.monotonic() - call_started) * 1000),
+                "inputTokens": iteration_in,
+                "outputTokens": iteration_out,
+                "toolCalls": requested_tools,
+                "finishReason": finish_reason,
+            })
 
             if saw_tool_call:
                 # Append the assistant turn (with tool_calls) to history for the next iteration
@@ -285,11 +339,11 @@ async def _run_real_loop(
                     if chunk.kind != "tool_call" or not chunk.tool_call:
                         continue
                     tc = chunk.tool_call
-                    side_events.append(Event("tool_call", {"toolName": tc.name, "args": tc.arguments}))
+                    yield Event("tool_call", {"toolName": tc.name, "args": tc.arguments})
                     try:
                         payload, latency = await ex.execute(tc.name, tc.arguments)
                         tool_calls_summary.append(ToolCallSummary(toolName=tc.name, status="SUCCESS", latencyMs=latency))
-                        side_events.append(Event("tool_result", {"toolName": tc.name, "status": "SUCCESS", "latencyMs": latency}))
+                        yield Event("tool_result", {"toolName": tc.name, "status": "SUCCESS", "latencyMs": latency})
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -298,7 +352,7 @@ async def _run_real_loop(
                         })
                     except ToolError as exc:
                         tool_calls_summary.append(ToolCallSummary(toolName=tc.name, status="FAILED", latencyMs=0, error=str(exc)))
-                        side_events.append(Event("tool_result", {"toolName": tc.name, "status": "FAILED", "error": str(exc)}))
+                        yield Event("tool_result", {"toolName": tc.name, "status": "FAILED", "error": str(exc)})
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -316,7 +370,12 @@ async def _run_real_loop(
                 final_answer = "（已达到最大工具调用轮数，返回当前已知信息）"
 
     usage = TokenUsage(inputTokens=usage_in, outputTokens=usage_out, totalTokens=usage_in + usage_out)
-    return usage, final_answer, tool_calls_summary, structured, side_events
+    yield Event("__loop__", {
+        "usage": usage,
+        "answer": final_answer,
+        "toolCalls": tool_calls_summary,
+        "structured": structured,
+    })
 
 
 def _parse_structured(op: str, answer: str) -> dict[str, Any]:

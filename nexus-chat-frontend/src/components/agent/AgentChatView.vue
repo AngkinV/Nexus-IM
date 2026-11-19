@@ -1,6 +1,6 @@
 <template>
-  <!-- Prism AI canvas: header with model switcher, holographic stage,
-       message stream, floating composer dock. -->
+  <!-- Prism AI canvas: header with model switcher, abyssal stage, message stream
+       with a live process terminal per answer, floating composer dock. -->
   <section class="agent-chat-view flex-1 flex flex-col h-full min-h-0 bg-surface relative overflow-hidden">
     <div
       class="absolute inset-0 pointer-events-none opacity-[0.03] bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:24px_24px]"
@@ -30,13 +30,13 @@
               {{ agentStore.activeSession?.title || $t('agent.title') }}
             </h2>
             <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0"></span>
-            <span class="font-code text-label-sm text-on-surface-variant/70 shrink-0">{{ $t('agent.online') }}</span>
+            <span class="hidden lg:inline font-code text-label-sm text-on-surface-variant/70 shrink-0">{{ $t('agent.online') }}</span>
           </div>
           <div class="font-code text-[11px] text-on-surface-variant/60 truncate">{{ $t('agent.subtitle') }}</div>
         </div>
       </div>
 
-      <div class="flex items-center gap-space-sm shrink-0">
+      <div class="flex items-center gap-space-xs lg:gap-space-sm shrink-0">
         <el-dropdown trigger="click" @command="onSelectProvider">
           <button
             class="flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/40 text-primary font-label-md text-label-md hover:bg-surface-container hover:border-outline-variant transition-colors"
@@ -85,12 +85,13 @@
           <span class="material-symbols-outlined text-[18px]">restart_alt</span>
         </button>
         <button
-          class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors"
+          class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           type="button"
-          :title="$t('agent.knowledge.manage')"
-          @click="kbDialogVisible = true"
+          :title="$t('agent.export')"
+          :disabled="!agentStore.hasMessages"
+          @click="onExport"
         >
-          <span class="material-symbols-outlined text-[18px]">folder_open</span>
+          <span class="material-symbols-outlined text-[18px]">ios_share</span>
         </button>
         <button
           class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-low transition-colors"
@@ -106,7 +107,7 @@
     <AgentProviderSettings v-model:visible="providerDialogVisible" />
     <KnowledgeBaseManager v-model:visible="kbDialogVisible" />
 
-    <!-- Holographic stage -->
+    <!-- Abyssal stage -->
     <div class="agent-stage px-space-md md:px-space-xl pt-3 pb-1 shrink-0 z-20 flex justify-center w-full">
       <div
         class="w-full max-w-xl relative rounded-xl border border-outline-variant/40 bg-surface-container-lowest/80 backdrop-blur-md shadow-2xl overflow-hidden"
@@ -123,10 +124,7 @@
         >
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full bg-primary animate-ping opacity-75 shrink-0"></span>
-            <span class="font-headline-md text-[13px] text-primary font-medium tracking-tight truncate">{{ $t('agent.title') }}</span>
-            <span
-              class="hidden sm:inline shrink-0 font-code text-[10px] text-on-surface-variant/70 border border-outline-variant/30 px-1.5 rounded bg-surface-container-lowest"
-            >HOLOGRAPHIC // 3D</span>
+            <span class="font-headline-md text-[13px] text-primary font-medium tracking-tight truncate">{{ $t('agent.title') }} // HOLOGRAPHIC 3D</span>
           </div>
           <div class="flex items-center gap-2 font-code text-[11px] text-on-surface-variant shrink-0">
             <span class="inline-flex items-center gap-1 text-primary">
@@ -138,10 +136,32 @@
           </div>
         </div>
 
-        <div ref="stageHost" class="relative w-full h-[180px] overflow-hidden"></div>
-        <div
-          class="absolute inset-x-0 bottom-0 h-10 pointer-events-none bg-gradient-to-t from-surface-container-lowest to-transparent opacity-80"
-        ></div>
+        <div class="relative w-full h-[180px] overflow-hidden">
+          <div ref="stageHost" class="absolute inset-0"></div>
+          <!-- Corner reticles: each readout is live state, not decoration. -->
+          <div class="absolute top-2 left-2 pointer-events-none z-10 flex items-center gap-1 opacity-70">
+            <div class="w-2.5 h-2.5 border-t border-l border-primary"></div>
+            <span class="font-code text-[9px] text-on-surface-variant/80 tracking-tighter">SID:{{ (agentStore.sessionId || '----').slice(-4).toUpperCase() }}</span>
+          </div>
+          <div class="absolute top-2 right-2 pointer-events-none z-10 flex items-center gap-1 opacity-70">
+            <span class="font-code text-[9px] text-on-surface-variant/80 tracking-tighter">CTX:{{ lastInputTokens }}</span>
+            <div class="w-2.5 h-2.5 border-t border-r border-primary"></div>
+          </div>
+          <div class="absolute bottom-2 left-2 pointer-events-none z-10 flex items-center gap-1 opacity-70">
+            <div class="w-2.5 h-2.5 border-b border-l border-primary"></div>
+            <span class="font-code text-[9px] text-on-surface-variant/80 tracking-tighter">KB:{{ knowledgeStore.activeKbId ? 'LINKED' : 'OFF' }}</span>
+          </div>
+          <div class="absolute bottom-2 right-2 pointer-events-none z-10 flex items-center gap-1 opacity-70">
+            <span class="font-code text-[9px] text-on-surface-variant/80 tracking-tighter">CORE:{{ agentStore.streaming ? 'LIVE' : 'IDLE' }}</span>
+            <div class="w-2.5 h-2.5 border-b border-r border-primary"></div>
+          </div>
+          <div
+            class="absolute inset-x-0 bottom-0 h-10 pointer-events-none bg-gradient-to-t from-surface-container-lowest to-transparent opacity-80"
+          ></div>
+          <div
+            class="absolute inset-x-0 top-0 h-4 pointer-events-none bg-gradient-to-b from-surface-container-lowest/60 to-transparent"
+          ></div>
+        </div>
 
         <div
           class="relative z-10 px-3.5 py-1.5 flex items-center justify-between gap-2 border-t border-outline-variant/20 bg-surface-container-lowest/60 text-on-surface-variant font-code text-[11px]"
@@ -236,40 +256,15 @@
             <div
               class="rounded-xl bg-surface-container-lowest/90 border border-outline-variant/40 p-space-md md:p-space-lg text-on-surface space-y-space-md shadow-lg"
             >
-              <div
-                v-if="msg.toolCalls && msg.toolCalls.length"
-                class="p-space-md rounded-lg bg-surface-container-low/70 border border-outline-variant/30 space-y-2"
-              >
-                <div class="flex items-center gap-2 font-label-md text-label-md text-primary font-medium">
-                  <span class="material-symbols-outlined text-[18px]">build</span>
-                  <span>{{ $t('agent.toolCall') }}</span>
-                </div>
-                <div class="flex flex-wrap gap-1.5 font-code text-[11px]">
-                  <span
-                    v-for="(tc, i) in msg.toolCalls"
-                    :key="i"
-                    class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high border border-outline-variant/30"
-                    :class="['FAILED', 'TIMEOUT'].includes(tc.status) ? 'text-error' : 'text-primary'"
-                  >
-                    <span>{{ tc.toolName }}</span>
-                    <span
-                      v-if="tc.status === 'running'"
-                      class="material-symbols-outlined text-[13px] animate-spin"
-                    >progress_activity</span>
-                    <span v-else-if="tc.latencyMs != null" class="text-on-surface-variant">{{ tc.latencyMs }}ms</span>
-                  </span>
-                </div>
-              </div>
+              <AgentTrace
+                v-if="msg.trace?.length || msg.status === 'streaming'"
+                :trace="msg.trace || []"
+                :live="msg.status === 'streaming'"
+                :elapsed-ms="msg.elapsedMs"
+              />
 
-              <div
-                v-if="msg.status === 'streaming' && !msg.content"
-                class="flex items-center gap-2 font-code text-[12px]"
-              >
-                <span class="material-symbols-outlined text-[16px] animate-spin text-primary">progress_activity</span>
-                <span class="text-on-surface-variant">{{ $t('agent.thinking') }}</span>
-              </div>
               <p
-                v-else
+                v-if="msg.content"
                 class="font-body-lg text-body-lg leading-relaxed whitespace-pre-wrap break-words"
                 :class="msg.status === 'error' ? 'text-error' : 'text-on-surface'"
               >{{ msg.content }}<span v-if="msg.status === 'streaming'" class="caret"></span></p>
@@ -308,14 +303,46 @@
             <div
               class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container border border-outline-variant/30 text-primary font-code text-[11px] shrink-0"
             >
-              <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+              <span class="w-1.5 h-1.5 rounded-full bg-primary" :class="{ 'animate-pulse': agentStore.streaming }"></span>
               <span>{{ $t('agent.contextCount', { n: agentStore.messages.length }) }}</span>
+              <span v-if="lastInputTokens" class="hidden sm:inline text-on-surface-variant">· {{ $t('agent.contextTokens', { n: lastInputTokens }) }}</span>
             </div>
-            <KnowledgeBaseSelector @manage="kbDialogVisible = true" />
+            <!-- One-click prompts: prefill the input, nothing is sent until the user does. -->
+            <button
+              v-for="card in welcomeCards.slice(0, 2)"
+              :key="card.key"
+              class="hidden lg:flex items-center gap-1 px-2 py-0.5 rounded hover:bg-surface-container text-on-surface-variant hover:text-primary font-label-sm text-label-sm transition-colors min-w-0"
+              type="button"
+              :title="card.desc"
+              @click="prefill(card.prompt)"
+            >
+              <span class="material-symbols-outlined text-[14px] shrink-0">{{ card.icon }}</span>
+              <span class="truncate">{{ card.title }}</span>
+            </button>
           </div>
+          <KnowledgeBaseSelector @manage="kbDialogVisible = true" />
         </div>
 
         <div class="flex items-end gap-2">
+          <div class="flex items-center gap-0.5 pb-0.5 text-on-surface-variant">
+            <button
+              class="w-8 h-8 rounded flex items-center justify-center hover:bg-surface-container hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              type="button"
+              :title="$t('agent.history.newConversation')"
+              :disabled="agentStore.streaming"
+              @click="onNewSession"
+            >
+              <span class="material-symbols-outlined text-[18px]">add_comment</span>
+            </button>
+            <button
+              class="w-8 h-8 rounded flex items-center justify-center hover:bg-surface-container hover:text-primary transition-colors"
+              type="button"
+              :title="$t('agent.knowledge.manage')"
+              @click="kbDialogVisible = true"
+            >
+              <span class="material-symbols-outlined text-[18px]">folder_open</span>
+            </button>
+          </div>
           <div class="flex-1 min-w-0">
             <textarea
               ref="inputEl"
@@ -328,6 +355,14 @@
             ></textarea>
           </div>
           <div class="flex items-center gap-1.5 pb-0.5">
+            <button
+              class="w-8 h-8 rounded flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors"
+              type="button"
+              :title="$t('agent.providers.manage')"
+              @click="providerDialogVisible = true"
+            >
+              <span class="material-symbols-outlined text-[18px]">tune</span>
+            </button>
             <button
               v-if="!agentStore.streaming"
               class="group px-4 py-2 rounded-lg bg-primary text-on-primary hover:bg-primary-container active:scale-95 font-label-md text-label-md font-medium flex items-center gap-1.5 transition-all shadow disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100"
@@ -351,9 +386,15 @@
         </div>
       </div>
 
-      <div class="w-full flex items-center justify-center gap-1 mt-2 text-center font-code text-[11px] text-on-surface-variant/60">
-        <span class="material-symbols-outlined text-[13px]">lock</span>
-        <span>{{ $t('agent.inputHint') }}</span>
+      <div class="w-full flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 mt-2 text-center font-code text-[11px] text-on-surface-variant/60">
+        <span class="flex items-center gap-1">
+          <span class="material-symbols-outlined text-[13px]">lock</span>
+          {{ $t('agent.inputHint') }}
+        </span>
+        <span class="hidden sm:inline">·</span>
+        <span class="hidden sm:inline">{{ activeProviderLabel }}</span>
+        <span class="hidden md:inline">·</span>
+        <span class="hidden md:inline text-on-surface">{{ $t('agent.traceHint') }}</span>
       </div>
     </footer>
   </section>
@@ -363,7 +404,6 @@
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
-import * as THREE from 'three'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent'
 import { useAgentProvidersStore } from '@/stores/agentProviders'
@@ -373,6 +413,8 @@ import { useUserStore } from '@/stores/user'
 import AgentProviderSettings from '@/components/agent/AgentProviderSettings.vue'
 import KnowledgeBaseManager from '@/components/agent/KnowledgeBaseManager.vue'
 import KnowledgeBaseSelector from '@/components/agent/KnowledgeBaseSelector.vue'
+import AgentTrace from '@/components/agent/AgentTrace.vue'
+import { mountAbyssStage } from '@/components/agent/abyssStage'
 
 const { t } = useI18n()
 const agentStore = useAgentStore()
@@ -393,23 +435,41 @@ const kbDialogVisible = ref(false)
 const welcomeCards = computed(() => [
   {
     key: 'summary',
+    icon: 'summarize',
     title: t('agent.cards.summary.title'),
     desc: t('agent.cards.summary.desc'),
     prompt: t('agent.examples.summarize')
   },
   {
     key: 'report',
+    icon: 'event_note',
     title: t('agent.cards.report.title'),
     desc: t('agent.cards.report.desc'),
     prompt: t('agent.examples.weeklyReport')
   },
   {
     key: 'reply',
+    icon: 'quickreply',
     title: t('agent.cards.reply.title'),
     desc: t('agent.cards.reply.desc'),
     prompt: t('agent.examples.quickReply')
   }
 ])
+
+// Input tokens of the latest finished turn: how much context the model was
+// actually sent, as reported by the provider.
+const lastInputTokens = computed(() =>
+  agentStore.messages.findLast((m) => m.usage?.inputTokens)?.usage.inputTokens ?? 0
+)
+
+async function onNewSession() {
+  try {
+    await agentStore.newSession()
+    ElMessage.success(t('agent.history.created'))
+  } catch (err) {
+    ElMessage.error(err.message || t('common.failed'))
+  }
+}
 
 const activeProviderLabel = computed(() => {
   const p = providersStore.providers.find(x => x.id === agentStore.activeProviderId)
@@ -435,137 +495,13 @@ onMounted(async () => {
   // Track whether the user is currently parked near the bottom. This drives
   // the sticky-bottom auto-scroll below.
   scrollEl.value?.addEventListener('scroll', onUserScroll, { passive: true })
-  mountStage()
+  stageTeardown = mountAbyssStage(stageHost.value)
 })
 
 onUnmounted(() => {
   scrollEl.value?.removeEventListener('scroll', onUserScroll)
   stageTeardown?.()
 })
-
-// Holographic stage: a wireframe bust that breathes and follows the cursor.
-function mountStage() {
-  const container = stageHost.value
-  const width = container.clientWidth || 360
-  const height = container.clientHeight || 180
-
-  const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100)
-  camera.position.set(0, 0, 5.2)
-
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
-  renderer.setSize(width, height)
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  container.appendChild(renderer.domElement)
-
-  const figure = new THREE.Group()
-  scene.add(figure)
-
-  const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65 })
-  const dimLineMaterial = new THREE.LineBasicMaterial({ color: 0x8e9192, transparent: true, opacity: 0.35 })
-
-  const headGeometry = new THREE.IcosahedronGeometry(0.72, 2)
-  const head = new THREE.LineSegments(new THREE.WireframeGeometry(headGeometry), lineMaterial)
-  head.position.set(0, 0.55, 0)
-  figure.add(head)
-
-  const headPoints = new THREE.Points(
-    headGeometry,
-    new THREE.PointsMaterial({ color: 0xffffff, size: 0.035, transparent: true, opacity: 0.75 })
-  )
-  headPoints.position.set(0, 0.55, 0)
-  headPoints.scale.set(0.96, 0.96, 0.96)
-  figure.add(headPoints)
-
-  const halo = new THREE.LineSegments(
-    new THREE.WireframeGeometry(new THREE.TorusGeometry(1.05, 0.008, 16, 64)),
-    dimLineMaterial
-  )
-  halo.position.set(0, 0.55, -0.2)
-  halo.rotation.x = Math.PI * 0.1
-  figure.add(halo)
-
-  const neck = new THREE.LineSegments(
-    new THREE.WireframeGeometry(new THREE.CylinderGeometry(0.24, 0.32, 0.45, 12, 2, true)),
-    dimLineMaterial
-  )
-  neck.position.set(0, -0.05, 0)
-  figure.add(neck)
-
-  const cloakGeometry = new THREE.ConeGeometry(1.45, 1.1, 16, 4, true)
-  cloakGeometry.scale(1.2, 0.9, 0.7)
-  const cloak = new THREE.LineSegments(new THREE.WireframeGeometry(cloakGeometry), lineMaterial)
-  cloak.position.set(0, -0.75, 0)
-  cloak.rotation.y = Math.PI
-  figure.add(cloak)
-
-  const dustPositions = new Float32Array(120 * 3)
-  for (let i = 0; i < 120; i++) {
-    dustPositions[i * 3] = (Math.random() - 0.5) * 4.5
-    dustPositions[i * 3 + 1] = (Math.random() - 0.5) * 3.5
-    dustPositions[i * 3 + 2] = (Math.random() - 0.5) * 2.5
-  }
-  const dustGeometry = new THREE.BufferGeometry()
-  dustGeometry.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3))
-  const dust = new THREE.Points(
-    dustGeometry,
-    new THREE.PointsMaterial({ color: 0xc4c7c8, size: 0.02, transparent: true, opacity: 0.5 })
-  )
-  scene.add(dust)
-
-  let mouseX = 0
-  let mouseY = 0
-  let targetX = 0
-  let targetY = 0
-  const onMouseMove = (event) => {
-    const rect = container.getBoundingClientRect()
-    // Hidden on short windows: a zero-size rect would turn the gaze into Infinity.
-    if (!rect.width) return
-    targetX = (((event.clientX - rect.left) / rect.width) * 2 - 1) * 0.45
-    targetY = -(((event.clientY - rect.top) / rect.height) * 2 - 1) * 0.35
-  }
-  window.addEventListener('mousemove', onMouseMove)
-
-  const resizeObserver = new ResizeObserver(() => {
-    const w = container.clientWidth
-    const h = container.clientHeight
-    if (!w || !h) return
-    camera.aspect = w / h
-    camera.updateProjectionMatrix()
-    renderer.setSize(w, h)
-  })
-  resizeObserver.observe(container)
-
-  const clock = new THREE.Clock()
-  let frame = 0
-  const animate = () => {
-    frame = requestAnimationFrame(animate)
-    // Hidden on short windows: keep the loop alive but draw nothing.
-    if (!container.clientWidth) return
-    const time = clock.getElapsedTime()
-    mouseX += (targetX - mouseX) * 0.06
-    mouseY += (targetY - mouseY) * 0.06
-    figure.position.y = Math.sin(time * 1.5) * 0.06 - 0.1
-    figure.rotation.y = mouseX * 0.9 + Math.sin(time * 0.6) * 0.05
-    figure.rotation.x = -mouseY * 0.6 + Math.cos(time * 0.8) * 0.03
-    halo.rotation.z = time * 0.15
-    dust.rotation.y = time * 0.04
-    renderer.render(scene, camera)
-  }
-  animate()
-
-  stageTeardown = () => {
-    cancelAnimationFrame(frame)
-    window.removeEventListener('mousemove', onMouseMove)
-    resizeObserver.disconnect()
-    scene.traverse((node) => {
-      node.geometry?.dispose()
-      node.material?.dispose()
-    })
-    renderer.dispose()
-    renderer.domElement.remove()
-  }
-}
 
 // "Stuck to bottom" pattern: only auto-scroll on streaming deltas if the user
 // is already parked near the bottom; otherwise leave their scroll alone so
@@ -637,6 +573,18 @@ async function onCopy(msg) {
   }
 }
 
+function onExport() {
+  const title = agentStore.activeSession?.title || t('agent.title')
+  const body = agentStore.messages
+    .map((m) => `## ${m.role === 'user' ? t('agent.you') : t('agent.title')}\n\n${m.content}`)
+    .join('\n\n')
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([`# ${title}\n\n${body}\n`], { type: 'text/markdown' }))
+  link.download = `${title}.md`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 async function onClear() {
   try {
     await ElMessageBox.confirm(t('agent.clearConfirm'), t('agent.clearMemory'), {
@@ -669,7 +617,7 @@ watch(
 )
 
 watch(
-  () => agentStore.messages.map(m => m.content + (m.toolCalls?.length || 0)).join('|'),
+  () => agentStore.messages.map(m => m.content.length + ':' + (m.trace?.length || 0)).join('|'),
   async () => {
     if (!stuckToBottom.value) return
     await nextTick()

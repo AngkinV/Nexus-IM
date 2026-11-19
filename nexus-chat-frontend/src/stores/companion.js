@@ -13,6 +13,19 @@ export const useCompanionStore = defineStore('companion', () => {
     const isFallback = ref(false)
     const isLoading = ref(false)
 
+    // Desktop pet: when off, the 3D widget is not mounted at all, so its WebGL
+    // context and the loaded VRM release instead of idling in the background.
+    // Off is the default — new users, and anyone who never touched the switch,
+    // get no model loaded. Only an explicit "true" turns it on, so turning it
+    // off and coming back later stays off.
+    const PET_VISIBLE_KEY = 'companion.petVisible'
+    const petVisible = ref(localStorage.getItem(PET_VISIBLE_KEY) === 'true')
+
+    const setPetVisible = (visible) => {
+        petVisible.value = !!visible
+        localStorage.setItem(PET_VISIBLE_KEY, String(petVisible.value))
+    }
+
     const activeRole = computed(() => {
         return roles.value.find(r => r.id === activeRoleId.value) || roles.value[0] || null
     })
@@ -243,6 +256,8 @@ export const useCompanionStore = defineStore('companion', () => {
         modelStatus,
         isFallback,
         isLoading,
+        petVisible,
+        setPetVisible,
         ensureInitialized,
         initRoles,
         fetchRoles,

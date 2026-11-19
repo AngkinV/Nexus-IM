@@ -8,9 +8,19 @@
           <span class="material-symbols-outlined text-primary text-[18px]">auto_awesome</span>
           <span class="font-headline-md text-headline-md tracking-tight text-primary font-medium truncate">{{ $t('leftPanel.ai') }}</span>
         </div>
-        <span
-          class="shrink-0 font-code text-[11px] px-1.5 py-0.5 rounded border border-outline-variant/30 bg-surface-container-low text-on-surface-variant"
-        >{{ $t('agent.history.count', { n: agentStore.sessions.length }) }}</span>
+        <div class="flex items-center gap-1 shrink-0">
+          <span
+            class="font-code text-[11px] px-1.5 py-0.5 rounded border border-outline-variant/30 bg-surface-container-low text-on-surface-variant"
+          >{{ $t('agent.history.count', { n: agentStore.sessions.length }) }}</span>
+          <button
+            class="blade-collapse-btn w-7 h-7 rounded bg-surface-container-low hover:bg-primary hover:text-on-primary text-on-surface-variant flex items-center justify-center transition-all duration-200 active:scale-90"
+            :title="$t('leftPanel.collapseList')"
+            type="button"
+            @click="toggleList"
+          >
+            <span class="material-symbols-outlined text-[16px]">keyboard_double_arrow_left</span>
+          </button>
+        </div>
       </div>
 
       <button
@@ -163,6 +173,7 @@ const providersStore = useAgentProvidersStore()
 const chatStore = useChatStore()
 const knowledgeStore = useKnowledgeStore()
 const openPalette = inject('openPalette', () => {})
+const toggleList = inject('toggleList', () => {})
 
 const searchQuery = ref('')
 

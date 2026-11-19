@@ -65,6 +65,13 @@ class OpenAILikeClient(LLMClient):
             return
 
         msg = response.choices[0].message
+        # What the model thought, verbatim: the provider's reasoning channel when it
+        # has one, and the narration some models write before calling a tool.
+        thinking = getattr(msg, "reasoning_content", None)
+        if isinstance(thinking, str) and thinking:
+            yield LLMChunk(kind="reasoning", text=thinking)
+        if msg.tool_calls and isinstance(msg.content, str) and msg.content:
+            yield LLMChunk(kind="reasoning", text=msg.content)
         if msg.tool_calls:
             for tc in msg.tool_calls:
                 try:
