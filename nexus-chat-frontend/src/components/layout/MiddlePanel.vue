@@ -30,6 +30,17 @@
             <span class="material-symbols-outlined">arrow_back</span>
           </button>
 
+          <!-- The message blade is folded into its ribbon: offer a restore. -->
+          <button
+            v-if="!isMobile && listCollapsed"
+            class="action-btn blade-restore-btn"
+            :title="$t('leftPanel.expandList')"
+            :aria-label="$t('leftPanel.expandList')"
+            @click.stop="toggleList"
+          >
+            <span class="material-symbols-outlined">dock_to_left</span>
+          </button>
+
           <div class="avatar-wrapper">
             <div class="avatar-frame">
               <img
@@ -158,7 +169,7 @@
       <div class="standby-center">
         <div class="standby-eye-wrap">
           <div class="standby-eye-halo"></div>
-          <div class="standby-eye" ref="eyeHost" aria-hidden="true"></div>
+          <div class="standby-eye" aria-hidden="true"><ComputerEye /></div>
         </div>
 
         <div class="standby-copy">
@@ -212,8 +223,7 @@
 </template>
 
 <script setup>
-import { inject, watch, computed, ref, h, onMounted, onUnmounted, nextTick } from 'vue'
-import * as THREE from 'three'
+import { inject, watch, computed, ref, h, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
 import { useUserStore } from '@/stores/user'
@@ -222,6 +232,7 @@ import { messageAPI, resolveFileUrl } from '@/services/api'
 import websocket from '@/services/websocket'
 import MessageList from '@/components/chat/MessageList.vue'
 import MessageInput from '@/components/chat/MessageInput.vue'
+import ComputerEye from '@/components/standby/ComputerEye.vue'
 import AgentChatView from '@/components/agent/AgentChatView.vue'
 import ContactDetail from '@/components/contact/ContactDetail.vue'
 import GroupDetail from '@/components/chat/GroupDetail.vue'
@@ -238,6 +249,8 @@ const { t } = useI18n()
 const toggleRightPanel = inject('toggleRightPanel')
 const requestSearch = inject('requestSearch', () => {})
 const isMobile = inject('isMobile', { value: false })
+const listCollapsed = inject('listCollapsed', ref(false))
+const toggleList = inject('toggleList', () => {})
 const replyToMessage = ref(null)
 
 // Detect virtual AI assistant chat — its messages flow through HTTP/SSE, not WebSocket.
@@ -250,7 +263,6 @@ const contactStore = useContactStore()
 const router = useRouter()
 const activeView = inject('activeView', ref('chats'))
 const setActiveView = inject('setActiveView', () => {})
-const enterAi = inject('enterAi', null)
 const selectedContactId = inject('selectedContactId', ref(null))
 const selectedGroupId = inject('selectedGroupId', ref(null))
 
@@ -377,13 +389,8 @@ const openNewGroup = () => {
 }
 const wakeAi = () => {
   const aiChat = chatStore.sortedChats?.find((c) => c.id === 'ai-assistant')
-  const open = () => {
-    setActiveView('ai')
-    if (aiChat) chatStore.setActiveChat(aiChat)
-  }
-  // Through the Creator's Eye warp when Main provides it; the chat only opens on confirm.
-  if (enterAi) enterAi(open)
-  else open()
+  setActiveView('ai')
+  if (aiChat) chatStore.setActiveChat(aiChat)
 }
 
 // Get messages for current chat from messageStore
@@ -674,171 +681,6 @@ const handleReactMessage = async (msg, emoji) => {
   }
 }
 
-// ── Prism c0: cybernetic "eye of the machine" on the standby screen ──────────
-const eyeHost = ref(null)
-let eyeTeardown = null
-
-const mountStandbyEye = async () => {
-  if (eyeTeardown || !eyeHost.value) return
-  const container = eyeHost.value
-  const width = container.clientWidth || 360
-  const height = container.clientHeight || 360
-
-  const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000)
-  camera.position.z = 7
-
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
-  renderer.setSize(width, height)
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-  container.appendChild(renderer.domElement)
-
-  const eyeGroup = new THREE.Group()
-  scene.add(eyeGroup)
-
-  // Outer orbit rings (mechanical aperture)
-  eyeGroup.add(new THREE.Mesh(
-    new THREE.RingGeometry(2.35, 2.38, 64),
-    new THREE.MeshBasicMaterial({ color: 0x52525b, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
-  ))
-  const ring2 = new THREE.Mesh(
-    new THREE.RingGeometry(2.0, 2.02, 64),
-    new THREE.MeshBasicMaterial({ color: 0x71717a, side: THREE.DoubleSide, transparent: true, opacity: 0.4 })
-  )
-  eyeGroup.add(ring2)
-
-  // Segmented dashed outer ring
-  const segmentGroup = new THREE.Group()
-  const segCount = 36
-  for (let i = 0; i < segCount; i++) {
-    if (i % 3 === 0) continue
-    const angle = (i / segCount) * Math.PI * 2
-    const r = 2.2
-    const dotGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(Math.cos(angle) * r, Math.sin(angle) * r, 0),
-      new THREE.Vector3(Math.cos(angle) * (r + 0.08), Math.sin(angle) * (r + 0.08), 0)
-    ])
-    segmentGroup.add(new THREE.Line(dotGeo, new THREE.LineBasicMaterial({ color: 0xa1a1aa, transparent: true, opacity: 0.5 })))
-  }
-  eyeGroup.add(segmentGroup)
-
-  // Sclera / dark metallic sphere
-  const eyeball = new THREE.Mesh(
-    new THREE.SphereGeometry(1.6, 64, 64),
-    new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.2, metalness: 0.8 })
-  )
-  eyeGroup.add(eyeball)
-
-  // Iris: rim + spokes + pupil + glint
-  const irisGroup = new THREE.Group()
-  irisGroup.position.z = 1.35
-  eyeball.add(irisGroup)
-  irisGroup.add(new THREE.Mesh(
-    new THREE.RingGeometry(0.7, 0.74, 48),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
-  ))
-  for (let j = 0; j < 16; j++) {
-    const theta = (j / 16) * Math.PI * 2
-    const spokeGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(Math.cos(theta) * 0.35, Math.sin(theta) * 0.35, 0),
-      new THREE.Vector3(Math.cos(theta) * 0.68, Math.sin(theta) * 0.68, 0)
-    ])
-    irisGroup.add(new THREE.Line(spokeGeo, new THREE.LineBasicMaterial({ color: 0x71717a, transparent: true, opacity: 0.7 })))
-  }
-  const pupil = new THREE.Mesh(
-    new THREE.CircleGeometry(0.35, 48),
-    new THREE.MeshBasicMaterial({ color: 0x09090b })
-  )
-  pupil.position.z = 0.02
-  irisGroup.add(pupil)
-  const glint = new THREE.Mesh(
-    new THREE.CircleGeometry(0.08, 16),
-    new THREE.MeshBasicMaterial({ color: 0xffffff })
-  )
-  glint.position.set(0.12, 0.12, 0.03)
-  irisGroup.add(glint)
-
-  // Lighting
-  scene.add(new THREE.AmbientLight(0xffffff, 0.8))
-  const dirLight = new THREE.DirectionalLight(0xffffff, 2.0)
-  dirLight.position.set(3, 4, 5)
-  scene.add(dirLight)
-  const rimLight = new THREE.DirectionalLight(0xa1a1aa, 1.2)
-  rimLight.position.set(-3, -3, 2)
-  scene.add(rimLight)
-
-  // Cursor-driven gaze, clamped so the eye never rolls unnaturally
-  let targetRotX = 0
-  let targetRotY = 0
-  const onMouseMove = (event) => {
-    const rect = container.getBoundingClientRect()
-    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-    const y = -(((event.clientY - rect.top) / rect.height) * 2 - 1)
-    targetRotY = Math.max(-0.65, Math.min(0.65, x * 0.7))
-    targetRotX = Math.max(-0.5, Math.min(0.5, -y * 0.55))
-  }
-  window.addEventListener('mousemove', onMouseMove)
-
-  const onResize = () => {
-    const w = container.clientWidth || width
-    const h = container.clientHeight || height
-    if (!w || !h) return
-    camera.aspect = w / h
-    camera.updateProjectionMatrix()
-    renderer.setSize(w, h)
-  }
-  onResize()
-  window.addEventListener('resize', onResize)
-  // The host is sized with vh units, so it changes without a window resize event.
-  const resizeObserver = new ResizeObserver(onResize)
-  resizeObserver.observe(container)
-
-  const clock = new THREE.Clock()
-  let frame = 0
-  const animate = () => {
-    frame = requestAnimationFrame(animate)
-    const time = clock.getElapsedTime()
-    eyeball.rotation.y += (targetRotY - eyeball.rotation.y) * 0.08
-    eyeball.rotation.x += (targetRotX - eyeball.rotation.x) * 0.08
-    ring2.rotation.z = time * 0.2
-    segmentGroup.rotation.z = time * 0.08
-    const scale = 1.0 + Math.sin(time * 1.5) * 0.015
-    eyeGroup.scale.set(scale, scale, scale)
-    renderer.render(scene, camera)
-  }
-  animate()
-
-  eyeTeardown = () => {
-    cancelAnimationFrame(frame)
-    window.removeEventListener('mousemove', onMouseMove)
-    window.removeEventListener('resize', onResize)
-    resizeObserver.disconnect()
-    renderer.dispose()
-    container.removeChild(renderer.domElement)
-  }
-}
-
-// Only mount the WebGL canvas while the standby screen is actually on screen.
-watch(
-  () => !chatStore.activeChat,
-  async (isStandby) => {
-    if (isStandby) {
-      await nextTick()
-      mountStandbyEye()
-    } else if (eyeTeardown) {
-      eyeTeardown()
-      eyeTeardown = null
-    }
-  },
-  { immediate: true }
-)
-
-onUnmounted(() => {
-  if (eyeTeardown) {
-    eyeTeardown()
-    eyeTeardown = null
-  }
-})
 </script>
 
 
@@ -998,6 +840,12 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.blade-restore-btn {
+  flex-shrink: 0;
+  margin-right: 4px;
+  background: transparent;
 }
 
 .header-actions {
@@ -1228,6 +1076,8 @@ onUnmounted(() => {
 .standby-eye-wrap {
   position: relative;
   cursor: crosshair;
+  /* The bezel ring sits outside the canvas; keep it from clipping. */
+  margin: 6% 0;
 }
 
 .standby-eye-halo {
@@ -1246,9 +1096,11 @@ onUnmounted(() => {
 }
 
 .standby-eye {
-  --eye-size: min(360px, 70vw, 42vh);
+  /* The canvas hugs the eye: a wide, short box. A square canvas would leave
+     large empty bands above and below the almond and read as a panel. */
+  --eye-size: min(620px, 84vw, 58vh);
   width: var(--eye-size);
-  height: var(--eye-size);
+  height: calc(var(--eye-size) * 0.667);
   position: relative;
   z-index: 1;
   flex-shrink: 0;
@@ -1464,8 +1316,9 @@ onUnmounted(() => {
 /* ── Standby: compact layouts ───────────────────────────── */
 @media (max-width: 900px) {
   .standby-eye {
-    --eye-size: min(280px, 62vw, 30vh);
+    --eye-size: min(320px, 64vw, 32vh);
   }
+
 
   .welcome-title {
     font-size: 24px;

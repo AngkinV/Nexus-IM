@@ -80,6 +80,8 @@ export const agentAPI = {
  *
  * Handlers:
  *   onMeta(payload)
+ *   onStage(payload)        // payload: { phase, ... } — context / knowledge / mock / model
+ *   onReasoning(payload)    // payload: { iteration, text } — the model's own thinking
  *   onToolCall(payload)
  *   onToolResult(payload)
  *   onDelta(payload)        // payload: { text }
@@ -173,6 +175,8 @@ function dispatchFrame(rawFrame, handlers) {
 
     switch (event) {
         case 'meta': handlers.onMeta?.(parsed); break
+        case 'stage': handlers.onStage?.(parsed); break
+        case 'reasoning': handlers.onReasoning?.(parsed); break
         case 'tool_call': handlers.onToolCall?.(parsed); break
         case 'tool_result': handlers.onToolResult?.(parsed); break
         case 'delta': handlers.onDelta?.(parsed); break

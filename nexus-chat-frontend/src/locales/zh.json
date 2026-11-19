@@ -141,8 +141,8 @@
     "editExpired": "消息已超过可编辑时间",
     "recallExpired": "消息已超过可撤回时间",
     "standbyMode": "STANDBY MODE",
-    "standbyTitle": "计算机之眼 · 待命状态",
-    "standbyDesc": "移动光标观察感知互动 · 快捷键 {kbd} 开启新会话，或从左侧列表中选择历史交流。",
+    "standbyTitle": "暂无会话",
+    "standbyDesc": "从左侧选择一个会话，或按 {kbd} 开始新对话。",
     "startPrivateChat": "开启新私聊",
     "wakeAi": "唤醒 AI 助手",
     "encryptReady": "端到端加密引擎已就绪",
@@ -173,7 +173,10 @@
     "currentVersionIs": "当前版本",
     "releaseNotes": "更新内容",
     "downloadUpdate": "下载更新",
-    "checkUpdateFailed": "检查更新失败"
+    "checkUpdateFailed": "检查更新失败",
+    "roleAndModel": "角色与模型",
+    "desktopPet": "桌面宠物",
+    "desktopPetHint": "关闭后不加载 3D 模型，节省内存与显存"
   },
   "contact": {
     "addContact": "添加联系人",
@@ -640,7 +643,63 @@
     "renameFailed": "重命名失败",
     "shortTerm": "短期",
     "midTerm": "中期",
-    "longTerm": "长期"
+    "longTerm": "长期",
+    "roleSection": "当前角色",
+    "emptyRole": "还没有角色，先在陪伴面板里初始化一个角色。",
+    "modelCredential": "模型凭据",
+    "motionDeleteConfirm": "确定删除动作「{name}」？",
+    "chatEmpty": "还没有对话，说句话开始吧。",
+    "dossier": "角色档案",
+    "memorySection": "记忆碎片",
+    "roleManage": "角色与模型",
+    "roleList": "角色列表",
+    "roleCount": "{n} 位",
+    "growthShort": "亲密 {intimacy}% · 信任 {trust}%",
+    "goAssistant": "AI 助手",
+    "typing": "正在回应…",
+    "orbit": {
+      "whisper": "独白",
+      "toggleWhisper": "展开角色独白",
+      "cps": "{n} CPS · {label}",
+      "noGrowth": "尚未积累",
+      "echoLive": "{text}",
+      "echoState": "{state}",
+      "echoEmpty": "暂无心境记录",
+      "fragLive": "记忆片段 #{id} {text}",
+      "fragEmpty": "暂无记忆片段",
+      "quoteEmpty": "她还没有开口。说一句话，这里会浮现她此刻的心绪。",
+      "freq": "共振频率: {n}",
+      "temp": {
+        "idle": "冷幽待机",
+        "deliberate": "深思沉吟",
+        "fast": "心绪激荡",
+        "action": "动作共振"
+      },
+      "prefix": {
+        "idle": "心绪星轨 //",
+        "deliberate": "字句沉吟 //",
+        "fast": "心绪激荡 //",
+        "action": "动作共振 //"
+      },
+      "thought": {
+        "idle": "「静候倾听」",
+        "deliberate": "「字句沉吟 · 意蕴深长」",
+        "fast": "「心绪激荡 · 倾吐如瀑」",
+        "action": "「捕捉到你的神态与动作」"
+      },
+      "metric": {
+        "idle": "「共鸣 {n}% 静默相伴」",
+        "deliberate": "「共鸣 {n}% 专注倾听」",
+        "fast": "「共鸣 {n}% 剧烈起伏」",
+        "action": "「共鸣 {n}% 神态共情」"
+      },
+      "state": {
+        "idle": "「她安静地等着你开口」",
+        "deliberate": "「目光静落，等你把话说完」",
+        "fast": "「她微微前倾，跟上了你的节奏」",
+        "action": "「她捕捉到你的动作，呼吸跟着变」"
+      }
+    }
   },
   "agent": {
     "title": "AI 助手",
@@ -803,7 +862,31 @@
       "embeddingFallbackHint": "⚠️ 留空时会回退到 Python 服务的 EMBEDDING_API_KEY 环境变量；推荐在前端绑定一条凭据。",
       "fieldEmbeddingModel": "Embedding 模型",
       "embeddingModelHint": "留空将使用所选凭据的默认模型（{model}）。"
-    }
+    },
+    "contextTokens": "上轮输入 {n} tokens",
+    "traceHint": "过程终端逐行显示后端的真实事件",
+    "trace": {
+      "title": "过程终端",
+      "summary": "{steps} 步 · 模型 {calls} 次 · 工具 {tools} 次",
+      "context": "短期记忆 {shortTerm} 条 · 语义召回 {recalled} 条",
+      "kbHits": "知识库命中 {n} 个片段",
+      "kbSkipped": "知识库检索未完成，本轮不带知识库作答",
+      "mock": "未配置模型，使用演示应答",
+      "wantsTools": "请求 {n} 个工具",
+      "answered": "给出回答",
+      "failed": "调用失败",
+      "timeout": "超时",
+      "error": "模型报错",
+      "aborted": "已中断",
+      "reasoning": "第 {n} 轮模型原话",
+      "answer": "回答 {n} 字",
+      "waitConnect": "正在连接",
+      "waitContext": "正在读取记忆与上下文",
+      "waitModel": "等待 {model} 响应",
+      "waitTool": "正在执行 {tool}",
+      "waitNext": "等待下一步"
+    },
+    "export": "导出对话"
   },
   "online": "在线",
   "file": {
@@ -846,7 +929,9 @@
     "cheatGroup": "创建群组",
     "cheatAi": "唤起 AI 助手",
     "cheatNav": "切换左侧分区",
-    "cheatHelp": "查看全部快捷键"
+    "cheatHelp": "查看全部快捷键",
+    "actCompanion": "进入陪伴角色",
+    "actCompanionDesc": "穿过转场，和你的角色对话"
   },
   "topBar": {
     "workspace": "工作区",
@@ -862,7 +947,13 @@
     "close": "关闭",
     "groupRole": "群组",
     "defaultRole": "设计负责人",
-    "conversation": "会话"
+    "conversation": "会话",
+    "companion": "陪伴角色对话",
+    "cinematic": "沉浸视野",
+    "modeCinematic": "沉浸 · 全屏",
+    "modeDockChat": "DOCK · 展开对话",
+    "modeWideCanvas": "侧栏 · 宽画布",
+    "modeWorkspace": "双栏 · 工作区"
   },
   "leftPanel": {
     "contacts": "通讯录",
@@ -889,6 +980,20 @@
     "directoryTotal": "全部: {n} 人",
     "directoryOnline": "{n} 人在线",
     "moreOptions": "更多选项",
-    "refreshDirectory": "刷新通讯录"
+    "refreshDirectory": "刷新通讯录",
+    "navCompanion": "陪伴角色",
+    "collapseList": "侧向收纳入壁 (])",
+    "expandList": "展开消息列表 (])",
+    "expandShort": "展开",
+    "unreadPreview": "未读消息快速预览",
+    "markAllRead": "全部已读",
+    "noUnread": "暂无未读消息",
+    "unreadCount": "{n} 条未读消息",
+    "shortcutExpand": "快捷键 ] 展开切片",
+    "expandAll": "展开全部 {n} 个会话 →"
+  },
+  "rail": {
+    "expand": "展开侧边栏 ([)",
+    "collapse": "折叠侧边栏 ([)"
   }
 }

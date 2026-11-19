@@ -141,8 +141,8 @@
     "editExpired": "Message can no longer be edited",
     "recallExpired": "Message can no longer be recalled",
     "standbyMode": "STANDBY MODE",
-    "standbyTitle": "Eye of the Machine · Standby",
-    "standbyDesc": "Move the cursor to feel the gaze · press {kbd} for a new session, or pick a past conversation on the left.",
+    "standbyTitle": "No conversation selected",
+    "standbyDesc": "Pick a conversation on the left, or press {kbd} to start a new one.",
     "startPrivateChat": "Start a direct chat",
     "wakeAi": "Wake the AI assistant",
     "encryptReady": "End-to-end encryption engine ready",
@@ -173,7 +173,10 @@
     "currentVersionIs": "Current version is",
     "releaseNotes": "Release Notes",
     "downloadUpdate": "Download Update",
-    "checkUpdateFailed": "Failed to check for updates"
+    "checkUpdateFailed": "Failed to check for updates",
+    "roleAndModel": "Role & Model",
+    "desktopPet": "Desktop pet",
+    "desktopPetHint": "Off stops loading the 3D model, saving memory and GPU"
   },
   "contact": {
     "addContact": "Add Contact",
@@ -640,7 +643,63 @@
     "renameFailed": "Rename failed",
     "shortTerm": "Short-term",
     "midTerm": "Mid-term",
-    "longTerm": "Long-term"
+    "longTerm": "Long-term",
+    "roleSection": "Current role",
+    "emptyRole": "No role yet — initialise one in the companion panel first.",
+    "modelCredential": "Model credential",
+    "motionDeleteConfirm": "Delete the motion \"{name}\"?",
+    "chatEmpty": "No conversation yet — say something to begin.",
+    "dossier": "Role dossier",
+    "memorySection": "Memories",
+    "roleManage": "Role & model",
+    "roleList": "Roles",
+    "roleCount": "{n}",
+    "growthShort": "Intimacy {intimacy}% · Trust {trust}%",
+    "goAssistant": "AI assistant",
+    "typing": "Replying…",
+    "orbit": {
+      "whisper": "Inner voice",
+      "toggleWhisper": "Show her inner voice",
+      "cps": "{n} CPS · {label}",
+      "noGrowth": "Not enough history",
+      "echoLive": "{text}",
+      "echoState": "{state}",
+      "echoEmpty": "No mood recorded",
+      "fragLive": "Memory #{id} {text}",
+      "fragEmpty": "No memory fragments",
+      "quoteEmpty": "She hasn't spoken yet. Say something and her inner voice will surface here.",
+      "freq": "Resonance: {n}",
+      "temp": {
+        "idle": "Idle",
+        "deliberate": "Thinking",
+        "fast": "Charged",
+        "action": "In motion"
+      },
+      "prefix": {
+        "idle": "MIND ORBIT //",
+        "deliberate": "DELIBERATE //",
+        "fast": "CHARGED //",
+        "action": "IN MOTION //"
+      },
+      "thought": {
+        "idle": "Listening quietly",
+        "deliberate": "Weighing every word",
+        "fast": "Pouring it all out",
+        "action": "Reading your gestures"
+      },
+      "metric": {
+        "idle": "Resonance {n}% · still",
+        "deliberate": "Resonance {n}% · focused",
+        "fast": "Resonance {n}% · surging",
+        "action": "Resonance {n}% · attuned"
+      },
+      "state": {
+        "idle": "She waits for you to speak",
+        "deliberate": "Her eyes rest, letting you finish",
+        "fast": "She leans in, matching your pace",
+        "action": "She catches your movement and breathes with it"
+      }
+    }
   },
   "agent": {
     "title": "AI Assistant",
@@ -803,7 +862,31 @@
       "embeddingFallbackHint": "⚠️ Leaving this empty falls back to the Python service's EMBEDDING_API_KEY env var; binding a credential here is recommended.",
       "fieldEmbeddingModel": "Embedding model",
       "embeddingModelHint": "Leave empty to use the selected credential's default model ({model})."
-    }
+    },
+    "contextTokens": "last turn {n} tokens in",
+    "traceHint": "The process terminal lists the real backend events",
+    "trace": {
+      "title": "PROCESS",
+      "summary": "{steps} steps · {calls} model calls · {tools} tool calls",
+      "context": "{shortTerm} short-term messages · {recalled} recalled",
+      "kbHits": "{n} knowledge-base chunks matched",
+      "kbSkipped": "Knowledge-base lookup did not complete; answering without it",
+      "mock": "No model configured, using the demo reply",
+      "wantsTools": "asked for {n} tools",
+      "answered": "answered",
+      "failed": "call failed",
+      "timeout": "timed out",
+      "error": "model error",
+      "aborted": "interrupted",
+      "reasoning": "Model output, round {n}",
+      "answer": "answer, {n} chars",
+      "waitConnect": "Connecting",
+      "waitContext": "Reading memory and context",
+      "waitModel": "Waiting for {model}",
+      "waitTool": "Running {tool}",
+      "waitNext": "Waiting for the next step"
+    },
+    "export": "Export conversation"
   },
   "online": "Online",
   "file": {
@@ -846,7 +929,9 @@
     "cheatGroup": "Create group",
     "cheatAi": "Summon AI assistant",
     "cheatNav": "Switch left section",
-    "cheatHelp": "Show all shortcuts"
+    "cheatHelp": "Show all shortcuts",
+    "actCompanion": "Open companion",
+    "actCompanionDesc": "Step through the warp and talk to your role"
   },
   "topBar": {
     "workspace": "Workspace",
@@ -862,7 +947,13 @@
     "close": "Close",
     "groupRole": "Group",
     "defaultRole": "Design Lead",
-    "conversation": "Conversation"
+    "conversation": "Conversation",
+    "companion": "Companion chat",
+    "cinematic": "Focus view",
+    "modeCinematic": "CINEMATIC · FULLSCREEN",
+    "modeDockChat": "DOCK · EXPANDED CHAT",
+    "modeWideCanvas": "SIDEBAR · WIDE CANVAS",
+    "modeWorkspace": "DUAL-PANE · WORKSPACE"
   },
   "leftPanel": {
     "contacts": "Contacts",
@@ -889,6 +980,20 @@
     "directoryTotal": "Directory: {n}",
     "directoryOnline": "{n} online",
     "moreOptions": "More options",
-    "refreshDirectory": "Refresh directory"
+    "refreshDirectory": "Refresh directory",
+    "navCompanion": "Companion",
+    "collapseList": "Fold into the wall (])",
+    "expandList": "Expand message list (])",
+    "expandShort": "open",
+    "unreadPreview": "Unread at a glance",
+    "markAllRead": "Mark all read",
+    "noUnread": "No unread messages",
+    "unreadCount": "{n} unread",
+    "shortcutExpand": "] expands the blade",
+    "expandAll": "Expand all {n} conversations →"
+  },
+  "rail": {
+    "expand": "Expand sidebar ([)",
+    "collapse": "Collapse sidebar ([)"
   }
 }

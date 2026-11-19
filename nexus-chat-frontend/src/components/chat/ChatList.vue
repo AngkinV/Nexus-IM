@@ -166,7 +166,6 @@ const props = defineProps({
 
 const { t } = useI18n()
 const chatStore = useChatStore()
-const enterAi = inject('enterAi', null)
 const messageStore = useMessageStore()
 
 // Remote avatars can 404; remember which ones did so we render the initial tile.
@@ -285,12 +284,6 @@ const handleChatClick = (chat) => {
 
   if (swipedChatId.value) {
     closeSwipe(swipedChatId.value)
-  }
-
-  // Opening the assistant goes through the Creator's Eye warp (provided by Main).
-  if (chat.isAi && enterAi && chatStore.activeChat?.id !== chat.id) {
-    enterAi(() => chatStore.setActiveChat(chat))
-    return
   }
 
   chatStore.toggleActiveChat(chat)

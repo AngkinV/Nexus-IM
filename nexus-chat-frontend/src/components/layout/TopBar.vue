@@ -5,9 +5,29 @@
     class="top-bar drag-region shrink-0 h-14 bg-surface/90 backdrop-blur-md border-b border-outline-variant/30 flex items-center justify-between px-space-lg select-none"
   >
     <div class="flex items-center gap-space-sm font-label-md text-label-md text-on-surface-variant min-w-0">
+      <!-- Rail is folded into the dock: restore it from here. -->
+      <!-- Folds away in step with the rail instead of vanishing: removing it
+           outright made the breadcrumb jump 36px left on the first frame. -->
+      <Transition name="quick-expand">
+        <button
+          v-if="navCollapsed"
+          class="no-drag quick-expand-btn"
+          type="button"
+          :title="$t('rail.expand')"
+          @click="toggleNav"
+        >
+          <span class="material-symbols-outlined text-[18px]">dock_to_right</span>
+        </button>
+      </Transition>
       <span class="text-on-surface-variant/60 shrink-0">{{ $t('topBar.workspace') }}</span>
       <span class="material-symbols-outlined text-[14px] text-on-surface-variant/40 shrink-0">chevron_right</span>
       <span class="text-primary font-medium tracking-tight truncate">{{ title }}</span>
+
+      <!-- Live view-mode pill: both collapse states at a glance. -->
+      <div class="view-mode-pill hidden md:flex">
+        <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+        <span>{{ viewModeLabel }}</span>
+      </div>
     </div>
 
     <div class="flex items-center gap-space-sm no-drag shrink-0">
@@ -18,6 +38,17 @@
         <span class="w-1.5 h-1.5 rounded-full bg-primary inline-block"></span>
         <span>{{ status }}</span>
       </div>
+
+      <!-- One click into the clean canvas: folds both the rail and the blade. -->
+      <button
+        class="cinematic-btn no-drag"
+        type="button"
+        :title="$t('topBar.cinematic')"
+        @click="toggleCinematic"
+      >
+        <span class="material-symbols-outlined text-[15px]">fullscreen</span>
+        <span class="hidden sm:inline">{{ $t('topBar.cinematic') }}</span>
+      </button>
 
       <!-- Inline search box only on the screens that have one (群组). -->
       <div
@@ -103,6 +134,20 @@ const chatStore = useChatStore()
 
 const activeView = inject('activeView', ref('chats'))
 const topBarSearch = inject('topBarSearch', ref(''))
+const navCollapsed = inject('navCollapsed', ref(false))
+const toggleNav = inject('toggleNav', () => {})
+const listCollapsed = inject('listCollapsed', ref(false))
+const toggleCinematic = inject('toggleCinematic', () => {})
+
+// Mirrors the design's viewModeBadge: which panes are currently folded away.
+const viewModeLabel = computed(() => {
+  const nav = navCollapsed.value
+  const list = listCollapsed.value
+  if (nav && list) return t('topBar.modeCinematic')
+  if (nav) return t('topBar.modeDockChat')
+  if (list) return t('topBar.modeWideCanvas')
+  return t('topBar.modeWorkspace')
+})
 
 const isElectron = ref(false)
 const isMac = ref(false)
@@ -134,6 +179,7 @@ const title = computed(() => {
   if (activeView.value === 'contacts') return t('topBar.contacts')
   if (activeView.value === 'groups') return t('topBar.groups')
   if (activeView.value === 'ai') return t('topBar.ai')
+  if (activeView.value === 'companion') return t('topBar.companion')
   // chats
   if (!chat) return t('topBar.chats')
   const role =
@@ -145,6 +191,7 @@ const title = computed(() => {
 
 const status = computed(() => {
   if (activeView.value === 'ai') return 'AI ENGINE ONLINE'
+  if (activeView.value === 'companion') return 'COMPANION ONLINE'
   return 'SYNCED'
 })
 </script>
@@ -156,6 +203,102 @@ const status = computed(() => {
 
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+.quick-expand-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: #1b1b1e;
+  color: #c4c7c8;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.quick-expand-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
+}
+
+/* Same duration and curve as the rail's width, so the breadcrumb slides as
+   one piece with the bar. The -8px margin cancels the flex gap that would
+   otherwise outlive a zero-width button. */
+.quick-expand-enter-active,
+.quick-expand-leave-active {
+  overflow: hidden;
+  transition:
+    width 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    margin-right 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 160ms ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.quick-expand-enter-from,
+.quick-expand-leave-to {
+  width: 0;
+  margin-right: -8px;
+  opacity: 0;
+}
+
+.quick-expand-leave-active {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-expand-enter-active,
+  .quick-expand-leave-active {
+    transition: none;
+  }
+}
+
+.view-mode-pill {
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(42, 42, 45, 0.5);
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cinematic-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  margin-right: 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  background: #1b1b1e;
+  color: #c4c7c8;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.cinematic-btn:hover {
+  background: #2a2a2d;
+  color: #ffffff;
+}
+
+.cinematic-btn:active {
+  transform: scale(0.95);
 }
 
 /* Frameless window controls — monochrome, 28px hit area. */

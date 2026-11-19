@@ -255,7 +255,11 @@ const handlePointerMove = (event) => {
 const handlePointerUp = (event) => {
   if (!dragging.active) return
   dragging.active = false
-  event.currentTarget.releasePointerCapture(event.pointerId)
+  // Capture can already be gone (pointer cancelled by the OS or a synthetic
+  // event); releasing a lost pointer throws and would swallow the click.
+  if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
   localStorage.setItem('companionPos', JSON.stringify({ x: position.x, y: position.y }))
   if (!dragging.moved) {
     triggerClickExpression()

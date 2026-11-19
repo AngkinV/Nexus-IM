@@ -198,6 +198,15 @@ const actions = computed(() => [
     title: t('palette.actMarkRead'),
     desc: t('palette.actMarkReadDesc'),
     command: 'mark-read'
+  },
+  {
+    key: 'companion',
+    category: 'actions',
+    icon: 'nightlife',
+    shortcut: '⌘ 5',
+    title: t('palette.actCompanion'),
+    desc: t('palette.actCompanionDesc'),
+    command: 'nav-5'
   }
 ])
 
@@ -206,7 +215,7 @@ const cheatsheet = computed(() => [
   { key: 'c-new', category: 'cheatsheet', shortcut: '⌘ N', title: t('palette.cheatNewChat'), command: 'new-chat' },
   { key: 'c-group', category: 'cheatsheet', shortcut: '⌘ G', title: t('palette.cheatGroup'), command: 'new-group' },
   { key: 'c-ai', category: 'cheatsheet', shortcut: '⌘ J', title: t('palette.cheatAi'), command: 'ai' },
-  { key: 'c-nav', category: 'cheatsheet', shortcut: '⌘ 1~4', title: t('palette.cheatNav'), command: 'nav-1' },
+  { key: 'c-nav', category: 'cheatsheet', shortcut: '⌘ 1~5', title: t('palette.cheatNav'), command: 'nav-1' },
   { key: 'c-help', category: 'cheatsheet', shortcut: '⌘ /', title: t('palette.cheatHelp'), command: 'help' }
 ])
 

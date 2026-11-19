@@ -81,7 +81,9 @@ export const useAgentStore = defineStore('agent', () => {
             createdAt: m.createdAt,
             status: m.status === 'streaming' ? 'done' : (m.status || 'done'),
             error: m.error || null,
-            usage: m.usage || null
+            usage: m.usage || null,
+            trace: Array.isArray(m.trace) ? m.trace.map(step => ({ ...step })) : [],
+            elapsedMs: m.elapsedMs ?? null
         }))
         persistMessageCache()
     }
@@ -169,11 +171,19 @@ export const useAgentStore = defineStore('agent', () => {
             role: 'assistant',
             content: '',
             toolCalls: [],
+            trace: [],
+            elapsedMs: null,
             createdAt: new Date().toISOString(),
             status: 'streaming'
         }
         messages.value.push(userMsg, assistantMsg)
         streaming.value = true
+        // Every update below goes through the reactive copy held by the list —
+        // writing to the plain object would not repaint until the stream ends.
+        const live = messages.value[messages.value.length - 1]
+        const startedAt = performance.now()
+        // One line of the process trace, stamped with when it reached the browser.
+        const step = (entry) => live.trace.push({ at: Math.round(performance.now() - startedAt), ...entry })
 
         const payload = {
             operationType: AGENT_OP.ASSISTANT_CHAT,
@@ -194,38 +204,47 @@ export const useAgentStore = defineStore('agent', () => {
         }
 
         const handlers = {
-            onMeta: () => { /* no-op, traceId logged on server */ },
+            onMeta: ({ traceId }) => step({ kind: 'meta', traceId }),
+            onStage: (stage) => {
+                if (stage.phase !== 'model') return step({ kind: stage.phase, ...stage })
+                if (stage.status === 'start') return step({ kind: 'model', ...stage, status: 'running' })
+                const call = live.trace.findLast(s => s.kind === 'model' && s.iteration === stage.iteration)
+                Object.assign(call, stage)
+            },
+            onReasoning: ({ iteration, text: thought }) => step({ kind: 'reasoning', iteration, text: thought }),
             onToolCall: ({ toolName, args }) => {
-                assistantMsg.toolCalls.push({
-                    toolName,
-                    args,
-                    status: 'running',
-                    latencyMs: null
-                })
+                live.toolCalls.push({ toolName, args, status: 'running', latencyMs: null })
+                step({ kind: 'tool', toolName, args, status: 'running' })
             },
             onToolResult: ({ toolName, status, latencyMs, error }) => {
-                const last = [...assistantMsg.toolCalls].reverse().find(t => t.toolName === toolName && t.status === 'running')
-                if (last) {
-                    last.status = status || 'SUCCESS'
-                    last.latencyMs = latencyMs ?? null
-                    if (error) last.error = error
-                }
+                const pending = (s) => s.toolName === toolName && s.status === 'running'
+                const call = live.toolCalls.findLast(pending)
+                if (call) Object.assign(call, { status: status || 'SUCCESS', latencyMs: latencyMs ?? null, error })
+                const line = live.trace.findLast(s => s.kind === 'tool' && pending(s))
+                if (line) Object.assign(line, { status: status || 'SUCCESS', latencyMs: latencyMs ?? null, error })
             },
             onDelta: ({ text: delta }) => {
-                if (delta) assistantMsg.content += delta
+                if (!delta) return
+                live.content += delta
+                const out = live.trace[live.trace.length - 1]
+                if (out?.kind === 'answer') out.chars = live.content.length
+                else step({ kind: 'answer', chars: live.content.length })
             },
             onUsage: (usage) => {
-                assistantMsg.usage = usage
+                live.usage = usage
+                step({ kind: 'usage', ...usage })
             },
-            onDone: () => {
-                assistantMsg.status = 'done'
+            onDone: ({ finishReason }) => {
+                live.status = 'done'
+                step({ kind: 'done', finishReason })
             },
             onError: (err) => {
                 lastError.value = err
-                assistantMsg.status = 'error'
-                assistantMsg.error = err
-                if (!assistantMsg.content) {
-                    assistantMsg.content = i18n.global.t('agent.requestFailed', { msg: err.message || err.code || 'unknown' })
+                live.status = 'error'
+                live.error = err
+                step({ kind: 'error', code: err.code, message: err.message })
+                if (!live.content) {
+                    live.content = i18n.global.t('agent.requestFailed', { msg: err.message || err.code || 'unknown' })
                 }
             }
         }
@@ -236,8 +255,11 @@ export const useAgentStore = defineStore('agent', () => {
         } finally {
             activeStream = null
             streaming.value = false
-            if (assistantMsg.status === 'streaming') {
-                assistantMsg.status = 'done'
+            live.elapsedMs = Math.round(performance.now() - startedAt)
+            // Stopped or dropped mid-turn: nothing is still running, say so.
+            live.trace.forEach((s) => { if (s.status === 'running') s.status = 'aborted' })
+            if (live.status === 'streaming') {
+                live.status = 'done'
             }
             // Snapshot the just-completed turn so switching away and back
             // (or refreshing) preserves the conversation locally.

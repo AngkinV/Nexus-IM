@@ -36,6 +36,7 @@ class LLMChunk:
 
     Discriminator is `kind`:
       - "text"        : content is the partial assistant text (delta)
+      - "reasoning"   : text is the model's own thinking, shown but never part of the answer
       - "tool_call"   : tool_call holds the requested call
       - "usage"       : usage holds prompt/completion tokens (final)
       - "finish"      : the model has finished this turn (no more tools)
