@@ -300,7 +300,7 @@ async function removeMemory(memory) {
 
 .dossier-name {
   color: #ffffff;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;

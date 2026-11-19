@@ -26,7 +26,7 @@
         </div>
         <div class="min-w-0">
           <div class="flex items-center gap-2">
-            <h2 class="font-headline-md text-headline-md text-primary font-medium tracking-tight truncate">
+            <h2 class="font-headline-md text-[18px] leading-[1.4] text-primary font-medium tracking-tight truncate">
               {{ agentStore.activeSession?.title || $t('agent.title') }}
             </h2>
             <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0"></span>
@@ -39,7 +39,7 @@
       <div class="flex items-center gap-space-xs lg:gap-space-sm shrink-0">
         <el-dropdown trigger="click" @command="onSelectProvider">
           <button
-            class="flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/40 text-primary font-label-md text-label-md hover:bg-surface-container hover:border-outline-variant transition-colors"
+            class="flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/40 text-primary font-label-md text-label-sm hover:bg-surface-container hover:border-outline-variant transition-colors"
             type="button"
             :title="$t('agent.providers.title')"
           >
@@ -124,7 +124,7 @@
         >
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full bg-primary animate-ping opacity-75 shrink-0"></span>
-            <span class="font-headline-md text-[13px] text-primary font-medium tracking-tight truncate">{{ $t('agent.title') }} // HOLOGRAPHIC 3D</span>
+            <span class="font-headline-md text-[12px] text-primary font-medium tracking-tight truncate">{{ $t('agent.title') }} // HOLOGRAPHIC 3D</span>
           </div>
           <div class="flex items-center gap-2 font-code text-[11px] text-on-surface-variant shrink-0">
             <span class="inline-flex items-center gap-1 text-primary">
@@ -191,8 +191,8 @@
       </div>
 
       <div v-else class="max-w-3xl flex flex-col gap-space-sm">
-        <h2 class="font-headline-lg-mobile text-headline-lg-mobile text-primary">{{ $t('agent.welcomeTitle') }}</h2>
-        <p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">{{ $t('agent.welcomeBody') }}</p>
+        <h2 class="font-headline-lg-mobile text-[20px] leading-[1.333333] font-semibold tracking-[-0.015em] text-primary">{{ $t('agent.welcomeTitle') }}</h2>
+        <p class="font-body-lg text-[12px] leading-relaxed tracking-[-0.005em] text-on-surface-variant max-w-2xl">{{ $t('agent.welcomeBody') }}</p>
         <div class="mt-3 flex flex-wrap items-center gap-2">
           <span class="font-code text-[11px] text-on-surface-variant/70 px-1 flex items-center gap-1">
             <span class="material-symbols-outlined text-[13px] text-primary">lightbulb</span>
@@ -201,7 +201,7 @@
           <button
             v-for="card in welcomeCards"
             :key="card.key"
-            class="px-3 py-1 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-md hover:bg-surface-container hover:text-primary transition-colors flex items-center gap-1"
+            class="px-3 py-1 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-sm hover:bg-surface-container hover:text-primary transition-colors flex items-center gap-1"
             type="button"
             :title="card.desc"
             @click="prefill(card.prompt)"
@@ -221,7 +221,7 @@
               <span v-if="msg.createdAt" class="font-code text-[11px] text-on-surface-variant/60">{{ dayjs(msg.createdAt).format('HH:mm') }}</span>
             </div>
             <div class="p-space-md rounded-xl bg-surface-container-high border border-outline-variant/40 text-primary max-w-full">
-              <p class="font-body-lg text-body-lg text-primary leading-relaxed whitespace-pre-wrap break-words">{{ msg.content }}</p>
+              <p class="font-body-lg text-[12px] tracking-[-0.005em] text-primary leading-relaxed whitespace-pre-wrap break-words">{{ msg.content }}</p>
             </div>
           </div>
           <div
@@ -246,7 +246,7 @@
           </div>
           <div class="flex-1 max-w-3xl min-w-0 flex flex-col">
             <div class="flex items-center gap-2 mb-1.5 px-1">
-              <span class="font-headline-md text-headline-md text-primary font-medium">{{ $t('agent.title') }}</span>
+              <span class="font-headline-md text-[18px] leading-[1.4] tracking-[-0.01em] text-primary font-medium">{{ $t('agent.title') }}</span>
               <span
                 v-if="msg.status === 'streaming'"
                 class="font-code text-[10px] px-1.5 py-0.5 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface-variant"
@@ -265,7 +265,7 @@
 
               <p
                 v-if="msg.content"
-                class="font-body-lg text-body-lg leading-relaxed whitespace-pre-wrap break-words"
+                class="font-body-lg text-[12px] tracking-[-0.005em] leading-relaxed whitespace-pre-wrap break-words"
                 :class="msg.status === 'error' ? 'text-error' : 'text-on-surface'"
               >{{ msg.content }}<span v-if="msg.status === 'streaming'" class="caret"></span></p>
 
@@ -274,7 +274,7 @@
                 class="pt-3 border-t border-outline-variant/20 flex flex-wrap items-center justify-between gap-2"
               >
                 <button
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-md hover:bg-surface-container hover:text-primary transition-colors"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-container-low border border-outline-variant/30 text-on-surface font-label-md text-label-sm hover:bg-surface-container hover:text-primary transition-colors"
                   type="button"
                   @click="onCopy(msg)"
                 >
@@ -347,7 +347,7 @@
             <textarea
               ref="inputEl"
               v-model="draft"
-              class="agent-input block w-full bg-transparent text-primary font-body-lg text-body-lg placeholder:text-on-surface-variant/40 focus:outline-none resize-none py-1 px-1.5 max-h-32 leading-relaxed"
+              class="agent-input block w-full bg-transparent text-primary font-body-lg text-[12px] tracking-[-0.005em] placeholder:text-on-surface-variant/40 focus:outline-none resize-none py-1 px-1.5 max-h-32 leading-relaxed"
               :placeholder="$t('agent.placeholder')"
               :disabled="agentStore.streaming"
               rows="1"
@@ -365,7 +365,7 @@
             </button>
             <button
               v-if="!agentStore.streaming"
-              class="group px-4 py-2 rounded-lg bg-primary text-on-primary hover:bg-primary-container active:scale-95 font-label-md text-label-md font-medium flex items-center gap-1.5 transition-all shadow disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100"
+              class="group px-4 py-2 rounded-lg bg-primary text-on-primary hover:bg-primary-container active:scale-95 font-label-md text-label-sm font-medium flex items-center gap-1.5 transition-all shadow disabled:opacity-30 disabled:cursor-not-allowed disabled:active:scale-100"
               type="button"
               :disabled="!draft.trim()"
               @click="onSend"
@@ -375,7 +375,7 @@
             </button>
             <button
               v-else
-              class="px-4 py-2 rounded-lg bg-[#b3261e] text-primary active:scale-95 font-label-md text-label-md font-medium flex items-center gap-1.5 transition-all shadow"
+              class="px-4 py-2 rounded-lg bg-[#b3261e] text-primary active:scale-95 font-label-md text-label-sm font-medium flex items-center gap-1.5 transition-all shadow"
               type="button"
               @click="agentStore.cancelStream()"
             >

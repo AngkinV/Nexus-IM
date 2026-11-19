@@ -5,18 +5,18 @@
     class="top-bar drag-region shrink-0 h-14 bg-surface/90 backdrop-blur-md border-b border-outline-variant/30 flex items-center justify-between px-space-lg select-none"
   >
     <div class="flex items-center gap-space-sm font-label-md text-label-md text-on-surface-variant min-w-0">
-      <!-- Rail is folded into the dock: restore it from here. -->
+      <!-- Keep the folded list clear of competing edge controls. -->
       <!-- Folds away in step with the rail instead of vanishing: removing it
            outright made the breadcrumb jump 36px left on the first frame. -->
       <Transition name="quick-expand">
         <button
-          v-if="navCollapsed"
+          v-if="navCollapsed || (listCollapsed && !isMobile)"
           class="no-drag quick-expand-btn"
           type="button"
-          :title="$t('rail.expand')"
+          :title="navCollapsed ? $t('rail.expand') : $t('rail.collapse')"
           @click="toggleNav"
         >
-          <span class="material-symbols-outlined text-[18px]">dock_to_right</span>
+          <span class="material-symbols-outlined text-[18px]">{{ navCollapsed ? 'dock_to_right' : 'dock_to_left' }}</span>
         </button>
       </Transition>
       <span class="text-on-surface-variant/60 shrink-0">{{ $t('topBar.workspace') }}</span>
@@ -137,6 +137,7 @@ const topBarSearch = inject('topBarSearch', ref(''))
 const navCollapsed = inject('navCollapsed', ref(false))
 const toggleNav = inject('toggleNav', () => {})
 const listCollapsed = inject('listCollapsed', ref(false))
+const isMobile = inject('isMobile', ref(false))
 const toggleCinematic = inject('toggleCinematic', () => {})
 
 // Mirrors the design's viewModeBadge: which panes are currently folded away.

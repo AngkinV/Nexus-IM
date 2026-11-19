@@ -535,7 +535,7 @@ const handleAvatarClick = (senderId) => {
 }
 
 .message-text {
-  font-size: 16px;
+  font-size: 12px;
   line-height: 1.625;
   letter-spacing: -0.005em;
   word-wrap: break-word;
@@ -543,7 +543,7 @@ const handleAvatarClick = (senderId) => {
 }
 
 .message-recalled {
-  font-size: 13px;
+  font-size: 12px;
   font-style: italic;
   color: #6f7274;
 }
@@ -762,7 +762,7 @@ const handleAvatarClick = (senderId) => {
 }
 
 .file-name {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 18px;
   letter-spacing: 0.01em;
   font-weight: 500;
@@ -1030,7 +1030,7 @@ const handleAvatarClick = (senderId) => {
   }
 
   .message-text {
-    font-size: 14px;
+    font-size: 12px;
     line-height: 1.45;
   }
 

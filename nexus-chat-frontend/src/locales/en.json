@@ -666,7 +666,9 @@
       "eveningOpen": "{min} min in · {n} lines",
       "eveningNotOpen": "Not started",
       "eveningShort": "{min} min",
-      "memoriesUsed": "{n} memories used for this reply"
+      "memoriesUsed": "{n} memories used for this reply",
+      "loadingCharacter": "Loading character…",
+      "characterUnavailable": "Character model unavailable; showing silhouette"
     },
     "orbit": {
       "whisper": "Inner voice",

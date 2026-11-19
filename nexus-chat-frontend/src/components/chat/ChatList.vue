@@ -355,13 +355,13 @@ const formatTime = (time) => {
 }
 
 .state-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: #c4c7c8;
 }
 
 .state-desc {
-  font-size: 12px;
+  font-size: 14px;
   color: #6f7274;
   line-height: 1.5;
 }
@@ -373,7 +373,7 @@ const formatTime = (time) => {
   border: 1px solid rgba(68, 71, 72, 0.6);
   background: #1b1b1e;
   color: #e4e1e6;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -625,7 +625,7 @@ const formatTime = (time) => {
 }
 
 .chat-name {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 18px;
   letter-spacing: 0.01em;
   font-weight: 500;

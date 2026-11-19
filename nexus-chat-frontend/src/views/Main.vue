@@ -27,7 +27,7 @@
     <!-- Desktop pet. v-if, not v-show: turning it off must release the WebGL
          context and the loaded VRM, not just hide them. -->
     <CompanionAvatar3D
-      v-if="companionStore.petVisible"
+      v-if="companionStore.petVisible && activeView !== 'companion'"
       :active-role="companionStore.activeRole"
       :status="companionStore.status"
       :growth="companionStore.growth"

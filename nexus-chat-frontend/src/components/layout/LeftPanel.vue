@@ -46,7 +46,7 @@
             <div class="flex items-center justify-between pb-2 mb-2.5 border-b border-outline-variant/20">
               <div class="flex items-center gap-1.5">
                 <span class="material-symbols-outlined text-[16px] text-primary">mark_chat_unread</span>
-                <span class="text-[13px] font-semibold text-primary">{{ $t('leftPanel.unreadPreview') }}</span>
+                <span class="text-[14px] font-semibold text-primary">{{ $t('leftPanel.unreadPreview') }}</span>
                 <span class="px-1.5 py-0.5 rounded-full bg-primary text-zinc-950 font-code text-[10px] font-bold">{{ unreadTotal }}</span>
               </div>
               <button class="text-[11px] font-code text-on-surface-variant hover:text-primary transition-colors flex items-center gap-0.5" type="button" @click.stop="markAllRead">
@@ -70,10 +70,10 @@
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center justify-between mb-0.5">
-                    <span class="text-[13px] font-medium text-primary truncate">{{ chat.name }}</span>
+                    <span class="text-[14px] font-medium text-primary truncate">{{ chat.name }}</span>
                     <span class="font-code text-[11px] text-on-surface-variant/70 shrink-0 ml-2">{{ formatTime(chat.lastMessageTime) }}</span>
                   </div>
-                  <p class="text-[12px] text-on-surface-variant truncate">{{ chat.lastMessage || $t('common.noMessages') }}</p>
+                  <p class="text-[14px] text-on-surface-variant truncate">{{ chat.lastMessage || $t('common.noMessages') }}</p>
                 </div>
                 <span v-if="chat.unreadCount" class="shrink-0 h-3.5 min-w-[14px] px-1 rounded-full bg-primary text-zinc-950 font-code text-[10px] font-bold flex items-center justify-center self-center">
                   {{ chat.unreadCount > 99 ? '99+' : chat.unreadCount }}
@@ -81,7 +81,7 @@
                 <span v-else class="material-symbols-outlined text-[14px] text-on-surface-variant/40 self-center">chevron_right</span>
               </div>
             </div>
-            <p v-else class="text-[12px] text-on-surface-variant/70 py-2">{{ $t('leftPanel.noUnread') }}</p>
+            <p v-else class="text-[14px] text-on-surface-variant/70 py-2">{{ $t('leftPanel.noUnread') }}</p>
             <div class="mt-2.5 pt-2 border-t border-outline-variant/20 flex items-center justify-between text-on-surface-variant/60 font-code text-[11px]">
               <span>{{ $t('leftPanel.shortcutExpand') }}</span>
               <span class="text-primary hover:underline cursor-pointer" @click.stop="toggleList">{{ $t('leftPanel.expandAll', { n: chatStore.chats?.length || 0 }) }}</span>
@@ -123,7 +123,7 @@
     >
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-space-xs min-w-0">
-          <span class="font-headline-md text-headline-md tracking-tight text-primary font-medium truncate">
+          <span class="font-headline-md text-[14px] leading-5 tracking-tight text-primary font-medium truncate">
             {{ paneTitle }}
           </span>
           <span
@@ -175,7 +175,7 @@
             <span class="material-symbols-outlined text-[16px]">keyboard_double_arrow_left</span>
           </button>
         </div>
-        <template v-else>
+        <div v-else class="flex items-center gap-1 shrink-0">
           <button
             class="shrink-0 w-7 h-7 rounded bg-surface-container-low hover:bg-surface-container-high text-on-surface-variant hover:text-primary flex items-center justify-center transition-colors"
             :title="$t('leftPanel.quickFilter')"
@@ -192,7 +192,7 @@
           >
             <span class="material-symbols-outlined text-[16px]">keyboard_double_arrow_left</span>
           </button>
-        </template>
+        </div>
       </div>
 
       <!-- Search -->
@@ -222,7 +222,7 @@
         <button
           v-for="tag in filterTags"
           :key="tag.key"
-          class="shrink-0 px-2.5 py-1 rounded-full font-label-sm text-label-sm tracking-tight transition-colors"
+          class="shrink-0 px-2.5 py-1 rounded-full font-label-sm text-[14px] leading-5 tracking-tight transition-colors"
           :class="
             activeFilter === tag.key
               ? 'bg-primary text-on-primary font-medium'

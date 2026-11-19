@@ -666,7 +666,9 @@
       "eveningOpen": "本场已 {min} 分钟 · {n} 句",
       "eveningNotOpen": "尚未开场",
       "eveningShort": "{min} 分钟",
-      "memoriesUsed": "本次回复参考了 {n} 条记忆"
+      "memoriesUsed": "本次回复参考了 {n} 条记忆",
+      "loadingCharacter": "正在载入人物…",
+      "characterUnavailable": "人物模型未能载入，暂以轮廓显示"
     },
     "orbit": {
       "whisper": "独白",
