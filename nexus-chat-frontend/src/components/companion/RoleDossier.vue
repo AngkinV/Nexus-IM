@@ -10,7 +10,7 @@
       </div>
       <div class="dossier-id">
         <div class="dossier-name">{{ activeRole?.name || $t('companion.defaultName') }}</div>
-        <div class="dossier-sub">{{ activeRole?.persona || $t('companion.defaultStatus') }}</div>
+        <div class="dossier-sub">{{ activeRole?.presence || activeRole?.tone || $t('companion.defaultStatus') }}</div>
       </div>
       <button class="dossier-close" type="button" :title="$t('common.close')" @click="emit('close')">
         <span class="material-symbols-outlined">close</span>
@@ -32,6 +32,35 @@
           </div>
         </div>
         <p v-else class="dossier-empty">{{ $t('companion.emptyGrowth') }}</p>
+      </section>
+
+      <!-- The character card: what she is told about herself. Both fields go
+           into the prompt as written; empty means nothing is invented for her. -->
+      <section v-if="activeRole" class="dossier-section">
+        <div class="dossier-section-head">{{ $t('companion.card.title') }}</div>
+        <label class="card-label" for="dossier-card-background">{{ $t('companion.card.background') }}</label>
+        <textarea
+          id="dossier-card-background"
+          v-model="cardBackground"
+          class="dossier-textarea"
+          rows="3"
+          maxlength="600"
+          :placeholder="$t('companion.card.backgroundPlaceholder')"
+        ></textarea>
+        <label class="card-label" for="dossier-card-greeting">{{ $t('companion.card.greeting') }}</label>
+        <textarea
+          id="dossier-card-greeting"
+          v-model="cardGreeting"
+          class="dossier-textarea"
+          rows="2"
+          maxlength="300"
+          :placeholder="$t('companion.card.greetingPlaceholder')"
+        ></textarea>
+        <div class="card-foot">
+          <button class="dossier-btn" type="button" :disabled="!cardDirty || cardSaving" @click="saveCard">
+            {{ $t('companion.card.save') }}
+          </button>
+        </div>
       </section>
 
       <!-- Past evenings. Read-only: the archive is for remembering, not editing. -->
@@ -137,6 +166,43 @@ watch(activeRoleId, async (roleId) => {
   const userId = userStore.currentUser?.id
   if (userId && roleId) await companionStore.fetchSessionHistory(userId, roleId)
 })
+
+// ── Character card ──────────────────────────────────────────────────────────
+const cardBackground = ref('')
+const cardGreeting = ref('')
+const cardSaving = ref(false)
+const cardDirty = computed(() =>
+  cardBackground.value.trim() !== (activeRole.value?.background || '') ||
+  cardGreeting.value.trim() !== (activeRole.value?.greeting || '')
+)
+
+// Follow the character on screen; a saved card comes back through the store.
+watch(
+  () => [activeRole.value?.id, activeRole.value?.background, activeRole.value?.greeting],
+  () => {
+    cardBackground.value = activeRole.value?.background || ''
+    cardGreeting.value = activeRole.value?.greeting || ''
+  },
+  { immediate: true }
+)
+
+async function saveCard() {
+  const roleId = activeRoleId.value
+  if (!roleId || cardSaving.value) return
+  cardSaving.value = true
+  try {
+    // Empty strings on purpose: the server reads "" as "clear this field".
+    await companionStore.updateRole(userStore.currentUser?.id, roleId, {
+      background: cardBackground.value.trim(),
+      greeting: cardGreeting.value.trim()
+    })
+    ElMessage.success(t('companion.card.saved'))
+  } catch {
+    ElMessage.error(t('common.operationFailed'))
+  } finally {
+    cardSaving.value = false
+  }
+}
 
 const newMemoryType = ref('short_term')
 const newMemoryContent = ref('')
@@ -449,8 +515,50 @@ async function removeMemory(memory) {
   cursor: pointer;
 }
 
-.dossier-btn:hover {
+.dossier-btn:hover:not(:disabled) {
   background: #2a2a2d;
+}
+
+.dossier-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.card-label {
+  display: block;
+  margin: 8px 0 4px;
+  color: #8e9192;
+  font-size: 11px;
+}
+
+.dossier-textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #131316;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #e4e1e6;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+  outline: none;
+}
+
+.dossier-textarea::placeholder {
+  color: #6f7274;
+}
+
+.dossier-textarea:focus {
+  border-color: #8e9192;
+}
+
+.card-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 .memory-list {

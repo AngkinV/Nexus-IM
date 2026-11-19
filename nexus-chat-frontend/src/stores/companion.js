@@ -16,6 +16,27 @@ export const useCompanionStore = defineStore('companion', () => {
     const isFallback = ref(false)
     const isLoading = ref(false)
 
+    // ── What the stage reads ───────────────────────────────────────────────
+    // Mood / motion / doing as the model reported them with the reply that is
+    // streaming right now. Null between replies; the stored status takes over.
+    const liveState = ref(null)
+    // True only while reply text is actually arriving.
+    const speaking = ref(false)
+    // What went into the prompt for the last reply: { sessionId, sceneKey,
+    // memoryIds, historyCount, model }. Reported by the server, never assumed.
+    const lastContext = ref(null)
+    // Which characters have a send in flight. A reply that is still being
+    // written for one character must not show as "replying…" under another, nor
+    // lock the other's input.
+    const sendingRoleIds = ref([])
+    const streamAborts = new Map()
+    const beginSending = (roleId) => {
+        if (!sendingRoleIds.value.includes(roleId)) sendingRoleIds.value = [...sendingRoleIds.value, roleId]
+    }
+    const endSending = (roleId) => {
+        sendingRoleIds.value = sendingRoleIds.value.filter(id => id !== roleId)
+    }
+
     // Desktop pet: when off, the 3D widget is not mounted at all, so its WebGL
     // context and the loaded VRM release instead of idling in the background.
     // Off is the default — new users, and anyone who never touched the switch,
@@ -32,6 +53,9 @@ export const useCompanionStore = defineStore('companion', () => {
     const activeRole = computed(() => {
         return roles.value.find(r => r.id === activeRoleId.value) || roles.value[0] || null
     })
+
+    /** True while the character on screen has a send in flight. */
+    const isSending = computed(() => sendingRoleIds.value.includes(activeRoleId.value))
 
     const getLocalModelOverrides = () => {
         try {
@@ -104,9 +128,26 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const setActiveRole = async (userId, roleId) => {
+        if (roleId !== activeRoleId.value) {
+            // Everything below belongs to the character being left. Clearing it
+            // now is what keeps one character's words, state and evening from
+            // showing under another's name while the new data loads.
+            messages.value = []
+            memories.value = []
+            growth.value = null
+            status.value = null
+            activeSession.value = null
+            sessionHistory.value = []
+            liveState.value = null
+            speaking.value = false
+            lastContext.value = null
+        }
         activeRoleId.value = roleId
         await loadRoleData(userId, roleId)
     }
+
+    /** A response is only applied if its character is still the one on screen. */
+    const isCurrent = (roleId) => activeRoleId.value === roleId
 
     const updateRole = async (userId, roleId, data) => {
         const response = await companionAPI.updateRole(roleId, userId, data)
@@ -134,159 +175,324 @@ export const useCompanionStore = defineStore('companion', () => {
                 fetchMemories(userId, roleId),
                 fetchGrowth(userId, roleId),
                 fetchStatus(userId, roleId),
+                // The evening in progress, if any. Read, never opened: looking
+                // at a character must not start an evening with them.
+                fetchActiveSession(userId, roleId),
+                // Past evenings label the conversation's dividers.
+                fetchSessionHistory(userId, roleId),
                 fetchModelStatus(userId)
             ])
         } finally {
-            isLoadingRoleData.value = false
+            if (isCurrent(roleId)) isLoadingRoleData.value = false
         }
     }
 
     const fetchConversation = async (userId, roleId) => {
         try {
             const response = await companionAPI.getConversation(roleId, userId)
-            messages.value = response.data || []
+            if (!isCurrent(roleId)) return
+            const stored = response.data || []
+            // A send in flight owns its optimistic rows; keep them at the end —
+            // except a line the server has already filed, which it now shows
+            // itself, and anything that belongs to another character.
+            const filed = new Set(stored.map(m => m.clientMsgId).filter(Boolean))
+            const pending = messages.value.filter(m =>
+                m.pending && m.roleId === roleId && !(m.clientMsgId && filed.has(m.clientMsgId)))
+            messages.value = [...stored, ...pending]
         } catch (error) {
             console.error('Fetch companion conversation failed:', error)
         }
     }
 
-    const sendMessage = async (userId, roleId, content, sceneKey = null) => {
-        if (!content || !roleId) return null
-        const tempUserMsg = {
-            id: `local-${Date.now()}`,
+    // ── Sending ────────────────────────────────────────────────────────────
+    const newClientId = () =>
+        (globalThis.crypto?.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`)
+
+    /**
+     * The optimistic row for a line the user just sent. It only joins the list
+     * on screen when that list belongs to the character being written to — a
+     * send for anyone else must not draw its line into this conversation.
+     */
+    const pushUserRow = (roleId, content, clientMsgId) => {
+        const row = {
+            id: `local-${clientMsgId}`,
             roleId,
             senderType: 'user',
             content,
             fallback: false,
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            clientMsgId,
+            pending: true,
+            failed: false
         }
-        messages.value.push(tempUserMsg)
+        if (!isCurrent(roleId)) return row
+        messages.value.push(row)
+        return messages.value[messages.value.length - 1]
+    }
 
-        try {
-            const response = await companionAPI.sendMessage(roleId, userId, content, sceneKey)
-            const data = response.data
-            if (data?.roleMessage) {
-                messages.value = messages.value.filter(m => m.id !== tempUserMsg.id)
-                messages.value.push(data.userMessage)
-                messages.value.push(data.roleMessage)
-                isFallback.value = !!data.fallback
-                if (data.status) status.value = data.status
+    /**
+     * The row a send belongs to. A retry reuses the line already on screen —
+     * optimistic or filed — instead of drawing it a second time.
+     */
+    const userRowFor = (roleId, content, clientMsgId) => {
+        const existing = isCurrent(roleId)
+            ? messages.value.find(m => m.senderType === 'user' && m.clientMsgId === clientMsgId)
+            : null
+        if (!existing) return pushUserRow(roleId, content, clientMsgId)
+        existing.failed = false
+        return existing
+    }
+
+    const dropRows = (...ids) => {
+        messages.value = messages.value.filter(m => !ids.includes(m.id))
+    }
+
+    /** Put the server's version of an exchange in place of the optimistic rows. */
+    const settleExchange = (roleId, data, ...optimisticIds) => {
+        // The seat list sorts by last exchange and shows what she is doing; both
+        // just changed, whichever character is on screen by now.
+        const seat = roles.value.find(r => r.id === roleId)
+        if (seat && data.roleMessage) {
+            seat.lastMessageAt = data.roleMessage.createdAt
+            if (data.status?.summary) seat.presence = data.status.summary
+        }
+        if (!isCurrent(roleId)) return
+        const serverIds = [data.openingMessage?.id, data.userMessage?.id, data.roleMessage?.id].filter(Boolean)
+        messages.value = messages.value.filter(m => !optimisticIds.includes(m.id) && !serverIds.includes(m.id))
+        if (data.openingMessage) messages.value.push(data.openingMessage)
+        if (data.userMessage) messages.value.push(data.userMessage)
+        if (data.roleMessage) messages.value.push(data.roleMessage)
+        isFallback.value = !!data.fallback
+        if (data.status) status.value = data.status
+        if (data.sessionId && activeSession.value?.id !== data.sessionId) {
+            activeSession.value = {
+                id: data.sessionId,
+                roleId,
+                sceneKey: data.sceneKey || null,
+                status: 'active',
+                startedAt: data.openingMessage?.createdAt || data.userMessage?.createdAt || new Date().toISOString()
             }
+        }
+        if (Array.isArray(data.memoryIds)) {
+            lastContext.value = { ...(lastContext.value || {}), sessionId: data.sessionId, memoryIds: data.memoryIds }
+        }
+    }
+
+    /** A send that did not complete: keep the user's line, marked, so it can be retried. */
+    const markFailed = (roleId, row, liveId) => {
+        if (!isCurrent(roleId)) return
+        if (liveId) dropRows(liveId)
+        const kept = messages.value.find(m => m.id === row.id)
+        if (kept) kept.failed = true
+    }
+
+    /**
+     * Plain (non-streaming) send. Used only when the server has no stream
+     * endpoint. Resolves to the exchange, or null when the send failed.
+     */
+    const sendMessage = async (userId, roleId, content, sceneKey = null, clientMsgId = null) => {
+        if (!content || !roleId) return null
+        const clientId = clientMsgId || newClientId()
+        const row = userRowFor(roleId, content, clientId)
+        beginSending(roleId)
+        try {
+            const response = await companionAPI.sendMessage(roleId, userId, content, sceneKey, clientId)
+            const data = response.data
+            if (!data?.roleMessage) {
+                markFailed(roleId, row)
+                return null
+            }
+            settleExchange(roleId, data, row.id)
             return data
         } catch (error) {
             console.error('Send companion message failed:', error)
+            markFailed(roleId, row)
             return null
+        } finally {
+            endSending(roleId)
         }
     }
 
     /**
-     * Streaming send. The reply grows in place while the server writes it, so the
-     * tavern reads at the same speed as the AI assistant instead of pausing for
-     * several seconds and then dropping a finished paragraph.
+     * Streaming send. The reply grows in place while the server writes it.
      *
-     * Resolves to the same shape as `sendMessage`; null means the send failed.
+     * Resolves to one of:
+     *   { roleMessage, ... }   the settled exchange
+     *   { unsupported: true }  the server has no stream endpoint — and therefore
+     *                          did nothing; the only case where the caller may
+     *                          send again through the plain endpoint
+     *   { stopped: true }      the user stopped the reply
+     *   null                   the send failed; the user's line stays, marked,
+     *                          and can be retried under the same client id
+     *
+     * It never falls back by itself. A failed stream used to be re-sent through
+     * the plain endpoint even though the server had usually stored the line
+     * already, which filed the message twice and called the model twice.
      */
-    const sendMessageStream = async (userId, roleId, content, sceneKey = null) => {
+    const sendMessageStream = async (userId, roleId, content, sceneKey = null, clientMsgId = null) => {
         if (!content || !roleId) return null
-        const tempUserMsg = {
-            id: `local-${Date.now()}`,
-            roleId,
-            senderType: 'user',
-            content,
-            fallback: false,
-            createdAt: new Date().toISOString()
-        }
-        messages.value.push(tempUserMsg)
+        // One reply at a time per character.
+        if (streamAborts.has(roleId)) return null
+        const clientId = clientMsgId || newClientId()
+        const row = userRowFor(roleId, content, clientId)
 
         // The placeholder the deltas grow into. It has to be the reactive object
         // inside the array — mutating a copy would not repaint.
-        const live = {
-            id: `live-${Date.now()}`,
+        let live = {
+            id: `live-${clientId}`,
             roleId,
             senderType: 'role',
             content: '',
             fallback: false,
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            pending: true,
+            live: true
         }
-        messages.value.push(live)
+        if (isCurrent(roleId)) {
+            messages.value.push(live)
+            live = messages.value[messages.value.length - 1]
+        }
 
+        const abort = new AbortController()
+        streamAborts.set(roleId, abort)
+        beginSending(roleId)
+        if (isCurrent(roleId)) liveState.value = null
         let settled = null
+        let serverError = false
+
+        const handle = (frame) => {
+            const event = parseStreamFrame(frame)
+            if (!event) return
+            // Words for a character who is no longer on screen go nowhere. The
+            // server still files the exchange; it shows up when they are opened.
+            const here = isCurrent(roleId)
+            if (event.name === 'delta') {
+                if (typeof event.data === 'string') {
+                    live.content += event.data
+                    if (here) speaking.value = true
+                }
+            } else if (event.name === 'state') {
+                live.state = event.data
+                if (here) liveState.value = event.data
+            } else if (event.name === 'context') {
+                if (here) {
+                    lastContext.value = event.data
+                    if (event.data?.sessionId && activeSession.value?.id !== event.data.sessionId) {
+                        activeSession.value = {
+                            id: event.data.sessionId,
+                            roleId,
+                            sceneKey: event.data.sceneKey || null,
+                            status: 'active',
+                            startedAt: new Date().toISOString()
+                        }
+                    }
+                }
+            } else if (event.name === 'opening') {
+                // Her first line of a new evening goes in above the user's.
+                if (here && event.data?.id && !messages.value.some(m => m.id === event.data.id)) {
+                    const at = messages.value.findIndex(m => m.id === row.id)
+                    messages.value.splice(at < 0 ? messages.value.length : at, 0, event.data)
+                }
+            } else if (event.name === 'done') {
+                settled = event.data
+            } else if (event.name === 'error') {
+                serverError = true
+            }
+        }
+
         try {
             const response = await fetch(
                 `${API_BASE_URL}/companion/messages/stream?userId=${encodeURIComponent(userId)}`,
                 {
                     method: 'POST',
                     headers: buildStreamHeaders(),
-                    body: JSON.stringify({ roleId, content, sceneKey })
+                    body: JSON.stringify({ roleId, content, sceneKey, clientMsgId: clientId }),
+                    signal: abort.signal
                 }
             )
 
+            // No such endpoint: the request never reached the conversation code.
+            if (response.status === 404 || response.status === 405) {
+                if (isCurrent(roleId)) dropRows(live.id)
+                return { unsupported: true, clientMsgId: clientId }
+            }
             if (!response.ok || !response.body) {
-                messages.value = messages.value.filter(m => m.id !== live.id && m.id !== tempUserMsg.id)
+                markFailed(roleId, row, live.id)
                 return null
             }
 
             const reader = response.body.getReader()
             const decoder = new TextDecoder('utf-8')
             let buffer = ''
-
             while (true) {
                 const { value, done } = await reader.read()
                 if (done) break
                 buffer += decoder.decode(value, { stream: true })
-
                 let frameEnd
                 while ((frameEnd = buffer.indexOf('\n\n')) !== -1) {
-                    const frame = buffer.slice(0, frameEnd)
+                    handle(buffer.slice(0, frameEnd))
                     buffer = buffer.slice(frameEnd + 2)
-                    const handled = applyStreamFrame(frame, live)
-                    if (handled) settled = handled
                 }
             }
-            if (buffer.trim()) {
-                const handled = applyStreamFrame(buffer, live)
-                if (handled) settled = handled
-            }
+            if (buffer.trim()) handle(buffer)
         } catch (error) {
+            if (abort.signal.aborted) {
+                // Stopped by the user. Keep what she had said so far on screen.
+                // The server keeps what it had sent when it noticed, which can
+                // run a few words past this; the next load shows its version.
+                if (isCurrent(roleId)) {
+                    if (live.content.trim()) {
+                        live.live = false
+                        live.pending = false
+                        live.stopped = true
+                        row.pending = false
+                    } else {
+                        dropRows(live.id)
+                        row.failed = true
+                    }
+                }
+                return { stopped: true, clientMsgId: clientId }
+            }
             console.error('Stream companion message failed:', error)
-            messages.value = messages.value.filter(m => m.id !== live.id && m.id !== tempUserMsg.id)
+            markFailed(roleId, row, live.id)
             return null
+        } finally {
+            streamAborts.delete(roleId)
+            endSending(roleId)
+            // The stage's live readings belong to whoever is on screen; a reply
+            // finishing elsewhere must not blank them.
+            if (isCurrent(roleId)) {
+                speaking.value = false
+                liveState.value = null
+            }
         }
 
-        if (!settled?.roleMessage) {
-            messages.value = messages.value.filter(m => m.id !== live.id && m.id !== tempUserMsg.id)
+        if (serverError || !settled?.roleMessage) {
+            markFailed(roleId, row, live.id)
             return null
         }
-
-        messages.value = messages.value.filter(m => m.id !== live.id && m.id !== tempUserMsg.id)
-        messages.value.push(settled.userMessage)
-        messages.value.push(settled.roleMessage)
-        isFallback.value = !!settled.fallback
-        if (settled.status) status.value = settled.status
+        settleExchange(roleId, settled, row.id, live.id)
         return settled
     }
 
-    const applyStreamFrame = (frame, live) => {
-        let event = 'message'
+    /** Stop the reply being written for the character on screen, if there is one. */
+    const stopStreaming = () => {
+        streamAborts.get(activeRoleId.value)?.abort()
+    }
+
+    const parseStreamFrame = (frame) => {
+        let name = 'message'
         const dataLines = []
         for (const line of frame.split('\n')) {
-            if (line.startsWith('event:')) event = line.slice(6).trim()
+            if (line.startsWith('event:')) name = line.slice(6).trim()
             else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
         }
         if (!dataLines.length) return null
-        const raw = dataLines.join('\n')
-        let parsed
         try {
-            parsed = JSON.parse(raw)
+            return { name, data: JSON.parse(dataLines.join('\n')) }
         } catch {
             return null
         }
-        if (event === 'delta') {
-            live.content += typeof parsed === 'string' ? parsed : ''
-            return null
-        }
-        if (event === 'done') return parsed
-        return null
     }
 
     const buildStreamHeaders = () => {
@@ -301,6 +507,7 @@ export const useCompanionStore = defineStore('companion', () => {
     const openSession = async (userId, roleId, sceneKey) => {
         try {
             const response = await companionAPI.openSession(userId, roleId, sceneKey)
+            if (!isCurrent(roleId)) return response.data || null
             activeSession.value = response.data || null
             return activeSession.value
         } catch (error) {
@@ -313,8 +520,10 @@ export const useCompanionStore = defineStore('companion', () => {
     const fetchActiveSession = async (userId, roleId) => {
         try {
             const response = await companionAPI.activeSession(userId, roleId)
-            activeSession.value = response.status === 204 ? null : (response.data || null)
-            return activeSession.value
+            const found = response.status === 204 ? null : (response.data || null)
+            if (!isCurrent(roleId)) return found
+            activeSession.value = found
+            return found
         } catch (error) {
             return null
         }
@@ -335,6 +544,7 @@ export const useCompanionStore = defineStore('companion', () => {
     const fetchSessionHistory = async (userId, roleId) => {
         try {
             const response = await companionAPI.sessionHistory(userId, roleId)
+            if (!isCurrent(roleId)) return response.data || []
             sessionHistory.value = response.data || []
             return sessionHistory.value
         } catch (error) {
@@ -399,6 +609,7 @@ export const useCompanionStore = defineStore('companion', () => {
     const fetchMemories = async (userId, roleId) => {
         try {
             const response = await companionAPI.getMemories(roleId, userId)
+            if (!isCurrent(roleId)) return
             memories.value = response.data || []
         } catch (error) {
             console.error('Fetch memories failed:', error)
@@ -434,6 +645,7 @@ export const useCompanionStore = defineStore('companion', () => {
     const fetchGrowth = async (userId, roleId) => {
         try {
             const response = await companionAPI.getGrowth(roleId, userId)
+            if (!isCurrent(roleId)) return
             growth.value = response.data || null
         } catch (error) {
             console.error('Fetch growth failed:', error)
@@ -443,6 +655,7 @@ export const useCompanionStore = defineStore('companion', () => {
     const fetchStatus = async (userId, roleId) => {
         try {
             const response = await companionAPI.getStatus(roleId, userId)
+            if (!isCurrent(roleId)) return
             status.value = response.data || null
         } catch (error) {
             console.error('Fetch status failed:', error)
@@ -489,6 +702,10 @@ export const useCompanionStore = defineStore('companion', () => {
         isFallback,
         isLoading,
         isLoadingRoleData,
+        isSending,
+        speaking,
+        liveState,
+        lastContext,
         petVisible,
         setPetVisible,
         ensureInitialized,
@@ -499,6 +716,7 @@ export const useCompanionStore = defineStore('companion', () => {
         fetchConversation,
         sendMessage,
         sendMessageStream,
+        stopStreaming,
         fetchInnerVoice,
         fetchModelChannel,
         testModelChannel,

@@ -659,17 +659,14 @@
     "typing": "Replying…",
     "stage": {
       "collapse": "Collapse stage",
-      "expand": "Expand holographic stage",
-      "online": "Holo online",
-      "sync": "3D holographic link",
-      "synchronized": "SYNCHRONIZED",
-      "projection": "Live neural projection",
-      "live": "HOLO_MESH · LIVE",
-      "intimacy": "Bond",
+      "expand": "Expand stage",
       "mood": "Mood",
-      "scene": "Scene",
-      "demoCollapse": "Motion demo: collapse to mini badge",
-      "demoExpand": "Motion demo: expand holographic stage"
+      "now": "Right now",
+      "evening": "This evening",
+      "eveningOpen": "{min} min in · {n} lines",
+      "eveningNotOpen": "Not started",
+      "eveningShort": "{min} min",
+      "memoriesUsed": "{n} memories used for this reply"
     },
     "orbit": {
       "whisper": "Inner voice",
@@ -809,10 +806,38 @@
       "closed": "The evening is over",
       "history": "Past evenings",
       "closingTitle": "Closing the evening",
-      "closingHint": "She is deciding what to say last"
+      "closingHint": "She is deciding what to say last",
+      "openingTag": "Opening line",
+      "cannedTag": "Canned reply · model did not answer",
+      "stop": "Stop",
+      "stopped": "Stopped",
+      "sendFailed": "Not sent · Retry",
+      "noReply": "No reply · Retry",
+      "sendFailedToast": "That line did not go through. You can retry it."
     },
     "loadingConversation": "Opening this evening…",
-    "loadingRoles": "Lighting up…"
+    "loadingRoles": "Lighting up…",
+    "mood": {
+      "calm": "Calm",
+      "warm": "Warm",
+      "happy": "Happy",
+      "shy": "Shy",
+      "sad": "Down",
+      "worried": "Worried",
+      "angry": "Angry",
+      "surprised": "Surprised",
+      "tired": "Tired",
+      "thoughtful": "Thoughtful"
+    },
+    "card": {
+      "title": "Character card",
+      "background": "Background",
+      "backgroundPlaceholder": "Where she comes from and why she is here. Goes into the prompt as written.",
+      "greeting": "Opening line",
+      "greetingPlaceholder": "What she says first when an evening opens. Leave empty and she waits for you.",
+      "save": "Save card",
+      "saved": "Card saved"
+    }
   },
   "agent": {
     "title": "AI Assistant",

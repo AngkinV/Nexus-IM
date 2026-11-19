@@ -19,7 +19,7 @@
 
       <div class="role-chat-id">
         <div class="role-chat-name">{{ activeRole?.name || $t('companion.defaultName') }}</div>
-        <div class="role-chat-sub">{{ activeRole?.persona || $t('companion.defaultStatus') }}</div>
+        <div class="role-chat-sub">{{ headerSubText }}</div>
       </div>
 
       <button
@@ -36,11 +36,12 @@
         <span class="role-mini-visual" aria-hidden="true">
           <span ref="miniHoloHost" class="role-mini-canvas"></span>
           <span class="role-mini-radar"></span>
-          <span class="role-mini-node"></span>
+          <!-- Lit only while an evening is actually open. -->
+          <span v-if="activeSession" class="role-mini-node"></span>
         </span>
         <span class="role-mini-copy">
-          <span>{{ $t('companion.stage.online') }}</span>
-          <span class="role-mini-value">{{ growth?.intimacy ?? '—' }}%</span>
+          <span>{{ sceneName }}</span>
+          <span class="role-mini-value">{{ moodLabel || eveningShort }}</span>
         </span>
         <span class="material-symbols-outlined role-mini-expand">expand_more</span>
       </button>
@@ -89,16 +90,18 @@
     >
       <div class="role-stage-frame">
         <div class="role-stage-glow" aria-hidden="true"></div>
-        <div ref="stageHost" class="role-stage-canvas"></div>
+        <!-- The room: the open scene, the character on stage, and the state she
+             last reported. Drawn by tavernStage.js; nothing in it is preset. -->
+        <div ref="stageHost" class="role-stage-canvas" aria-hidden="true"></div>
         <span class="role-stage-corner is-tl" aria-hidden="true"></span>
         <span class="role-stage-corner is-tr" aria-hidden="true"></span>
         <span class="role-stage-corner is-bl" aria-hidden="true"></span>
         <span class="role-stage-corner is-br" aria-hidden="true"></span>
 
         <div class="role-stage-sync">
-          <span class="role-stage-live-dot"></span>
-          <span>{{ $t('companion.stage.sync') }}</span>
-          <span class="role-stage-sync-code">{{ $t('companion.stage.synchronized') }}</span>
+          <span class="role-stage-live-dot" :class="{ 'is-on': !!activeSession }"></span>
+          <span>{{ sceneName }}</span>
+          <span class="role-stage-sync-code">{{ eveningText }}</span>
         </div>
 
         <button
@@ -112,28 +115,40 @@
         </button>
 
         <div class="role-stage-detail">
-          <div class="role-stage-kicker">{{ $t('companion.stage.projection') }}</div>
+          <div class="role-stage-kicker">{{ $t('companion.stage.now') }}</div>
           <div class="role-stage-title">{{ activeRole?.name || $t('companion.defaultName') }}</div>
           <p class="role-stage-summary">{{ stageStatusText }}</p>
+          <!-- Which memories the server put in front of the model for the last
+               reply. Opens the dossier, where they can be read and removed. -->
+          <button
+            v-if="memoriesUsed.length"
+            class="role-stage-memory"
+            type="button"
+            :title="memoriesUsedTitle"
+            @click="dossierOpen = true"
+          >
+            <span class="material-symbols-outlined">bookmark</span>
+            <span>{{ $t('companion.stage.memoriesUsed', { n: memoriesUsed.length }) }}</span>
+          </button>
           <div class="role-stage-metrics">
             <div class="role-stage-metric">
-              <span>{{ $t('companion.stage.intimacy') }}</span>
-              <strong>{{ growth?.intimacy ?? '—' }}%</strong>
+              <span>{{ $t('companion.intimacy') }}</span>
+              <strong>{{ growth?.intimacy != null ? `${growth.intimacy}%` : '—' }}</strong>
             </div>
             <div class="role-stage-metric">
               <span>{{ $t('companion.stage.mood') }}</span>
-              <strong>{{ stageMoodText }}</strong>
+              <strong>{{ moodLabel || '—' }}</strong>
             </div>
             <div class="role-stage-metric">
-              <span>{{ $t('companion.stage.scene') }}</span>
-              <strong>{{ $t(`companion.sceneNames.${scene.key}`) }}</strong>
+              <span>{{ $t('companion.stage.evening') }}</span>
+              <strong>{{ eveningShort }}</strong>
             </div>
           </div>
         </div>
 
-        <div class="role-stage-mesh" aria-hidden="true">
-          <span class="role-stage-live-dot"></span>
-          <span>{{ $t('companion.stage.live') }}</span>
+        <div v-if="sending" class="role-stage-mesh" aria-hidden="true">
+          <span class="role-stage-live-dot is-on"></span>
+          <span>{{ $t('companion.typing') }}</span>
         </div>
       </div>
     </div>
@@ -153,7 +168,16 @@
 
     <div class="role-chat-body">
       <div class="role-chat-main">
-        <div ref="scrollEl" class="role-chat-stream" tabindex="-1" @scroll.passive="onStreamScroll">
+        <div
+          ref="scrollEl"
+          class="role-chat-stream"
+          tabindex="-1"
+          @scroll.passive="onStreamScroll"
+          @wheel.passive="noteUserScroll"
+          @touchmove.passive="noteUserScroll"
+          @keydown="noteUserScroll"
+          @pointerdown="onStreamPointerDown"
+        >
           <!-- The room, stated once at the top of the stream. This is the scene
                the character is actually in — the same text goes into the prompt. -->
           <div class="role-scene-anchor">
@@ -168,48 +192,69 @@
             <span class="role-loading-spinner"></span>
             <span>{{ $t('companion.loadingConversation') }}</span>
           </div>
-          <p v-else-if="!messages.length" class="role-chat-empty">{{ $t('companion.chatEmpty') }}</p>
-          <div
-            v-for="msg in messages"
-            :key="msg.id"
-            class="role-msg"
-            :class="msg.senderType === 'user' ? 'is-user' : 'is-role'"
-          >
-            <div class="role-bubble">
-              <p class="role-text">{{ msg.content }}</p>
-              <span v-if="msg.senderType !== 'user' && msg.fallback" class="role-tag">
-                {{ $t('companion.fallback') }}
-              </span>
+          <p v-else-if="!streamItems.length && !openingPreview" class="role-chat-empty">{{ $t('companion.chatEmpty') }}</p>
+
+          <template v-for="item in streamItems" :key="item.key">
+            <!-- Where one evening starts: when, and in which room. -->
+            <div v-if="item.type === 'divider'" class="role-session-divider">
+              <span class="role-session-rule"></span>
+              <span class="role-session-label">{{ item.label }}</span>
+              <span class="role-session-rule"></span>
             </div>
-            <div class="role-meta">
-              <span>{{ dayjs(msg.createdAt).format('HH:mm') }}</span>
-              <!-- What this exchange changed, read back from the server after the reply. -->
-              <template v-if="growthGain?.messageId === msg.id">
-                <span v-for="gain in growthGain.items" :key="gain.key" class="role-gain">
-                  {{ $t(`companion.${gain.key}`) }} +{{ gain.delta }}
+            <div v-else-if="item.type === 'end'" class="role-session-end">{{ $t('companion.session.closed') }}</div>
+            <div
+              v-else
+              class="role-msg"
+              :class="[item.msg.senderType === 'user' ? 'is-user' : 'is-role', { 'is-failed': item.msg.failed }]"
+            >
+              <div class="role-bubble">
+                <!-- Kept on one line: the paragraph preserves whitespace. -->
+                <p class="role-text"><span v-for="(seg, i) in segmentsOf(item.msg.content)" :key="i" :class="seg.narration ? 'role-narr' : 'role-speech'">{{ seg.text }}</span></p>
+                <span v-if="item.msg.senderType !== 'user' && item.msg.fallback" class="role-tag">
+                  {{ $t('companion.session.cannedTag') }}
                 </span>
-              </template>
+              </div>
+              <div class="role-meta">
+                <span>{{ dayjs(item.msg.createdAt).format('HH:mm') }}</span>
+                <!-- The mood she reported with this reply. Absent when she reported none. -->
+                <span v-if="item.msg.state?.mood" class="role-mood">{{ $t(`companion.mood.${item.msg.state.mood}`) }}</span>
+                <span v-if="item.msg.stopped">{{ $t('companion.session.stopped') }}</span>
+                <!-- What this exchange changed, read back from the server after the reply. -->
+                <template v-if="growthGain?.messageId === item.msg.id">
+                  <span v-for="gain in growthGain.items" :key="gain.key" class="role-gain">
+                    {{ $t(`companion.${gain.key}`) }} +{{ gain.delta }}
+                  </span>
+                </template>
+                <button
+                  v-if="item.retry"
+                  class="role-retry"
+                  type="button"
+                  :disabled="sending"
+                  @click="send(item.msg)"
+                >
+                  <span class="material-symbols-outlined">refresh</span>
+                  <span>{{ $t(item.msg.failed ? 'companion.session.sendFailed' : 'companion.session.noReply') }}</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- Her opening line for an evening that has not started yet. It is
+               filed as a real message the moment the first line is sent. -->
+          <div v-if="openingPreview" class="role-msg is-role is-preview">
+            <div class="role-bubble">
+              <p class="role-text"><span v-for="(seg, i) in segmentsOf(openingPreview)" :key="i" :class="seg.narration ? 'role-narr' : 'role-speech'">{{ seg.text }}</span></p>
+              <span class="role-tag">{{ $t('companion.session.openingTag') }}</span>
             </div>
           </div>
-          <div v-if="sending" class="role-msg is-role">
+
+          <div v-if="awaitingFirstWord" class="role-msg is-role">
             <div class="role-bubble role-typing">
               <span class="material-symbols-outlined">progress_activity</span>
               <span>{{ $t('companion.typing') }}</span>
             </div>
           </div>
         </div>
-
-        <button
-          v-if="stageVisible"
-          class="role-stage-demo"
-          type="button"
-          :aria-pressed="stageCollapsed"
-          @click="toggleStageDemo"
-        >
-          <span class="role-stage-demo-dot" aria-hidden="true"></span>
-          <span class="material-symbols-outlined">motion_mode</span>
-          <span>{{ $t(stageCollapsed ? 'companion.stage.demoExpand' : 'companion.stage.demoCollapse') }}</span>
-        </button>
 
         <div class="role-composer">
           <!-- Scene switch: sits above the input like the design export's
@@ -274,11 +319,18 @@
               @keydown.enter="onEnter"
               @keydown="orbitRef?.noteKeystroke()"
             ></textarea>
+            <!-- While she is writing, the same button stops her. What she has
+                 said so far stays. -->
+            <button v-if="sending" class="role-send is-stop" type="button" @click="stop">
+              <span>{{ $t('companion.session.stop') }}</span>
+              <span class="material-symbols-outlined">stop</span>
+            </button>
             <button
+              v-else
               class="role-send"
               type="button"
-              :disabled="!draft.trim() || sending"
-              @click="send"
+              :disabled="!draft.trim()"
+              @click="send()"
             >
               <span>{{ $t('companion.send') }}</span>
               <span class="material-symbols-outlined">send</span>
@@ -311,7 +363,7 @@ import RoleDossier from '@/components/companion/RoleDossier.vue'
 import MindOrbit from '@/components/companion/MindOrbit.vue'
 import ModelSettingsPanel from '@/components/companion/ModelSettingsPanel.vue'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
-import { mountAbyssStage, mountMiniHologram } from '@/components/agent/abyssStage'
+import { mountTavernStage, mountTavernMini } from '@/components/companion/tavernStage'
 import { TAVERN_SCENES, findScene, readSceneKey, writeSceneKey } from '@/components/companion/tavernScenes'
 
 const emit = defineEmits(['back', 'goAi', 'mood'])
@@ -319,10 +371,12 @@ const emit = defineEmits(['back', 'goAi', 'mood'])
 const { t } = useI18n()
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
-const { activeRole, activeRoleId, messages, growth, status, memories, activeSession, isLoadingRoleData } = storeToRefs(companionStore)
+const {
+  activeRole, activeRoleId, messages, growth, status, memories, activeSession, sessionHistory,
+  isLoadingRoleData, isSending: sending, speaking, liveState, lastContext
+} = storeToRefs(companionStore)
 
 const draft = ref('')
-const sending = ref(false)
 // The dossier is reference material, not something every message needs: closed
 // until asked for.
 const dossierOpen = ref(false)
@@ -343,35 +397,37 @@ const onOrbitMood = (value) => emit('mood', value)
 // Which room this character is sitting in. Per role, so switching characters
 // does not drag the room along.
 const scenes = TAVERN_SCENES
-const sceneKey = ref(readSceneKey(activeRoleId.value))
+// One source of truth: an open evening knows its own room. The stored choice is
+// only what the next evening will open in.
+const localSceneKey = ref(readSceneKey(activeRoleId.value))
+const sceneKey = computed(() => {
+  const open = activeSession.value?.sceneKey
+  return open && TAVERN_SCENES.some((s) => s.key === open) ? open : localSceneKey.value
+})
 const scenePickerOpen = ref(false)
 const scene = computed(() => findScene(sceneKey.value))
+const sceneName = computed(() => t(`companion.sceneNames.${scene.value.key}`))
 
-watch(activeRoleId, async (roleId) => {
-  sceneKey.value = readSceneKey(roleId)
+watch(activeRoleId, (roleId) => {
+  localSceneKey.value = readSceneKey(roleId)
   scenePickerOpen.value = false
-  await openEvening()
 })
 
-function chooseScene(key) {
-  sceneKey.value = key
+async function chooseScene(key) {
+  localSceneKey.value = key
   writeSceneKey(activeRoleId.value, key)
   scenePickerOpen.value = false
   // Changing the room mid-evening is allowed — it is the same visit.
   if (activeSession.value) {
-    companionStore.openSession(userId(), activeRoleId.value, key)
+    await companionStore.openSession(userId(), activeRoleId.value, key)
   }
 }
 
 // ── The evening ──────────────────────────────────────────────────────────────
-// Opening on mount and closing on request. A closed evening leaves a last line
-// in the stream and one sentence in the memory list; the next visit starts clean.
+// An evening opens on the server when the first line is sent — never by looking
+// at a character — and closes on request. Closing files her last line as the
+// evening's final message and one sentence in the memory list.
 const closing = ref(false)
-
-async function openEvening() {
-  if (!userId() || !activeRoleId.value) return
-  await companionStore.openSession(userId(), activeRoleId.value, sceneKey.value)
-}
 
 async function closeEvening() {
   const session = activeSession.value
@@ -390,17 +446,14 @@ async function closeEvening() {
       ElMessage.error(t('common.operationFailed'))
       return
     }
-    // Show the last line where it belongs: at the end of the conversation.
-    if (closed.closingLine) {
-      messages.value.push({
-        id: `closing-${closed.id}`,
-        roleId: activeRoleId.value,
-        senderType: 'role',
-        content: closed.closingLine,
-        fallback: false,
-        createdAt: closed.closedAt || new Date().toISOString()
-      })
-    }
+    // Her last line is a stored message now; read the conversation back rather
+    // than drawing a local copy that would vanish on reload.
+    const roleId = activeRoleId.value
+    await Promise.all([
+      companionStore.fetchConversation(userId(), roleId),
+      companionStore.fetchMemories(userId(), roleId),
+      companionStore.fetchSessionHistory(userId(), roleId)
+    ])
     await nextTick()
     scrollToBottom()
     ElMessage.success(t('companion.session.closed'))
@@ -449,16 +502,61 @@ const miniHoloHost = ref(null)
 const orbitRef = ref(null)
 const stageCollapsed = ref(false)
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-let stageTeardown = null
-let miniHoloTeardown = null
+let stage = null
+let mini = null
 let scrollFrame = 0
-let expandingStage = false
-let expandTimer = null
 
+// ── What the stage shows ─────────────────────────────────────────────────────
+// Mood and motion come from the model: the state streaming in right now, or
+// else the last one stored. No report, no pose — the figure stays neutral.
+const stageState = computed(() => {
+  if (liveState.value) return liveState.value
+  const stored = status.value
+  return stored?.mood || stored?.motion ? { mood: stored.mood, motion: stored.motion } : null
+})
+const moodLabel = computed(() => (stageState.value?.mood ? t(`companion.mood.${stageState.value.mood}`) : ''))
+
+// What she is doing: her own report first, then the presence line the server
+// holds for her.
 const stageStatusText = computed(() =>
-  status.value?.summary || activeRole.value?.presence || activeRole.value?.persona || t('companion.defaultStatus')
+  liveState.value?.doing || status.value?.summary || activeRole.value?.presence || t('companion.defaultStatus')
 )
-const stageMoodText = computed(() => status.value?.statusType || activeRole.value?.tone || '—')
+const headerSubText = computed(() =>
+  status.value?.summary || activeRole.value?.presence || activeRole.value?.tone || t('companion.defaultStatus')
+)
+
+// How long tonight has been going, from the session's own start time.
+const now = ref(Date.now())
+const clockTimer = setInterval(() => {
+  now.value = Date.now()
+}, 30000)
+const eveningMinutes = computed(() => {
+  const startedAt = activeSession.value?.startedAt
+  if (!startedAt) return 0
+  const ms = now.value - new Date(startedAt).getTime()
+  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 60000)) : 0
+})
+const eveningLines = computed(() => {
+  const id = activeSession.value?.id
+  return id ? messages.value.filter((m) => m.sessionId === id).length : 0
+})
+const eveningText = computed(() =>
+  activeSession.value
+    ? t('companion.stage.eveningOpen', { min: eveningMinutes.value, n: eveningLines.value })
+    : t('companion.stage.eveningNotOpen')
+)
+const eveningShort = computed(() =>
+  activeSession.value ? t('companion.stage.eveningShort', { min: eveningMinutes.value }) : '—'
+)
+
+// Memories the server reported using for the last reply, resolved to the rows
+// the dossier shows. Ids it no longer finds are simply not listed.
+const memoriesUsed = computed(() =>
+  (lastContext.value?.memoryIds || [])
+    .map((id) => memories.value.find((m) => m.id === id))
+    .filter(Boolean)
+)
+const memoriesUsedTitle = computed(() => memoriesUsed.value.map((m) => m.content).join('\n'))
 
 function setStageCollapsed(collapsed) {
   if (stageCollapsed.value === collapsed) return
@@ -467,39 +565,144 @@ function setStageCollapsed(collapsed) {
     ? active?.closest('.role-stage')
     : active?.closest('.role-mini-badge')
   if (focusWillBeHidden) scrollEl.value?.focus({ preventScroll: true })
+  const pinned = isNearBottom()
   stageCollapsed.value = collapsed
+  // The stream changes height with the stage; stay on the newest line if the
+  // reader was there.
+  if (pinned) setTimeout(scrollToBottom, reducedMotion ? 0 : 500)
+}
+
+// Only the reader's own scrolling folds the stage away. Following the
+// conversation to its newest line is not a request to hide the room — without
+// this distinction the stage collapsed on load for any character with history
+// and was, in practice, never seen.
+let userScrollUntil = 0
+let draggingScrollbar = false
+function noteUserScroll() {
+  userScrollUntil = performance.now() + 400
+}
+function onStreamPointerDown(event) {
+  // A press on the stream element itself (not on a message) is the scrollbar.
+  if (event.target !== scrollEl.value) return
+  draggingScrollbar = true
+  window.addEventListener('pointerup', () => {
+    draggingScrollbar = false
+    noteUserScroll()
+  }, { once: true })
 }
 
 function onStreamScroll() {
   if (scrollFrame) return
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = 0
+    const byReader = draggingScrollbar || performance.now() < userScrollUntil
+    if (!byReader) return
     const top = scrollEl.value?.scrollTop ?? 0
-    if (top <= 5) {
-      expandingStage = false
-      clearTimeout(expandTimer)
-      setStageCollapsed(false)
-    } else if (top > 45 && !expandingStage) {
-      setStageCollapsed(true)
-    }
+    if (top <= 5) setStageCollapsed(false)
+    else if (top > 45) setStageCollapsed(true)
   })
 }
 
 function expandStage() {
-  const el = scrollEl.value
-  expandingStage = !!el && el.scrollTop > 5
-  clearTimeout(expandTimer)
   setStageCollapsed(false)
-  el?.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' })
-  if (expandingStage) {
-    expandTimer = setTimeout(() => {
-      expandingStage = false
-    }, 800)
-  }
 }
 
-function toggleStageDemo() {
-  setStageCollapsed(!stageCollapsed.value)
+function isNearBottom() {
+  const el = scrollEl.value
+  return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+// ── The stream ───────────────────────────────────────────────────────────────
+const sessionsById = computed(() => {
+  const map = new Map()
+  for (const session of sessionHistory.value) map.set(session.id, session)
+  if (activeSession.value) map.set(activeSession.value.id, activeSession.value)
+  return map
+})
+
+// Messages, with a divider where each evening starts and a mark where a closed
+// one ends. Derived from the session each message was filed under.
+const streamItems = computed(() => {
+  const items = []
+  let current = null
+  let ended = true
+  const endCurrent = () => {
+    if (!ended && current != null && sessionsById.value.get(current)?.status === 'closed') {
+      items.push({ type: 'end', key: `end-${current}` })
+    }
+    ended = true
+  }
+  for (const msg of messages.value) {
+    // The placeholder a reply streams into: nothing to show until it has words.
+    if (msg.live && !msg.content) continue
+    const sessionId = msg.sessionId ?? null
+    if (sessionId !== current) {
+      if (sessionId != null) {
+        endCurrent()
+        const session = sessionsById.value.get(sessionId)
+        const known = session?.sceneKey && TAVERN_SCENES.some((s) => s.key === session.sceneKey)
+        const label = [
+          dayjs(session?.startedAt || msg.createdAt).format('MM-DD HH:mm'),
+          known ? t(`companion.sceneNames.${session.sceneKey}`) : ''
+        ].filter(Boolean).join(' · ')
+        items.push({ type: 'divider', key: `start-${sessionId}`, label })
+        current = sessionId
+        ended = false
+      } else if (!msg.pending && !msg.stopped) {
+        // A stored message filed under no evening: from before sessions existed.
+        endCurrent()
+        current = null
+      } else if (sessionsById.value.get(current)?.status === 'closed') {
+        // A line just sent after a closed evening: that evening ends above it.
+        endCurrent()
+      }
+    }
+    items.push({ type: 'msg', key: `m-${msg.id}`, msg, retry: false })
+  }
+  endCurrent()
+
+  // A line of yours that got no answer can be sent again: one that failed
+  // outright, or the last line in the stream once nothing is in flight.
+  let last = null
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].type === 'msg') {
+      last = items[i]
+      break
+    }
+  }
+  for (const item of items) {
+    if (item.type !== 'msg' || item.msg.senderType !== 'user' || !item.msg.clientMsgId) continue
+    item.retry = !!item.msg.failed || (item === last && !sending.value)
+  }
+  return items
+})
+
+// Her opening line, shown before the evening exists.
+const openingPreview = computed(() => {
+  if (isLoadingRoleData.value || activeSession.value || sending.value) return ''
+  return activeRole.value?.greeting || ''
+})
+
+// Sent, and not a word back yet.
+const awaitingFirstWord = computed(() => {
+  if (!sending.value) return false
+  const last = messages.value[messages.value.length - 1]
+  return !(last?.live && last.content)
+})
+
+// Narration — （…）, (…) or *…* — is set apart from what is said aloud.
+const NARRATION = /（[^（）]*）|\([^()]*\)|\*[^*\n]+\*/g
+function segmentsOf(content) {
+  const text = content || ''
+  const out = []
+  let last = 0
+  for (const match of text.matchAll(NARRATION)) {
+    if (match.index > last) out.push({ narration: false, text: text.slice(last, match.index) })
+    out.push({ narration: true, text: match[0] })
+    last = match.index + match[0].length
+  }
+  if (last < text.length) out.push({ narration: false, text: text.slice(last) })
+  return out
 }
 
 // The newest memory fragment, newest first as the server returns them.
@@ -538,20 +741,43 @@ const onViewport = () => {
 window.addEventListener('resize', onViewport)
 
 function mountStages() {
-  if (stageHost.value && !stageTeardown) {
-    stageTeardown = mountAbyssStage(stageHost.value, { shouldRender: () => !stageCollapsed.value })
+  if (stageHost.value && !stage) {
+    stage = mountTavernStage(stageHost.value, { shouldRender: () => !stageCollapsed.value, reducedMotion })
+    stage.setCharacter(activeRole.value)
+    stage.setScene(sceneKey.value)
+    stage.setState(stageState.value)
+    stage.setSpeaking(speaking.value)
+    // Lets the stage be checked by reading it instead of looking at it.
+    if (import.meta.env.DEV) window.__tavernStage = stage
   }
-  if (miniHoloHost.value && !miniHoloTeardown) {
-    miniHoloTeardown = mountMiniHologram(miniHoloHost.value, { shouldRender: () => stageCollapsed.value })
+  if (miniHoloHost.value && !mini) {
+    mini = mountTavernMini(miniHoloHost.value, { shouldRender: () => stageCollapsed.value, reducedMotion })
+    mini.setCharacter(activeRole.value)
+    if (import.meta.env.DEV) window.__tavernMini = mini
   }
 }
 
 function teardownStages() {
-  stageTeardown?.()
-  stageTeardown = null
-  miniHoloTeardown?.()
-  miniHoloTeardown = null
+  stage?.destroy()
+  stage = null
+  mini?.destroy()
+  mini = null
+  if (import.meta.env.DEV) {
+    delete window.__tavernStage
+    delete window.__tavernMini
+  }
 }
+
+watch(() => [activeRole.value?.id, activeRole.value?.name], () => {
+  stage?.setCharacter(activeRole.value)
+  mini?.setCharacter(activeRole.value)
+})
+watch(sceneKey, (key) => stage?.setScene(key))
+watch(stageState, (state) => {
+  if (state) stage?.setState(state)
+  else stage?.clearState()
+})
+watch(speaking, (value) => stage?.setSpeaking(value))
 
 watch(stageVisible, async (visible) => {
   if (visible) {
@@ -570,19 +796,18 @@ onMounted(async () => {
   if (stageVisible.value) mountStages()
   // Which model is behind this character — shown in the header capsule.
   await refreshModelChannel()
-  // Open the evening. Idempotent: if one is already running this returns it.
-  await openEvening()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', onViewport)
   cancelAnimationFrame(scrollFrame)
-  clearTimeout(expandTimer)
+  clearInterval(clockTimer)
   teardownStages()
 })
 
+// Follow the conversation: a new line, a reply starting, and a reply growing.
 watch(
-  () => [messages.value.length, sending.value],
+  () => [messages.value.length, sending.value, messages.value[messages.value.length - 1]?.content?.length],
   async () => {
     await nextTick()
     scrollToBottom()
@@ -591,6 +816,7 @@ watch(
 
 watch(draft, async () => {
   await nextTick()
+  if (!inputEl.value) return
   inputEl.value.style.height = 'auto'
   inputEl.value.style.height = `${Math.min(inputEl.value.scrollHeight, 160)}px`
 })
@@ -608,22 +834,27 @@ function onEnter(event) {
   send()
 }
 
-async function send() {
-  const content = draft.value.trim()
+// Send a new line, or send one again. A retry goes out under the id the line
+// was first sent with, so the server answers it without filing it twice.
+async function send(retryOf = null) {
+  const content = retryOf ? retryOf.content : draft.value.trim()
   const roleId = activeRoleId.value
   if (!content || !roleId || sending.value) return
-  sending.value = true
-  draft.value = ''
+  if (!retryOf) draft.value = ''
   growthGain.value = null
   const before = companionStore.growth
-  // The store reports a failed send by resolving to null, never by throwing.
-  // Streaming first: the reply grows in place instead of arriving in one block.
-  // A server that predates the stream endpoint answers 404, and then the plain
-  // request still works — the conversation must not break because of a deploy.
-  const reply = (await companionStore.sendMessageStream(userId(), roleId, content, sceneKey.value))
-    || (await companionStore.sendMessage(userId(), roleId, content, sceneKey.value))
-  sending.value = false
-  if (!reply?.roleMessage) return ElMessage.error(t('common.operationFailed'))
+  const room = sceneKey.value
+
+  let reply = await companionStore.sendMessageStream(userId(), roleId, content, room, retryOf?.clientMsgId || null)
+  // Only a server without the stream endpoint is sent to again — it did nothing
+  // with the first request. Any other failure may already be filed.
+  if (reply?.unsupported) {
+    reply = await companionStore.sendMessage(userId(), roleId, content, room, reply.clientMsgId)
+  }
+  if (reply?.stopped) return
+  if (!reply?.roleMessage) return ElMessage.error(t('companion.session.sendFailedToast'))
+  if (activeRoleId.value !== roleId) return
+
   await companionStore.fetchGrowth(userId(), roleId)
   const after = companionStore.growth
   if (!before || !after) return
@@ -633,6 +864,10 @@ async function send() {
       .map((key) => ({ key, delta: after[key] - before[key] }))
       .filter((gain) => gain.delta > 0)
   }
+}
+
+function stop() {
+  companionStore.stopStreaming()
 }
 </script>
 
@@ -1047,7 +1282,10 @@ async function send() {
   bottom: 0;
   left: 0;
   z-index: 1;
-  width: 47%;
+  width: 58%;
+  /* The room fades out toward the text beside it instead of ending on an edge. */
+  -webkit-mask-image: linear-gradient(to right, #000 78%, transparent);
+  mask-image: linear-gradient(to right, #000 78%, transparent);
 }
 
 .role-stage-corner {
@@ -1115,6 +1353,12 @@ async function send() {
   flex-shrink: 0;
   border-radius: 9999px;
   background: #ffffff;
+  /* Dim and still until there is something live to mark. */
+  opacity: 0.32;
+}
+
+.role-stage-live-dot.is-on {
+  opacity: 1;
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
   animation: role-mini-node-pulse 1.8s ease-in-out infinite;
 }
@@ -1144,8 +1388,7 @@ async function send() {
   background: #353438;
 }
 
-.role-stage-collapse:focus-visible,
-.role-stage-demo:focus-visible {
+.role-stage-collapse:focus-visible {
   outline: 1px solid #ffffff;
   outline-offset: 2px;
 }
@@ -1162,8 +1405,40 @@ async function send() {
   z-index: 3;
   display: flex;
   flex-direction: column;
-  width: 46%;
+  width: 40%;
   min-width: 0;
+}
+
+.role-stage-memory {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin: -4px 0 8px;
+  padding: 2px 7px 2px 5px;
+  border: 1px solid rgba(68, 71, 72, 0.4);
+  border-radius: 9999px;
+  background: transparent;
+  color: rgba(196, 199, 200, 0.82);
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.role-stage-memory:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #ffffff;
+}
+
+.role-stage-memory:focus-visible {
+  outline: 1px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.role-stage-memory .material-symbols-outlined {
+  font-size: 12px;
 }
 
 .role-stage-kicker {
@@ -1582,6 +1857,92 @@ async function send() {
   word-break: break-word;
 }
 
+/* What she does, as opposed to what she says. */
+.role-narr {
+  color: #8e9192;
+  font-style: italic;
+}
+
+.role-msg.is-preview .role-bubble {
+  border-style: dashed;
+}
+
+.role-msg.is-failed .role-bubble {
+  border-color: rgba(142, 145, 146, 0.7);
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.role-mood {
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(68, 71, 72, 0.3);
+  color: #c4c7c8;
+}
+
+.role-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  border: 1px solid rgba(142, 145, 146, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: #e4e1e6;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.role-retry:hover:not(:disabled) {
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+.role-retry:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.role-retry:focus-visible {
+  outline: 1px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.role-retry .material-symbols-outlined {
+  font-size: 12px;
+}
+
+.role-session-divider {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 12px;
+  margin: 10px 0 2px;
+}
+
+.role-session-rule {
+  flex: 1;
+  height: 1px;
+  background: rgba(68, 71, 72, 0.35);
+}
+
+.role-session-label {
+  flex-shrink: 0;
+  color: #6f7274;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.role-session-end {
+  align-self: center;
+  margin: 2px 0 6px;
+  color: #6f7274;
+  font-size: 11px;
+}
+
 .role-tag {
   display: inline-block;
   margin-top: 8px;
@@ -1593,48 +1954,10 @@ async function send() {
   font-size: 10px;
 }
 
-.role-stage-demo {
-  position: absolute;
-  right: 24px;
-  bottom: 82px;
-  z-index: 12;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 31px;
-  padding: 5px 10px;
-  border: 1px solid rgba(142, 145, 146, 0.42);
-  border-radius: 9999px;
-  background: rgba(42, 42, 45, 0.92);
-  backdrop-filter: blur(12px);
-  color: #e4e1e6;
-  font-family: inherit;
-  font-size: 10.5px;
-  cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
-}
 
-.role-stage-demo:hover {
-  border-color: rgba(255, 255, 255, 0.62);
-  background: #353438;
-}
 
-.role-stage-demo:active {
-  transform: scale(0.98);
-}
 
-.role-stage-demo .material-symbols-outlined {
-  font-size: 14px;
-}
 
-.role-stage-demo-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 9999px;
-  background: #ffffff;
-  animation: role-mini-node-pulse 1.8s ease-in-out infinite;
-}
 
 .role-composer {
   flex-shrink: 0;
@@ -1697,6 +2020,16 @@ async function send() {
   cursor: not-allowed;
 }
 
+.role-send.is-stop {
+  background: transparent;
+  border: 1px solid #8e9192;
+  color: #ffffff;
+}
+
+.role-send.is-stop:hover {
+  border-color: #ffffff;
+}
+
 .role-send .material-symbols-outlined {
   font-size: 16px;
 }
@@ -1736,11 +2069,6 @@ async function send() {
     padding-right: 14px;
   }
 
-  .role-stage-demo {
-    right: 14px;
-    bottom: 78px;
-    max-width: calc(100% - 28px);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1751,8 +2079,7 @@ async function send() {
 
   .role-mini-radar,
   .role-mini-node,
-  .role-stage-live-dot,
-  .role-stage-demo-dot {
+  .role-stage-live-dot {
     animation: none;
   }
 }

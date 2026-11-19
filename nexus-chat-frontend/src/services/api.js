@@ -301,8 +301,9 @@ export const companionAPI = {
     getConversation: (roleId, userId) =>
         apiClient.get(`/companion/conversations/${roleId}`, { params: { userId } }),
 
-    sendMessage: (roleId, userId, content, sceneKey = null) =>
-        apiClient.post('/companion/messages', { roleId, content, sceneKey }, { params: { userId } }),
+    // clientMsgId makes the send idempotent: the server files a given id once.
+    sendMessage: (roleId, userId, content, sceneKey = null, clientMsgId = null) =>
+        apiClient.post('/companion/messages', { roleId, content, sceneKey, clientMsgId }, { params: { userId } }),
 
     // Her inner monologue. Generated on demand — one model call per open.
     innerVoice: (roleId, userId) =>

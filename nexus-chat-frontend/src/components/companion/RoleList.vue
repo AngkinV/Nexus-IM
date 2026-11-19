@@ -152,7 +152,7 @@
             <div
               class="font-body-md text-[12px] truncate mt-0.5"
               :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
-            >{{ role.tone || $t('companion.defaultStatus') }}</div>
+            >{{ role.presence || role.tone || $t('companion.defaultStatus') }}</div>
           </div>
           <button
             class="role-adopt-btn shrink-0 mt-0.5"
@@ -195,12 +195,14 @@
 
 <script setup>
 import { computed, inject, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
 import { readSceneKey } from '@/components/companion/tavernScenes'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
 
+const { t } = useI18n()
 const companionStore = useCompanionStore()
 const toggleList = inject('toggleList', () => {})
 const userStore = useUserStore()

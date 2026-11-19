@@ -81,7 +81,8 @@ public class CompanionController {
             Long roleId = Long.valueOf(request.get("roleId").toString());
             String content = request.get("content") == null ? "" : request.get("content").toString();
             String sceneKey = request.get("sceneKey") == null ? null : request.get("sceneKey").toString();
-            return ResponseEntity.ok(companionService.sendMessage(userId, roleId, content, sceneKey));
+            String clientMsgId = request.get("clientMsgId") == null ? null : request.get("clientMsgId").toString();
+            return ResponseEntity.ok(companionService.sendMessage(userId, roleId, content, sceneKey, clientMsgId));
         } catch (Exception e) {
             log.error("Send companion message failed", e);
             return ResponseEntity.badRequest().build();
@@ -109,6 +110,8 @@ public class CompanionController {
         String content = contentRaw.toString();
         Object sceneRaw = request.get("sceneKey");
         String sceneKey = sceneRaw == null ? null : sceneRaw.toString();
+        Object clientRaw = request.get("clientMsgId");
+        String clientMsgId = clientRaw == null ? null : clientRaw.toString();
 
         response.setStatus(200);
         response.setContentType("text/event-stream;charset=UTF-8");
@@ -119,15 +122,29 @@ public class CompanionController {
         java.io.PrintWriter writer = response.getWriter();
         java.util.concurrent.atomic.AtomicBoolean open = new java.util.concurrent.atomic.AtomicBoolean(true);
         try {
-            CompanionChatResponse result = companionService.sendMessageStreaming(userId, roleId, content, sceneKey, piece -> {
-                if (!open.get()) return;
-                try {
-                    writer.write("event: delta\ndata: " + escapeJson(piece) + "\n\n");
-                    writer.flush();
-                } catch (Exception e) {
-                    open.set(false);
-                }
-            });
+            CompanionChatResponse result = companionService.sendMessageStreaming(
+                    userId, roleId, content, sceneKey, clientMsgId,
+                    piece -> {
+                        // Throwing here is the signal: the service stops the model
+                        // and keeps what was already written. PrintWriter swallows
+                        // IO errors, so a closed socket only shows up in checkError.
+                        if (!open.get()) throw new IllegalStateException("client gone");
+                        writer.write("event: delta\ndata: " + escapeJson(piece) + "\n\n");
+                        if (writer.checkError()) {
+                            open.set(false);
+                            throw new IllegalStateException("client gone");
+                        }
+                    },
+                    (event, payload) -> {
+                        if (!open.get()) return;
+                        try {
+                            writer.write("event: " + event + "\ndata: " + objectMapper.writeValueAsString(payload) + "\n\n");
+                            if (writer.checkError()) open.set(false);
+                        } catch (Exception e) {
+                            // A side-channel event that cannot be serialized must not end the reply.
+                            log.warn("Companion stream event '{}' dropped: {}", event, e.getMessage());
+                        }
+                    });
             if (open.get()) {
                 writer.write("event: done\ndata: " + objectMapper.writeValueAsString(result) + "\n\n");
                 writer.flush();
