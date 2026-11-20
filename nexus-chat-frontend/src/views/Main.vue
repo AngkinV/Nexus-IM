@@ -8,12 +8,20 @@
       <div class="shell-panes">
         <LeftPanel class="panel-left" />
         <RoleChatView
-          v-if="activeView === 'companion'"
+          v-if="activeView === 'companion' && companionStore.activeRole"
           class="panel-middle"
           @back="closeRoleChat"
           @go-ai="openAiAssistant"
           @mood="tavernMood = $event"
         />
+        <div
+          v-else-if="activeView === 'companion'"
+          class="panel-middle flex flex-col items-center justify-center gap-3 text-on-surface-variant"
+          role="status"
+        >
+          <span class="material-symbols-outlined text-[32px]" aria-hidden="true">chat_bubble_outline</span>
+          <p>{{ $t('chat.selectChat') }}</p>
+        </div>
         <MiddlePanel
           v-else
           class="panel-middle"

@@ -1,12 +1,18 @@
 package com.nexus.chat.service;
 
 import com.nexus.chat.dto.CompanionChatResponse;
+import com.nexus.chat.dto.CompanionMessageDTO;
+import com.nexus.chat.dto.CompanionStatusDTO;
 import com.nexus.chat.model.*;
 import com.nexus.chat.repository.*;
+import com.nexus.chat.util.CompanionStateTag;
 import com.nexus.chat.util.ModelEndpointGuard;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -18,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -114,7 +121,7 @@ class CompanionExchangeTest {
         role.setGreeting("（她抬起头。）你来了。");
         when(modelService.generateReply(any(), any(), any(), any())).thenReturn(
                 CompanionModelService.ModelReply.success(
-                        "<state>{\"mood\":\"warm\",\"motion\":\"lean_in\",\"doing\":\"把杯子往前推了推\"}</state>\n坐吧。"));
+                        "<state>{\"mood\":\"warm\",\"motion\":\"lean_in\",\"doing\":\"把杯子往前推了推\",\"gesture\":\"rest\"}</state>\n坐吧。"));
 
         CompanionChatResponse response = service.sendMessage(USER, ROLE, "晚上好", "rain-fireplace", "c-1");
 
@@ -122,10 +129,13 @@ class CompanionExchangeTest {
         assertEquals("rain-fireplace", response.getSceneKey());
         assertEquals("（她抬起头。）你来了。", response.getOpeningMessage().getContent());
         assertEquals("坐吧。", response.getRoleMessage().getContent());
-        assertEquals(Map.of("mood", "warm", "motion", "lean_in", "doing", "把杯子往前推了推"),
-                response.getRoleMessage().getState());
+        Map<String, String> expectedState = Map.of(
+                "mood", "warm", "motion", "lean_in", "doing", "把杯子往前推了推", "gesture", "rest");
+        assertEquals(expectedState, response.getRoleMessage().getState());
         assertFalse(response.getFallback());
         assertEquals("warm", response.getStatus().getMood());
+        assertEquals("lean_in", response.getStatus().getMotion());
+        assertEquals("rest", response.getStatus().getGesture());
         assertEquals("把杯子往前推了推", response.getStatus().getSummary());
 
         // opening, user line, reply — all filed under the new evening, in that order.
@@ -133,6 +143,17 @@ class CompanionExchangeTest {
         assertTrue(saved.stream().allMatch(m -> Long.valueOf(900L).equals(m.getSessionId())));
         assertEquals(CompanionMessage.SenderType.user, saved.get(1).getSenderType());
         assertEquals("c-1", saved.get(1).getClientMsgId());
+        assertEquals(expectedState, CompanionStateTag.fromJson(saved.get(2).getStateJson()).toMap());
+        ArgumentCaptor<CompanionStatus> status = ArgumentCaptor.forClass(CompanionStatus.class);
+        verify(statusRepository).save(status.capture());
+        assertEquals("rest", status.getValue().getGesture());
+        when(statusRepository.findByUserIdAndRoleId(USER, ROLE)).thenReturn(Optional.of(status.getValue()));
+        assertEquals("rest", service.getStatus(USER, ROLE).getGesture());
+        when(messageRepository.findByConversationIdOrderByIdAsc(50L)).thenReturn(saved);
+        List<CompanionMessageDTO> history = service.getConversation(USER, ROLE);
+        assertEquals(expectedState, history.get(2).getState());
+        assertNull(history.get(0).getState());
+        assertNull(history.get(1).getState());
         verify(growthRepository).save(any(CompanionGrowth.class));
     }
 
@@ -208,6 +229,51 @@ class CompanionExchangeTest {
         verify(modelService, never()).generateReply(any(), any(), any(), any());
     }
 
+    static Stream<Arguments> reportedStates() {
+        return Stream.of(
+                Arguments.of("{\"gesture\":\"wave\"}", "calm", "listen", "wave"),
+                Arguments.of("{\"gesture\":\"rest\"}", "calm", "listen", "rest"),
+                Arguments.of("{\"mood\":\"warm\"}", "warm", "listen", null),
+                Arguments.of("{\"motion\":\"nod\"}", "calm", "nod", null),
+                Arguments.of("{\"doing\":\"擦杯子\"}", "calm", "listen", null),
+                Arguments.of("{\"mood\":null,\"motion\":null,\"gesture\":null}", "calm", "listen", null),
+                Arguments.of("{\"mood\":\"unknown\",\"motion\":\"backflip\",\"gesture\":\"wave\"}", "calm", "listen", "wave"),
+                Arguments.of("{\"mood\":\"warm\",\"gesture\":\"dance\"}", "warm", "listen", null),
+                Arguments.of("{\"mood\":\"unknown\",\"motion\":\"backflip\",\"gesture\":\"dance\"}", "calm", "listen", null),
+                Arguments.of("{}", "calm", "listen", null),
+                Arguments.of(null, "calm", "listen", null));
+    }
+
+    @ParameterizedTest
+    @MethodSource("reportedStates")
+    void partialStateRetainsKnownMoodAndMotionButNeverAnOldGesture(
+            String body, String expectedMood, String expectedMotion, String expectedGesture) {
+        modelConfigured();
+        CompanionStatus existing = new CompanionStatus();
+        existing.setUserId(USER);
+        existing.setRoleId(ROLE);
+        existing.setMood("calm");
+        existing.setMotion("listen");
+        existing.setGesture("sip");
+        existing.setSummary("听你说话");
+        existing.setSummaryAuthored(true);
+        when(statusRepository.findByUserIdAndRoleId(USER, ROLE)).thenReturn(Optional.of(existing));
+        String marker = body == null ? "" : "<state>" + body + "</state>\n";
+        when(modelService.generateReply(any(), any(), any(), any()))
+                .thenReturn(CompanionModelService.ModelReply.success(marker + "嗯。"));
+
+        CompanionStatusDTO status = service.sendMessage(USER, ROLE, "你好", null, "state-update").getStatus();
+
+        verify(statusRepository).save(existing);
+        assertEquals(expectedMood, existing.getMood());
+        assertEquals(expectedMotion, existing.getMotion());
+        assertEquals(expectedGesture, existing.getGesture());
+        assertEquals(expectedMood, status.getMood());
+        assertEquals(expectedMotion, status.getMotion());
+        assertEquals(expectedGesture, status.getGesture());
+        assertEquals(status, service.getStatus(USER, ROLE));
+    }
+
     @Test
     void onlyTonightAndChosenMemoriesReachTheModel() {
         modelConfigured();
@@ -245,7 +311,7 @@ class CompanionExchangeTest {
     @Test
     void streamingDeliversTextWithoutTheMarkerAndStateAsAnEvent() {
         modelConfigured();
-        String raw = "<state>{\"mood\":\"shy\",\"motion\":\"look_away\"}</state>\n（她别开视线。）嗯。";
+        String raw = "<state>{\"mood\":\"shy\",\"motion\":\"look_away\",\"gesture\":\"cover\"}</state>\n（她别开视线。）嗯。";
         when(modelService.streamReply(any(), any(), any(), any(), any())).thenAnswer(inv -> {
             Consumer<String> onDelta = inv.getArgument(4);
             for (int i = 0; i < raw.length(); i += 3) onDelta.accept(raw.substring(i, Math.min(raw.length(), i + 3)));
@@ -268,7 +334,14 @@ class CompanionExchangeTest {
         assertEquals("（她别开视线。）嗯。", text.toString());
         assertEquals("（她别开视线。）嗯。", response.getRoleMessage().getContent());
         assertEquals(List.of("context", "state"), events);
-        assertEquals(Map.of("mood", "shy", "motion", "look_away"), stateAt[0]);
+        Map<String, String> expectedState = Map.of("mood", "shy", "motion", "look_away", "gesture", "cover");
+        assertEquals(expectedState, stateAt[0]);
+        assertEquals(expectedState, response.getRoleMessage().getState());
+        assertEquals(expectedState, CompanionStateTag.fromJson(saved.get(saved.size() - 1).getStateJson()).toMap());
+        assertEquals("cover", response.getStatus().getGesture());
+        ArgumentCaptor<CompanionStatus> status = ArgumentCaptor.forClass(CompanionStatus.class);
+        verify(statusRepository).save(status.capture());
+        assertEquals("cover", status.getValue().getGesture());
         assertEquals(0, stateAt[1], "the state arrives before the first word");
         assertFalse(Boolean.TRUE.equals(response.getPartial()));
     }

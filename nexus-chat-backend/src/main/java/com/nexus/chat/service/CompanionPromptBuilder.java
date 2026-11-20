@@ -117,12 +117,15 @@ public final class CompanionPromptBuilder {
         if (ctx.withState()) {
             prompt.append("每次回复的第一行必须是一行状态标记，格式固定为：")
                     .append(CompanionStateTag.OPEN)
-                    .append("{\"mood\":\"…\",\"motion\":\"…\",\"doing\":\"…\"}")
+                    .append("{\"mood\":\"…\",\"motion\":\"…\",\"doing\":\"…\",\"gesture\":\"rest\"}")
                     .append(CompanionStateTag.CLOSE).append("\n")
                     .append("mood 只能从 calm、warm、happy、shy、sad、worried、angry、surprised、tired、thoughtful 里选一个；")
                     .append("motion 只能从 idle、listen、think、nod、lean_in、look_away 里选一个；")
                     .append("doing 用第三人称写你此刻正在做的一个具体动作，不超过二十个字。")
-                    .append("这一行对方看不到。从第二行开始才是你的回复。\n");
+                    .append("gesture 是可选的短暂手势，只能用 rest（自然放松）、chin（托腮）、sip（抿饮）、wipe（擦杯）、")
+                    .append("wave（挥手）、shrug（耸肩）、cover（掩嘴）、cross（抱臂）、tuck（拢发）。")
+                    .append("优先用 rest；只有明确做出相应手势时才选其他值，不确定就省略 gesture，不要编造手势。")
+                    .append("标记保持简短的单行 JSON，不写解释。这一行对方看不到。从第二行开始才是你的回复。\n");
         }
 
         prompt.append("始终以").append(name).append("的身份说话，用对方使用的语言回应，不要解释自己是模型，不要跳出设定。");

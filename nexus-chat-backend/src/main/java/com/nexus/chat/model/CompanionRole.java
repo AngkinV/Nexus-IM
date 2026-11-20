@@ -59,6 +59,9 @@ public class CompanionRole {
     @Column(name = "is_active", nullable = false)
     private Boolean active = true;
 
+    @Column(name = "conversation_hidden", nullable = false, columnDefinition = "boolean default false")
+    private boolean conversationHidden;
+
     /**
      * Whether this character lives here or was met once.
      * regular = 常驻 (the "home" side), guest = 过客 (came back from one evening).

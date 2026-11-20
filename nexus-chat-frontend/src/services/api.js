@@ -301,6 +301,12 @@ export const companionAPI = {
     getConversation: (roleId, userId) =>
         apiClient.get(`/companion/conversations/${roleId}`, { params: { userId } }),
 
+    clearConversation: (roleId, userId) =>
+        apiClient.delete(`/companion/conversations/${roleId}`, { params: { userId } }),
+
+    restoreConversation: (roleId, userId) =>
+        apiClient.post(`/companion/conversations/${roleId}`, null, { params: { userId } }),
+
     // clientMsgId makes the send idempotent: the server files a given id once.
     sendMessage: (roleId, userId, content, sceneKey = null, clientMsgId = null) =>
         apiClient.post('/companion/messages', { roleId, content, sceneKey, clientMsgId }, { params: { userId } }),

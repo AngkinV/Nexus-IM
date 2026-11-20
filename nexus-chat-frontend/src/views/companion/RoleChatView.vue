@@ -72,6 +72,8 @@
           type="button"
           :class="{ 'is-on': dossierOpen }"
           :title="$t('companion.dossier')"
+          :aria-label="$t('companion.dossier')"
+          :aria-expanded="dossierOpen"
           @click="dossierOpen = !dossierOpen"
         >
           <span class="material-symbols-outlined">badge</span>
@@ -505,7 +507,14 @@ const miniHoloHost = ref(null)
 const orbitRef = ref(null)
 const stageCollapsed = ref(false)
 const actorStatus = ref('none')
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+let reducedMotion = motionQuery.matches
+const onMotionPreference = (event) => {
+  reducedMotion = event.matches
+  stage?.setReducedMotion(reducedMotion)
+  mini?.setReducedMotion(reducedMotion)
+}
+motionQuery.addEventListener('change', onMotionPreference)
 let stage = null
 let mini = null
 let scrollFrame = 0
@@ -570,6 +579,7 @@ function setStageCollapsed(collapsed) {
     : active?.closest('.role-mini-badge')
   if (focusWillBeHidden) scrollEl.value?.focus({ preventScroll: true })
   const pinned = isNearBottom()
+  if (collapsed) stage?.pause()
   stageCollapsed.value = collapsed
   // The stream changes height with the stage; stay on the newest line if the
   // reader was there.
@@ -786,6 +796,18 @@ watch(stageState, (state) => {
   else stage?.clearState()
 })
 watch(speaking, (value) => stage?.setSpeaking(value))
+watch(activeRoleId, () => stage?.hush(), { flush: 'sync' })
+watch(() => messages.value.length, (length) => { if (!length) stage?.hush() })
+
+watch(() => {
+  const reply = messages.value.at(-1)
+  return { id: reply?.live ? reply.id : null, text: reply?.live ? reply.content : '', roleId: activeRoleId.value }
+}, (reply, previous) => {
+  if (!reply.id || reply.roleId !== previous?.roleId) return
+  if (reply.id !== previous?.id) stage?.hush()
+  const offset = reply.id === previous?.id ? previous.text.length : 0
+  if (reply.text.length > offset) stage?.speak(reply.text.slice(offset))
+}, { flush: 'sync' })
 
 watch(stageVisible, async (visible) => {
   if (visible) {
@@ -808,6 +830,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', onViewport)
+  motionQuery.removeEventListener('change', onMotionPreference)
   cancelAnimationFrame(scrollFrame)
   clearInterval(clockTimer)
   teardownStages()
@@ -859,9 +882,15 @@ async function send(retryOf = null) {
   if (reply?.unsupported) {
     reply = await companionStore.sendMessage(userId(), roleId, content, room, reply.clientMsgId)
   }
-  if (reply?.stopped) return
-  if (!reply?.roleMessage) return ElMessage.error(t('companion.session.sendFailedToast'))
   if (activeRoleId.value !== roleId) return
+  if (reply?.stopped) {
+    stage?.hush()
+    return
+  }
+  if (!reply?.roleMessage) {
+    stage?.hush()
+    return ElMessage.error(t('companion.session.sendFailedToast'))
+  }
 
   await companionStore.fetchGrowth(userId(), roleId)
   const after = companionStore.growth
@@ -875,6 +904,7 @@ async function send(retryOf = null) {
 }
 
 function stop() {
+  stage?.hush()
   companionStore.stopStreaming()
 }
 </script>
@@ -938,7 +968,6 @@ function stop() {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: grayscale(1);
 }
 
 .role-chat-id {
@@ -1237,7 +1266,7 @@ function stop() {
   justify-content: center;
   box-sizing: border-box;
   width: 100%;
-  max-height: 260px;
+  max-height: 324px;
   padding: 12px 20px;
   overflow: hidden;
   opacity: 1;
@@ -1262,8 +1291,8 @@ function stop() {
 .role-stage-frame {
   position: relative;
   width: 100%;
-  max-width: 760px;
-  height: 236px;
+  max-width: 840px;
+  height: clamp(236px, 30vh, 300px);
   flex-shrink: 0;
   overflow: hidden;
   border: 1px solid rgba(68, 71, 72, 0.32);
@@ -1528,7 +1557,8 @@ function stop() {
 
   .role-stage-canvas {
     width: 100%;
-    opacity: 0.68;
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 }
 

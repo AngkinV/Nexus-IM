@@ -12,7 +12,11 @@ const ALTERNATIVES = {
   sad: [[['Sorrow', 1]], [['browInnerUp', 0.55], ['mouthFrownLeft', 0.5], ['mouthFrownRight', 0.5]]],
   angry: [[['Angry', 1]], [['browDownLeft', 0.6], ['browDownRight', 0.6], ['mouthPressLeft', 0.2], ['mouthPressRight', 0.2]]],
   surprised: [[['Surprised', 1]], [['eyeWideLeft', 0.65], ['eyeWideRight', 0.65], ['browInnerUp', 0.5], ['jawOpen', 0.15]]],
-  aa: [[['A', 1]], [['jawOpen', 1]]]
+  aa: [[['A', 1]], [['jawOpen', 1]]],
+  ih: [[['I', 1]], [['mouthStretchLeft', 0.6], ['mouthStretchRight', 0.6], ['jawOpen', 0.2]]],
+  ou: [[['U', 1]], [['mouthPucker', 0.7], ['jawOpen', 0.2]]],
+  ee: [[['E', 1]], [['mouthSmileLeft', 0.45], ['mouthSmileRight', 0.45], ['jawOpen', 0.4]]],
+  oh: [[['O', 1]], [['mouthFunnel', 0.7], ['jawOpen', 0.5]]]
 }
 
 export function expressionBindings(json) {

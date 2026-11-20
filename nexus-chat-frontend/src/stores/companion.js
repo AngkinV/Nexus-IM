@@ -30,6 +30,21 @@ export const useCompanionStore = defineStore('companion', () => {
     // lock the other's input.
     const sendingRoleIds = ref([])
     const streamAborts = new Map()
+    const clearingRoleIds = ref([])
+    const closingRoleIds = ref([])
+    const openingRoleIds = ref([])
+    const historyRevisions = new Map()
+    let historyEpoch = 0
+    const historyRevision = (roleId) => historyRevisions.get(roleId) || 0
+    const invalidateHistory = (roleId) => {
+        historyRevisions.set(roleId, historyRevision(roleId) + 1)
+        historyEpoch += 1
+    }
+    const isRoleBusy = (roleId) => sendingRoleIds.value.includes(roleId) ||
+        closingRoleIds.value.includes(roleId) || openingRoleIds.value.includes(roleId) ||
+        clearingRoleIds.value.includes(roleId)
+    const canApplyHistory = (roleId, revision) => isCurrent(roleId) &&
+        historyRevision(roleId) === revision && !clearingRoleIds.value.includes(roleId)
     const beginSending = (roleId) => {
         if (!sendingRoleIds.value.includes(roleId)) sendingRoleIds.value = [...sendingRoleIds.value, roleId]
     }
@@ -50,8 +65,9 @@ export const useCompanionStore = defineStore('companion', () => {
         localStorage.setItem(PET_VISIBLE_KEY, String(petVisible.value))
     }
 
+    const conversationRoles = computed(() => roles.value.filter(r => !r.conversationHidden))
     const activeRole = computed(() => {
-        return roles.value.find(r => r.id === activeRoleId.value) || roles.value[0] || null
+        return conversationRoles.value.find(r => r.id === activeRoleId.value) || null
     })
 
     /** True while the character on screen has a send in flight. */
@@ -95,19 +111,21 @@ export const useCompanionStore = defineStore('companion', () => {
         } else {
             await fetchRoles(userId)
         }
-        if (!activeRoleId.value && roles.value.length > 0) {
-            activeRoleId.value = roles.value[0].id
-        }
-        if (activeRoleId.value) {
+        if (!activeRole.value) {
+            await setActiveRole(userId, conversationRoles.value[0]?.id || null)
+        } else {
             await loadRoleData(userId, activeRoleId.value)
         }
     }
 
     const initRoles = async (userId) => {
+        const epoch = historyEpoch
         isLoading.value = true
         try {
             const response = await companionAPI.initRoles(userId)
+            if (epoch !== historyEpoch || clearingRoleIds.value.length || openingRoleIds.value.length) return
             roles.value = applyLocalOverrides(response.data || [])
+            if (activeRoleId.value && !activeRole.value) await setActiveRole(userId, null)
         } catch (error) {
             console.error('Init companion roles failed:', error)
         } finally {
@@ -116,10 +134,13 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const fetchRoles = async (userId) => {
+        const epoch = historyEpoch
         isLoading.value = true
         try {
             const response = await companionAPI.getRoles(userId)
+            if (epoch !== historyEpoch || clearingRoleIds.value.length || openingRoleIds.value.length) return
             roles.value = applyLocalOverrides(response.data || [])
+            if (activeRoleId.value && !activeRole.value) await setActiveRole(userId, null)
         } catch (error) {
             console.error('Fetch companion roles failed:', error)
         } finally {
@@ -128,6 +149,7 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const setActiveRole = async (userId, roleId) => {
+        if (roleId && !conversationRoles.value.some(r => r.id === roleId)) return
         if (roleId !== activeRoleId.value) {
             // Everything below belongs to the character being left. Clearing it
             // now is what keeps one character's words, state and evening from
@@ -141,6 +163,8 @@ export const useCompanionStore = defineStore('companion', () => {
             liveState.value = null
             speaking.value = false
             lastContext.value = null
+            isFallback.value = false
+            isLoadingRoleData.value = false
         }
         activeRoleId.value = roleId
         await loadRoleData(userId, roleId)
@@ -188,9 +212,10 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const fetchConversation = async (userId, roleId) => {
+        const revision = historyRevision(roleId)
         try {
             const response = await companionAPI.getConversation(roleId, userId)
-            if (!isCurrent(roleId)) return
+            if (!canApplyHistory(roleId, revision)) return
             const stored = response.data || []
             // A send in flight owns its optimistic rows; keep them at the end —
             // except a line the server has already filed, which it now shows
@@ -201,6 +226,53 @@ export const useCompanionStore = defineStore('companion', () => {
             messages.value = [...stored, ...pending]
         } catch (error) {
             console.error('Fetch companion conversation failed:', error)
+        }
+    }
+
+    const clearConversation = async (userId, roleId) => {
+        if (isRoleBusy(roleId)) {
+            const error = new Error('conversation is busy')
+            error.response = { status: 409 }
+            throw error
+        }
+        clearingRoleIds.value = [...clearingRoleIds.value, roleId]
+        invalidateHistory(roleId)
+        let cleared = false
+        try {
+            const response = await companionAPI.clearConversation(roleId, userId)
+            cleared = true
+            const seat = roles.value.find(r => r.id === roleId)
+            if (seat) {
+                seat.lastMessageAt = null
+                seat.presence = null
+                seat.originSessionId = null
+                seat.conversationHidden = true
+            }
+            if (isCurrent(roleId)) await setActiveRole(userId, null)
+            return response.data
+        } finally {
+            invalidateHistory(roleId)
+            clearingRoleIds.value = clearingRoleIds.value.filter(id => id !== roleId)
+            if (!cleared && isCurrent(roleId)) await loadRoleData(userId, roleId)
+        }
+    }
+
+    const restoreConversation = async (userId, roleId) => {
+        if (isRoleBusy(roleId)) {
+            const error = new Error('conversation is busy')
+            error.response = { status: 409 }
+            throw error
+        }
+        openingRoleIds.value = [...openingRoleIds.value, roleId]
+        invalidateHistory(roleId)
+        try {
+            await companionAPI.restoreConversation(roleId, userId)
+            const role = roles.value.find(r => r.id === roleId)
+            if (role) role.conversationHidden = false
+            await setActiveRole(userId, roleId)
+        } finally {
+            invalidateHistory(roleId)
+            openingRoleIds.value = openingRoleIds.value.filter(id => id !== roleId)
         }
     }
 
@@ -253,6 +325,7 @@ export const useCompanionStore = defineStore('companion', () => {
         // just changed, whichever character is on screen by now.
         const seat = roles.value.find(r => r.id === roleId)
         if (seat && data.roleMessage) {
+            seat.conversationHidden = false
             seat.lastMessageAt = data.roleMessage.createdAt
             if (data.status?.summary) seat.presence = data.status.summary
         }
@@ -291,7 +364,7 @@ export const useCompanionStore = defineStore('companion', () => {
      * endpoint. Resolves to the exchange, or null when the send failed.
      */
     const sendMessage = async (userId, roleId, content, sceneKey = null, clientMsgId = null) => {
-        if (!content || !roleId) return null
+        if (!content || !roleId || isRoleBusy(roleId)) return null
         const clientId = clientMsgId || newClientId()
         const row = userRowFor(roleId, content, clientId)
         beginSending(roleId)
@@ -330,7 +403,7 @@ export const useCompanionStore = defineStore('companion', () => {
      * already, which filed the message twice and called the model twice.
      */
     const sendMessageStream = async (userId, roleId, content, sceneKey = null, clientMsgId = null) => {
-        if (!content || !roleId) return null
+        if (!content || !roleId || isRoleBusy(roleId)) return null
         // One reply at a time per character.
         if (streamAborts.has(roleId)) return null
         const clientId = clientMsgId || newClientId()
@@ -505,23 +578,29 @@ export const useCompanionStore = defineStore('companion', () => {
     // ── Tavern sessions ────────────────────────────────────────────────────
     /** The evening in progress, opening one if none. Idempotent on the server. */
     const openSession = async (userId, roleId, sceneKey) => {
+        if (isRoleBusy(roleId)) return null
+        const revision = historyRevision(roleId)
+        openingRoleIds.value = [...openingRoleIds.value, roleId]
         try {
             const response = await companionAPI.openSession(userId, roleId, sceneKey)
-            if (!isCurrent(roleId)) return response.data || null
+            if (!canApplyHistory(roleId, revision)) return null
             activeSession.value = response.data || null
             return activeSession.value
         } catch (error) {
             console.error('Open tavern session failed:', error)
             return null
+        } finally {
+            openingRoleIds.value = openingRoleIds.value.filter(id => id !== roleId)
         }
     }
 
     /** Re-read the evening in progress. Used to recover from a timed-out close. */
     const fetchActiveSession = async (userId, roleId) => {
+        const revision = historyRevision(roleId)
         try {
             const response = await companionAPI.activeSession(userId, roleId)
             const found = response.status === 204 ? null : (response.data || null)
-            if (!isCurrent(roleId)) return found
+            if (!canApplyHistory(roleId, revision)) return null
             activeSession.value = found
             return found
         } catch (error) {
@@ -531,20 +610,29 @@ export const useCompanionStore = defineStore('companion', () => {
 
     /** Close the evening: last line, plus one sentence kept as memory. */
     const closeSession = async (userId, sessionId) => {
+        const roleId = activeSession.value?.roleId || activeRoleId.value
+        if (isRoleBusy(roleId)) return null
+        const revision = historyRevision(roleId)
+        closingRoleIds.value = [...closingRoleIds.value, roleId]
         try {
             const response = await companionAPI.closeSession(sessionId, userId)
-            activeSession.value = null
+            if (canApplyHistory(roleId, revision) && activeSession.value?.id === sessionId) {
+                activeSession.value = null
+            }
             return response.data || null
         } catch (error) {
             console.error('Close tavern session failed:', error)
             return null
+        } finally {
+            closingRoleIds.value = closingRoleIds.value.filter(id => id !== roleId)
         }
     }
 
     const fetchSessionHistory = async (userId, roleId) => {
+        const revision = historyRevision(roleId)
         try {
             const response = await companionAPI.sessionHistory(userId, roleId)
-            if (!isCurrent(roleId)) return response.data || []
+            if (!canApplyHistory(roleId, revision)) return []
             sessionHistory.value = response.data || []
             return sessionHistory.value
         } catch (error) {
@@ -653,9 +741,10 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const fetchStatus = async (userId, roleId) => {
+        const revision = historyRevision(roleId)
         try {
             const response = await companionAPI.getStatus(roleId, userId)
-            if (!isCurrent(roleId)) return
+            if (!canApplyHistory(roleId, revision)) return
             status.value = response.data || null
         } catch (error) {
             console.error('Fetch status failed:', error)
@@ -690,6 +779,7 @@ export const useCompanionStore = defineStore('companion', () => {
 
     return {
         roles,
+        conversationRoles,
         activeRoleId,
         activeRole,
         messages,
@@ -714,6 +804,10 @@ export const useCompanionStore = defineStore('companion', () => {
         setActiveRole,
         updateRole,
         fetchConversation,
+        clearConversation,
+        restoreConversation,
+        clearingRoleIds,
+        isRoleBusy,
         sendMessage,
         sendMessageStream,
         stopStreaming,

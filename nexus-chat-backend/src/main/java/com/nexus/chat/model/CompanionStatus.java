@@ -44,6 +44,10 @@ public class CompanionStatus {
     @Column(name = "motion", length = 20)
     private String motion;
 
+    /** A short-lived cue from the latest reply; cleared when no gesture is reported. */
+    @Column(name = "gesture", length = 20)
+    private String gesture;
+
     /**
      * True when `summary` is something a model wrote about her (a reported
      * "doing", or the presence line of an invited guest). Such a line is hers and

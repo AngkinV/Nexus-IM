@@ -414,7 +414,7 @@ const paneCount = computed(() => {
   if (activeView.value === 'contacts') return contactStore.contacts?.length || 0
   if (activeView.value === 'groups') return chatStore.groupChats?.length || 0
   if (activeView.value === 'ai') return agentStore.sessions?.length || 0
-  if (activeView.value === 'companion') return companionStore.roles?.length || 0
+  if (activeView.value === 'companion') return companionStore.conversationRoles.length
   return chatStore.chats?.length || 0
 })
 

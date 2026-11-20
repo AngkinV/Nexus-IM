@@ -135,7 +135,9 @@ public class CompanionModelService {
                     while ((line = reader.readLine()) != null) {
                         if (!line.startsWith("data:")) continue;
                         String data = line.substring(5).trim();
-                        if (data.isEmpty() || "[DONE]".equals(data)) continue;
+                        // DONE ends the stream even if the provider keeps the socket open.
+                        if ("[DONE]".equals(data)) break;
+                        if (data.isEmpty()) continue;
                         String piece = deltaOf(data);
                         if (piece == null || piece.isEmpty()) continue;
                         full.append(piece);

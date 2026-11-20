@@ -19,6 +19,7 @@ import java.util.Map;
 public class CompanionController {
 
     private final CompanionService companionService;
+    private final com.nexus.chat.service.CompanionConversationGuard conversationGuard;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper()
             .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
             .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -82,7 +83,11 @@ public class CompanionController {
             String content = request.get("content") == null ? "" : request.get("content").toString();
             String sceneKey = request.get("sceneKey") == null ? null : request.get("sceneKey").toString();
             String clientMsgId = request.get("clientMsgId") == null ? null : request.get("clientMsgId").toString();
-            return ResponseEntity.ok(companionService.sendMessage(userId, roleId, content, sceneKey, clientMsgId));
+            try (var ignored = conversationGuard.acquire(userId, roleId)) {
+                return ResponseEntity.ok(companionService.sendMessage(userId, roleId, content, sceneKey, clientMsgId));
+            }
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Send companion message failed", e);
             return ResponseEntity.badRequest().build();
@@ -121,7 +126,7 @@ public class CompanionController {
 
         java.io.PrintWriter writer = response.getWriter();
         java.util.concurrent.atomic.AtomicBoolean open = new java.util.concurrent.atomic.AtomicBoolean(true);
-        try {
+        try (var ignored = conversationGuard.acquire(userId, roleId)) {
             CompanionChatResponse result = companionService.sendMessageStreaming(
                     userId, roleId, content, sceneKey, clientMsgId,
                     piece -> {

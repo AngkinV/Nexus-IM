@@ -10,6 +10,10 @@ public interface TavernSessionRepository extends JpaRepository<TavernSession, Lo
 
     Optional<TavernSession> findByIdAndUserId(Long id, Long userId);
 
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("delete from TavernSession s where s.userId = :userId and s.roleId = :roleId")
+    int deleteHistory(Long userId, Long roleId);
+
     /** The evening currently in progress for this role, if any. */
     Optional<TavernSession> findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(
             Long userId, Long roleId, TavernSession.Status status);

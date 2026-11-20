@@ -11,7 +11,7 @@
         <div class="flex items-center gap-1 shrink-0">
           <span
             class="font-code text-[11px] px-1.5 py-0.5 rounded border border-outline-variant/30 bg-surface-container-low text-on-surface-variant"
-          >{{ $t('agent.history.count', { n: companionStore.roles.length }) }}</span>
+          >{{ $t('agent.history.count', { n: companionStore.conversationRoles.length }) }}</span>
           <button
             class="blade-collapse-btn w-7 h-7 rounded bg-surface-container-low hover:bg-primary hover:text-on-primary text-on-surface-variant flex items-center justify-center transition-all duration-200 active:scale-90"
             :title="$t('leftPanel.collapseList')"
@@ -38,6 +38,22 @@
             {{ inviting ? $t('companion.seats.inviting') : $t('companion.seats.invite') }}
           </span>
         </div>
+      </button>
+
+      <button
+        v-if="hiddenRoles.length"
+        class="w-full flex items-center justify-between py-2 px-3 rounded-lg bg-surface-container-low border border-outline-variant/40 text-primary hover:bg-surface-container hover:border-outline-variant transition-all duration-150 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
+        type="button"
+        :disabled="isRestoring || inviting || companionStore.isLoading || !userStore.currentUser?.id"
+        :title="localT('existingConversation')"
+        aria-haspopup="dialog"
+        :aria-expanded="restoreDialogVisible"
+        @click="restoreDialogVisible = true"
+      >
+        <span class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-[18px] text-primary" aria-hidden="true">chat_bubble</span>
+          <span class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium">{{ localT('existingConversation') }}</span>
+        </span>
       </button>
 
       <button
@@ -100,16 +116,17 @@
             v-if="role.id === companionStore.activeRoleId"
             class="material-symbols-outlined text-[15px] text-primary shrink-0 mt-1"
           >chat_bubble</span>
+          <ClearConversationButton :role="role" />
         </div>
       </div>
 
-      <!-- Loading and "no characters yet" look identical without this. -->
+      <!-- Distinguish loading from an empty conversation list. -->
       <div v-if="companionStore.isLoading" class="px-3 py-6 flex items-center justify-center gap-2 text-on-surface-variant/70">
         <span class="role-list-spinner"></span>
         <span class="font-body-md text-[14px]">{{ $t('companion.loadingRoles') }}</span>
       </div>
-      <div v-else-if="!companionStore.roles.length" class="px-3 py-6 text-center font-body-md text-[14px] text-on-surface-variant/60">
-        {{ $t('companion.emptyRole') }}
+      <div v-else-if="!companionStore.conversationRoles.length" class="px-3 py-6 text-center font-body-md text-[14px] text-on-surface-variant/60">
+        {{ localT(hiddenRoles.length ? 'emptyWithHidden' : 'empty') }}
       </div>
 
       <!-- Guests: faces met in one evening, not part of the household. -->
@@ -162,6 +179,7 @@
           >
             <span class="material-symbols-outlined text-[15px]">home</span>
           </button>
+          <ClearConversationButton :role="role" />
         </div>
       </div>
     </div>
@@ -172,7 +190,40 @@
       :hint="$t('companion.seats.invitingHint')"
     />
 
-    <div class="p-3 bg-surface-container-low/70 border-t border-outline-variant/20 flex items-center justify-between shrink-0">
+    <el-dialog
+      v-model="restoreDialogVisible"
+      :title="localT('existingConversation')"
+      width="min(440px, calc(100vw - 32px))"
+      append-to-body
+      :close-on-click-modal="!isRestoring"
+      :close-on-press-escape="!isRestoring"
+      :show-close="!isRestoring"
+    >
+      <p class="mb-4 text-on-surface-variant">{{ localT('restoreHint') }}</p>
+      <div class="flex flex-col gap-2 max-h-[50vh] overflow-y-auto" :aria-busy="isRestoring">
+        <button
+          v-for="role in hiddenRoles"
+          :key="role.id"
+          class="w-full flex items-center justify-between gap-3 py-2 px-3 rounded-lg bg-surface-container-low border border-outline-variant/40 text-primary hover:bg-surface-container hover:border-outline-variant transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
+          :disabled="isRestoring || !userStore.currentUser?.id || companionStore.isRoleBusy(role.id)"
+          :aria-busy="restoringRoleId === role.id"
+          @click="restoreRole(role)"
+        >
+          <span class="min-w-0 truncate">{{ role.name || $t('companion.defaultName') }}</span>
+          <span class="flex items-center gap-2 shrink-0" aria-live="polite">
+            <span v-if="restoringRoleId === role.id" class="role-list-spinner" aria-hidden="true"></span>
+            <span>{{ localT(restoringRoleId === role.id ? 'restoring' : 'startConversation') }}</span>
+          </span>
+        </button>
+        <p v-if="!hiddenRoles.length" class="text-on-surface-variant">{{ localT('noHiddenRoles') }}</p>
+      </div>
+      <template #footer>
+        <el-button :disabled="isRestoring" @click="restoreDialogVisible = false">{{ localT('cancel') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <div v-if="companionStore.activeRole" class="p-3 bg-surface-container-low/70 border-t border-outline-variant/20 flex items-center justify-between shrink-0">
       <div class="flex items-center gap-2.5 min-w-0">
         <div
           class="w-7 h-7 rounded bg-surface-container-high border border-outline-variant/30 flex items-center justify-center text-primary shrink-0"
@@ -198,11 +249,39 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
-import { ElMessage } from 'element-plus'
+import { ElButton, ElDialog, ElMessage } from 'element-plus'
 import { readSceneKey } from '@/components/companion/tavernScenes'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
+import ClearConversationButton from '@/components/companion/ClearConversationButton.vue'
 
-const { t } = useI18n()
+const { t } = useI18n({ useScope: 'global' })
+const { t: localT } = useI18n({
+  useScope: 'local',
+  messages: {
+    zh: {
+      existingConversation: '与已有角色对话',
+      empty: '暂无对话，可以邀请新角色开始聊天。',
+      emptyWithHidden: '暂无对话。可以邀请新角色，或选择“与已有角色对话”重新开始。',
+      restoreHint: '选择角色重新开启对话。角色、模型、成长数据和独立记忆仍会保留，旧消息不会恢复。',
+      noHiddenRoles: '没有可重新开启对话的角色。',
+      startConversation: '开始对话',
+      restoring: '正在开启…',
+      restoreFailed: '无法重新开启对话，请稍后重试。',
+      cancel: '取消'
+    },
+    en: {
+      existingConversation: 'Chat with an existing character',
+      empty: 'No conversations yet. Invite a new character to start chatting.',
+      emptyWithHidden: 'No conversations yet. Invite a new character or choose “Chat with an existing character” to start again.',
+      restoreHint: 'Choose a character to start a new conversation. The character, model, growth data and independent memories are kept; old messages will not be restored.',
+      noHiddenRoles: 'There are no characters with deleted conversations to reopen.',
+      startConversation: 'Start conversation',
+      restoring: 'Starting…',
+      restoreFailed: 'Could not reopen the conversation. Please try again later.',
+      cancel: 'Cancel'
+    }
+  }
+})
 const companionStore = useCompanionStore()
 const toggleList = inject('toggleList', () => {})
 const userStore = useUserStore()
@@ -225,18 +304,38 @@ const byRecency = (a, b) => {
 }
 
 const regularRoles = computed(() =>
-  companionStore.roles
+  companionStore.conversationRoles
     .filter((r) => (r.kind || 'regular') === 'regular')
     .slice()
     .sort(byRecency)
 )
 
 const guestRoles = computed(() =>
-  companionStore.roles
+  companionStore.conversationRoles
     .filter((r) => r.kind === 'guest')
     .slice()
     .sort(byRecency)
 )
+
+const hiddenRoles = computed(() => companionStore.roles.filter((role) => role.conversationHidden))
+const restoreDialogVisible = ref(false)
+const restoringRoleId = ref(null)
+const isRestoring = computed(() => restoringRoleId.value !== null)
+
+async function restoreRole(role) {
+  const userId = userStore.currentUser?.id
+  if (!userId || isRestoring.value || !role.conversationHidden || companionStore.isRoleBusy(role.id)) return
+  restoringRoleId.value = role.id
+  try {
+    // The store reopens and selects the conversation only after the POST succeeds.
+    await companionStore.restoreConversation(userId, role.id)
+    if (userStore.currentUser?.id === userId) restoreDialogVisible.value = false
+  } catch {
+    if (userStore.currentUser?.id === userId) ElMessage.error(localT('restoreFailed'))
+  } finally {
+    restoringRoleId.value = null
+  }
+}
 
 onMounted(async () => {
   if (!userStore.currentUser?.id) return
