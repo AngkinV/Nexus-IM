@@ -1,33 +1,36 @@
 <template>
   <!--
-    Dev-only stage for the Creator's Eye warp (route: /dev/warp, never bundled
-    for production). Lets the transition be reviewed without a backend or login.
+    Dev-only stage for the tavern entrance (route: /dev/warp, never bundled for
+    production). Lets the transition be reviewed without a backend or login.
+    `?t=3.2` freezes the picture at 3.2s; `?theme=light` starts on the light shell.
   -->
-  <div class="wp">
+  <div class="wp" :class="{ 'is-light': light }">
     <header class="wp-bar">
       <span class="wp-brand">Nexus</span>
-      <span class="wp-crumb">Workspace › Creator's Eye warp</span>
+      <span class="wp-crumb">{{ inTavern ? '酒馆（示意）' : '工作台（示意）' }}</span>
       <span class="wp-state" data-testid="warp-phase">phase: {{ state.phase }}</span>
     </header>
 
-    <main class="wp-main">
+    <main v-if="!inTavern" class="wp-main">
       <section class="wp-panel">
-        <h1>造物主之眼 · 冥渊吞噬</h1>
+        <h1>酒馆入场转场</h1>
         <p>
-          进入 AI 会话前的全屏转场。凝视 0.82s → 眨眼坍缩与碎片喷射 → 1.8s 抵达酒馆。
-          ESC 可随时中断。
+          从点击处起稿，线稿、墨色、彩色依次铺开，随后整幅画揉成纸团丢开，露出酒馆。首次完整播放约
+          4.6 秒，同一窗口内再次进入约 2.3 秒。画面盖住界面时（0.62 秒）自动切到酒馆，不需要确认。
         </p>
+        <p>Esc：切换前取消，切换后跳过。点击、回车、空格：跳过。</p>
         <div class="wp-actions">
-          <button class="wp-btn wp-btn--primary" type="button" data-testid="warp-trigger" @click="play()">
-            👁 触发转场
+          <button class="wp-btn wp-btn--primary" type="button" data-testid="warp-trigger" @click="play">
+            进入酒馆
           </button>
-          <button class="wp-btn" type="button" data-testid="warp-trigger-named" @click="play('调酒师 · Nova')">
-            自定义目的地
+          <button class="wp-btn" type="button" data-testid="warp-theme" @click="light = !light">
+            切换深色 / 浅色
           </button>
         </div>
         <dl class="wp-log">
           <div><dt>entered</dt><dd data-testid="warp-entered">{{ entered }}</dd></div>
           <div><dt>cancelled</dt><dd data-testid="warp-cancelled">{{ cancelled }}</dd></div>
+          <div><dt>next</dt><dd data-testid="warp-next">{{ entered ? 'short' : 'full' }}</dd></div>
         </dl>
       </section>
 
@@ -38,37 +41,78 @@
       </section>
     </main>
 
-    <CreatorEyeWarp />
+    <main v-else class="wp-tavern">
+      <section class="wp-stage">角色舞台的位置</section>
+      <button class="wp-btn" type="button" data-testid="warp-back" @click="inTavern = false">返回</button>
+    </main>
+
+    <TavernEntrance ref="stage" />
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import CreatorEyeWarp from '@/components/warp/CreatorEyeWarp.vue'
-import { useCreatorWarp } from '@/composables/useCreatorWarp'
+import { nextTick, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import TavernEntrance from '@/components/warp/TavernEntrance.vue'
+import { useTavernEntrance } from '@/composables/useTavernEntrance'
 
-const { state, trigger } = useCreatorWarp()
+const { state, enter } = useTavernEntrance()
+const route = useRoute()
+const stage = ref(null)
+const light = ref(route.query.theme === 'light')
+const inTavern = ref(false)
 const entered = ref(0)
 const cancelled = ref(0)
 
-const play = (target) => {
-  trigger({
-    target,
-    onEnter: () => { entered.value += 1 },
+const play = () => {
+  enter({
+    onCommit: () => {
+      inTavern.value = true
+      entered.value += 1
+    },
     onCancel: () => { cancelled.value += 1 }
   })
 }
+
+onMounted(async () => {
+  const at = Number(route.query.t)
+  if (!Number.isFinite(at) || route.query.t == null) return
+  await nextTick()
+  stage.value?.seek(at, { x: 120 })
+  // Past 0.62s the app behind the picture is already the tavern.
+  if (at >= 0.62) inTavern.value = true
+})
 </script>
 
 <style scoped>
 .wp {
+  --wp-bg: #131316;
+  --wp-bar: #0e0e11;
+  --wp-panel: #1b1b1e;
+  --wp-line: rgba(68, 71, 72, 0.3);
+  --wp-text: #e4e1e6;
+  --wp-muted: #c4c7c8;
+  --wp-strong: #fff;
+  --wp-on-strong: #09090b;
+
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: #131316;
-  color: #e4e1e6;
+  background: var(--wp-bg);
+  color: var(--wp-text);
   font-family: 'Geist Sans', 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+}
+
+.wp.is-light {
+  --wp-bg: #f4f4f5;
+  --wp-bar: #fafafa;
+  --wp-panel: #fff;
+  --wp-line: rgba(9, 9, 11, 0.12);
+  --wp-text: #27272a;
+  --wp-muted: #52525b;
+  --wp-strong: #09090b;
+  --wp-on-strong: #fff;
 }
 
 .wp-bar {
@@ -77,14 +121,14 @@ const play = (target) => {
   gap: 1rem;
   height: 3.5rem;
   padding: 0 1.5rem;
-  border-bottom: 1px solid rgba(68, 71, 72, 0.3);
-  background: #0e0e11;
+  border-bottom: 1px solid var(--wp-line);
+  background: var(--wp-bar);
   font-size: 0.8125rem;
 }
 
-.wp-brand { font-size: 1.125rem; font-weight: 600; color: #fff; }
-.wp-crumb { color: #c4c7c8; }
-.wp-state { margin-left: auto; font-family: ui-monospace, Menlo, monospace; color: #c4c7c8; }
+.wp-brand { font-size: 1.125rem; font-weight: 600; color: var(--wp-strong); }
+.wp-crumb { color: var(--wp-muted); }
+.wp-state { margin-left: auto; font-family: ui-monospace, Menlo, monospace; color: var(--wp-muted); }
 
 .wp-main {
   display: grid;
@@ -97,30 +141,30 @@ const play = (target) => {
 
 .wp-panel {
   padding: 1.5rem;
-  border: 1px solid rgba(68, 71, 72, 0.3);
+  border: 1px solid var(--wp-line);
   border-radius: 0.75rem;
-  background: #1b1b1e;
+  background: var(--wp-panel);
   align-self: start;
 }
 
-.wp-panel h1 { margin: 0 0 0.5rem; font-size: 1.25rem; font-weight: 600; color: #fff; }
-.wp-panel p { margin: 0 0 1.25rem; font-size: 0.875rem; line-height: 1.5rem; color: #c4c7c8; }
+.wp-panel h1 { margin: 0 0 0.5rem; font-size: 1.25rem; font-weight: 600; color: var(--wp-strong); }
+.wp-panel p { margin: 0 0 1rem; font-size: 0.875rem; line-height: 1.5rem; color: var(--wp-muted); }
 
 .wp-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 
 .wp-btn {
   padding: 0.5rem 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--wp-line);
   border-radius: 9999px;
   background: transparent;
-  color: #e4e1e6;
+  color: var(--wp-text);
   font: inherit;
   font-size: 0.8125rem;
   cursor: pointer;
 }
 
-.wp-btn:hover { border-color: rgba(255, 255, 255, 0.6); }
-.wp-btn--primary { border-color: #fff; background: #fff; color: #09090b; font-weight: 700; }
+.wp-btn:hover { border-color: var(--wp-muted); }
+.wp-btn--primary { border-color: var(--wp-strong); background: var(--wp-strong); color: var(--wp-on-strong); font-weight: 700; }
 
 .wp-log {
   display: flex;
@@ -128,11 +172,11 @@ const play = (target) => {
   margin: 1.25rem 0 0;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 0.75rem;
-  color: #c4c7c8;
+  color: var(--wp-muted);
 }
 
 .wp-log div { display: flex; gap: 0.5rem; }
-.wp-log dd { margin: 0; color: #fff; }
+.wp-log dd { margin: 0; color: var(--wp-strong); }
 
 .wp-feed { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
 
@@ -142,15 +186,38 @@ const play = (target) => {
   gap: 0.5rem;
   width: 60%;
   padding: 1rem;
-  border: 1px solid rgba(68, 71, 72, 0.3);
+  border: 1px solid var(--wp-line);
   border-radius: 0.75rem;
-  background: #1f1f22;
+  background: var(--wp-panel);
 }
 
-.wp-bubble.is-mine { align-self: flex-end; background: #fff; }
-.wp-bubble span { height: 0.5rem; border-radius: 9999px; background: rgba(228, 225, 230, 0.25); }
+.wp-bubble.is-mine { align-self: flex-end; background: var(--wp-strong); }
+.wp-bubble span { height: 0.5rem; border-radius: 9999px; background: var(--wp-line); }
 .wp-bubble span:last-child { width: 60%; }
-.wp-bubble.is-mine span { background: rgba(9, 9, 11, 0.25); }
+.wp-bubble.is-mine span { background: var(--wp-muted); }
+
+.wp-tavern {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1rem;
+  min-height: 0;
+  padding: 1.5rem;
+}
+
+.wp-stage {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 45%;
+  padding: 1rem;
+  border: 1px solid var(--wp-line);
+  border-radius: 0.75rem;
+  background: var(--wp-panel);
+  font-size: 0.8125rem;
+  color: var(--wp-muted);
+}
 
 @media (max-width: 768px) {
   .wp-main { grid-template-columns: minmax(0, 1fr); }

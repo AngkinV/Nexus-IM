@@ -54,7 +54,7 @@ const router = createRouter({
     ]
 })
 
-// Dev-only review stage for the AI warp transition; stripped from production builds.
+// Dev-only review stage for the tavern entrance transition; stripped from production builds.
 if (import.meta.env.DEV) {
     router.addRoute({
         path: '/dev/warp',
