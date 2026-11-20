@@ -64,6 +64,21 @@ class CompanionPromptBuilderTest {
     }
 
     @Test
+    void gestureInstructionsAreOptionalShortAndUseTheSupportedVocabulary() {
+        String prompt = CompanionPromptBuilder.system(new CompanionPromptBuilder.Context(
+                role(), null, null, null, null, List.of(), true));
+
+        for (String label : List.of("rest（自然放松）", "chin（托腮）", "sip（抿饮）", "wipe（擦杯）",
+                "wave（挥手）", "shrug（耸肩）", "cover（掩嘴）", "cross（抱臂）", "tuck（拢发）")) {
+            assertTrue(prompt.contains(label), label);
+        }
+        assertTrue(prompt.contains("gesture 是可选的短暂手势"));
+        assertTrue(prompt.contains("优先用 rest"));
+        assertTrue(prompt.contains("不确定就省略 gesture，不要编造手势"));
+        assertTrue(prompt.contains("简短的单行 JSON"));
+    }
+
+    @Test
     void bondLineFollowsTheFigures() {
         assertEquals("", CompanionPromptBuilder.bondLine(null, 50));
         assertTrue(CompanionPromptBuilder.bondLine(10, 10).contains("刚认识"));
@@ -77,7 +92,8 @@ class CompanionPromptBuilderTest {
                 msg(CompanionMessage.SenderType.user, "今晚有点累", false, null),
                 msg(CompanionMessage.SenderType.role, "我在的。你可以继续说，我会认真听。", true, null),
                 msg(CompanionMessage.SenderType.user, "你在听吗", false, null),
-                msg(CompanionMessage.SenderType.role, "（她点了点头。）在听。", false, "{\"mood\":\"warm\",\"motion\":\"nod\"}"));
+                msg(CompanionMessage.SenderType.role, "（她点了点头。）在听。", false,
+                        "{\"mood\":\"warm\",\"motion\":\"nod\",\"gesture\":\"chin\"}"));
 
         List<Map<String, String>> withState = CompanionPromptBuilder.messages(
                 new CompanionPromptBuilder.Context(role(), null, null, null, null, List.of(), true), history);
@@ -85,7 +101,7 @@ class CompanionPromptBuilderTest {
         assertEquals(List.of("system", "user", "user", "assistant"),
                 withState.stream().map(m -> m.get("role")).toList());
         String assistant = withState.get(3).get("content");
-        assertTrue(assistant.startsWith("<state>{\"mood\":\"warm\",\"motion\":\"nod\"}</state>\n"), assistant);
+        assertTrue(assistant.startsWith("<state>{\"mood\":\"warm\",\"motion\":\"nod\",\"gesture\":\"chin\"}</state>\n"), assistant);
         assertTrue(assistant.endsWith("在听。"));
 
         List<Map<String, String>> plain = CompanionPromptBuilder.messages(
@@ -95,6 +111,14 @@ class CompanionPromptBuilderTest {
         String transcript = CompanionPromptBuilder.transcript(history);
         assertFalse(transcript.contains("我会认真听"));
         assertTrue(transcript.contains("对方：今晚有点累\n"));
+    }
+
+    @Test
+    void oldHistoryWithoutGestureIsReplayedWithoutInventingOne() {
+        List<Map<String, String>> messages = CompanionPromptBuilder.messages(
+                new CompanionPromptBuilder.Context(role(), null, null, null, null, List.of(), true),
+                List.of(msg(CompanionMessage.SenderType.role, "在听。", false, "{\"mood\":\"warm\",\"motion\":\"nod\"}")));
+        assertEquals("<state>{\"mood\":\"warm\",\"motion\":\"nod\"}</state>\n在听。", messages.get(1).get("content"));
     }
 
     @Test

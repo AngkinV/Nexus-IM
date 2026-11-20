@@ -13,6 +13,10 @@ public interface CompanionMessageRepository extends JpaRepository<CompanionMessa
     List<CompanionMessage> findBySessionIdOrderByCreatedAtAsc(Long sessionId);
     Integer countBySessionId(Long sessionId);
 
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("delete from CompanionMessage m where m.userId = :userId and m.roleId = :roleId")
+    int deleteHistory(Long userId, Long roleId);
+
     // created_at has one-second resolution; two rows written in the same second
     // (an opening line and the message that prompted it) only order reliably by id.
     List<CompanionMessage> findByConversationIdOrderByIdAsc(Long conversationId);

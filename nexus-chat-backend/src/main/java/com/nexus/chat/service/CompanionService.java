@@ -125,7 +125,10 @@ public class CompanionService {
     }
 
     public List<CompanionMessageDTO> getConversation(Long userId, Long roleId) {
-        CompanionConversation conversation = getOrCreateConversation(userId, roleId);
+        roleRepository.findByIdAndUserId(roleId, userId)
+                .orElseThrow(() -> new RuntimeException("role not found"));
+        CompanionConversation conversation = conversationRepository.findByUserIdAndRoleId(userId, roleId).orElse(null);
+        if (conversation == null) return List.of();
         List<CompanionMessage> messages = messageRepository
                 .findByConversationIdOrderByIdAsc(conversation.getId());
         List<CompanionMessageDTO> result = new ArrayList<>();
@@ -260,6 +263,11 @@ public class CompanionService {
             // A retry after its evening was closed: the line moves to tonight.
             userMessage.setSessionId(session.getId());
             messageRepository.save(userMessage);
+        }
+
+        if (role.isConversationHidden()) {
+            role.setConversationHidden(false);
+            roleRepository.save(role);
         }
 
         // ── What she is told ───────────────────────────────────────────────
@@ -790,7 +798,8 @@ public class CompanionService {
     /**
      * After an exchange: she is talking to you, and if she reported a state, that
      * is now her state. Without a report nothing about her mood is written — the
-     * previous one stands rather than a guess replacing it.
+     * previous one stands rather than a guess replacing it. Gestures are cues
+     * for one reply only: an omitted gesture clears the previous cue.
      */
     private CompanionStatusDTO recordState(Long userId, CompanionRole role, CompanionStateTag.State state) {
         CompanionStatus status = statusRepository.findByUserIdAndRoleId(userId, role.getId())
@@ -801,9 +810,10 @@ public class CompanionService {
                     return s;
                 });
         status.setStatusType(CompanionStatus.StatusType.chatting);
+        status.setGesture(state == null ? null : state.gesture());
         if (state != null) {
-            status.setMood(state.mood());
-            status.setMotion(state.motion());
+            if (state.mood() != null) status.setMood(state.mood());
+            if (state.motion() != null) status.setMotion(state.motion());
             if (state.doing() != null) {
                 status.setSummary(state.doing());
                 status.setSummaryAuthored(true);
@@ -848,7 +858,8 @@ public class CompanionService {
                 lastMessageAt,
                 presence,
                 role.getBackground(),
-                role.getGreeting()
+                role.getGreeting(),
+                role.isConversationHidden()
         );
     }
 
@@ -896,7 +907,8 @@ public class CompanionService {
                 status.getSummary(),
                 status.getUpdatedAt(),
                 status.getMood(),
-                status.getMotion()
+                status.getMotion(),
+                status.getGesture()
         );
     }
 

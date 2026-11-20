@@ -24,6 +24,13 @@ test('SpringSnow keeps its working standard expressions and custom surprise', ()
   assert.deepEqual(bindings.surprised, [['Surprised', 1]])
 })
 
+test('all bundled characters expose five usable vowel bindings', () => {
+  for (const model of ['SpringSnow', 'default', 'YuukaPajamas6th103']) {
+    const bindings = expressionBindings(modelJson(model))
+    for (const mouth of ['aa', 'ih', 'ou', 'ee', 'oh']) assert.ok(bindings[mouth].length, `${model}: ${mouth}`)
+  }
+})
+
 test('shared morphs compose without overriding each other and return to neutral', () => {
   const weights = new Map()
   const adapter = createVrmExpressions({ expressionManager: { setValue: (name, value) => weights.set(name, value) } }, modelJson('YuukaPajamas6th103'))

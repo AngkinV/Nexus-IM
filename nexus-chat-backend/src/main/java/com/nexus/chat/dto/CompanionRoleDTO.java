@@ -35,4 +35,5 @@ public class CompanionRoleDTO {
     private String background;
     /** Her opening line for a new evening. */
     private String greeting;
+    private boolean conversationHidden;
 }

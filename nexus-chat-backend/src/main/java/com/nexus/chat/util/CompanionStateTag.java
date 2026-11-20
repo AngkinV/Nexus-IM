@@ -30,6 +30,8 @@ public final class CompanionStateTag {
             "calm", "warm", "happy", "shy", "sad", "worried", "angry", "surprised", "tired", "thoughtful");
     public static final Set<String> MOTIONS = Set.of(
             "idle", "listen", "think", "nod", "lean_in", "look_away");
+    public static final Set<String> GESTURES = Set.of(
+            "rest", "chin", "sip", "wipe", "wave", "shrug", "cover", "cross", "tuck");
 
     private static final int MAX_DOING = 60;
     /** A marker longer than this is not a marker; stop holding text back for it. */
@@ -37,15 +39,15 @@ public final class CompanionStateTag {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Pattern LOOSE_PAIR =
-            Pattern.compile("(mood|motion|doing)\\s*[\"']?\\s*[:=：]\\s*[\"'“]?([^\"'”,，|}\\n]+)");
+            Pattern.compile("(mood|motion|doing|gesture)\\s*[\"']?\\s*[:=：]\\s*[\"'“]?([^\"'”,，|}\\n]+)");
     private static final Pattern BRACE_THEN_NEWLINE = Pattern.compile("\\}\\s*\\n");
 
     private CompanionStateTag() {}
 
     /** What she reported. Any field may be null; all null means "no state". */
-    public record State(String mood, String motion, String doing) {
+    public record State(String mood, String motion, String doing, String gesture) {
         public boolean isEmpty() {
-            return mood == null && motion == null && doing == null;
+            return mood == null && motion == null && doing == null && gesture == null;
         }
 
         public Map<String, String> toMap() {
@@ -53,6 +55,7 @@ public final class CompanionStateTag {
             if (mood != null) out.put("mood", mood);
             if (motion != null) out.put("motion", motion);
             if (doing != null) out.put("doing", doing);
+            if (gesture != null) out.put("gesture", gesture);
             return out;
         }
     }
@@ -98,6 +101,7 @@ public final class CompanionStateTag {
         String mood = null;
         String motion = null;
         String doing = null;
+        String gesture = null;
         String trimmed = body.trim();
         try {
             JsonNode node = MAPPER.readTree(trimmed);
@@ -105,6 +109,7 @@ public final class CompanionStateTag {
                 mood = text(node, "mood");
                 motion = text(node, "motion");
                 doing = text(node, "doing");
+                gesture = text(node, "gesture");
             }
         } catch (Exception ignored) {
             Matcher matcher = LOOSE_PAIR.matcher(trimmed);
@@ -113,18 +118,20 @@ public final class CompanionStateTag {
                 switch (matcher.group(1)) {
                     case "mood" -> mood = value;
                     case "motion" -> motion = value;
+                    case "gesture" -> gesture = value;
                     default -> doing = value;
                 }
             }
         }
         mood = normalize(mood, MOODS);
         motion = normalize(motion, MOTIONS);
+        gesture = normalize(gesture, GESTURES);
         if (doing != null) {
             doing = doing.trim();
             if (doing.isEmpty()) doing = null;
             else if (doing.length() > MAX_DOING) doing = doing.substring(0, MAX_DOING);
         }
-        State state = new State(mood, motion, doing);
+        State state = new State(mood, motion, doing, gesture);
         return state.isEmpty() ? null : state;
     }
 

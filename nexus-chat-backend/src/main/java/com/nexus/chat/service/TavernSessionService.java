@@ -6,9 +6,11 @@ import com.nexus.chat.repository.*;
 import com.nexus.chat.util.JsonUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -48,6 +50,7 @@ public class TavernSessionService {
     private final CompanionConversationRepository conversationRepository;
     private final CompanionStatusRepository statusRepository;
     private final TransactionTemplate tx;
+    private final CompanionConversationGuard conversationGuard;
 
     public TavernSessionService(TavernSessionRepository sessionRepository,
                                 CompanionRoleRepository roleRepository,
@@ -58,7 +61,8 @@ public class TavernSessionService {
                                 CompanionFallbackService fallbackService,
                                 CompanionConversationRepository conversationRepository,
                                 CompanionStatusRepository statusRepository,
-                                PlatformTransactionManager transactionManager) {
+                                PlatformTransactionManager transactionManager,
+                                CompanionConversationGuard conversationGuard) {
         this.sessionRepository = sessionRepository;
         this.roleRepository = roleRepository;
         this.messageRepository = messageRepository;
@@ -69,6 +73,7 @@ public class TavernSessionService {
         this.conversationRepository = conversationRepository;
         this.statusRepository = statusRepository;
         this.tx = new TransactionTemplate(transactionManager);
+        this.conversationGuard = conversationGuard;
     }
 
     /**
@@ -79,6 +84,12 @@ public class TavernSessionService {
      * evening that is already running into another room.
      */
     public TavernSessionDTO openSession(Long userId, Long roleId, String sceneKey) {
+        try (var ignored = conversationGuard.acquire(userId, roleId)) {
+            return openSessionLocked(userId, roleId, sceneKey);
+        }
+    }
+
+    private TavernSessionDTO openSessionLocked(Long userId, Long roleId, String sceneKey) {
         roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
 
@@ -121,6 +132,14 @@ public class TavernSessionService {
     public TavernSessionDTO closeSession(Long userId, Long sessionId) {
         TavernSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
                 .orElseThrow(() -> new RuntimeException("session not found"));
+        try (var ignored = conversationGuard.acquire(userId, session.getRoleId())) {
+            return closeSessionLocked(userId, sessionId);
+        }
+    }
+
+    private TavernSessionDTO closeSessionLocked(Long userId, Long sessionId) {
+        TavernSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
+                .orElseThrow(() -> new RuntimeException("session not found"));
         if (session.getStatus() == TavernSession.Status.closed) {
             return toDTO(session);
         }
@@ -156,7 +175,8 @@ public class TavernSessionService {
         return tx.execute(status -> {
             // Re-read inside the transaction: a second close that raced this one
             // must not file a second farewell.
-            TavernSession current = sessionRepository.findByIdAndUserId(sessionId, userId).orElse(session);
+            TavernSession current = sessionRepository.findByIdAndUserId(sessionId, userId)
+                    .orElseThrow(() -> new RuntimeException("session not found"));
             if (current.getStatus() == TavernSession.Status.closed) return toDTO(current);
 
             current.setClosingLine(closingLine);
@@ -223,6 +243,13 @@ public class TavernSessionService {
     public void adoptRole(Long userId, Long roleId, Long sessionId) {
         CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
+        if (sessionId != null) {
+            TavernSession session = sessionRepository.findByIdAndUserId(sessionId, userId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "session not found"));
+            if (!roleId.equals(session.getRoleId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "session does not belong to role");
+            }
+        }
         role.setKind(CompanionRole.Kind.regular);
         if (sessionId != null) role.setOriginSessionId(sessionId);
         roleRepository.save(role);

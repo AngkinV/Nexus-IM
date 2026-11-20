@@ -17,4 +17,6 @@ public class CompanionStatusDTO {
     /** Reported by the model, never derived. Null until she has said so. */
     private String mood;
     private String motion;
+    /** Optional cue for the latest reply, not a lasting pose. */
+    private String gesture;
 }

@@ -18,7 +18,7 @@ public class CompanionMessageDTO {
     private LocalDateTime createdAt;
     /** The evening this message belongs to; null for messages older than sessions. */
     private Long sessionId;
-    /** mood / motion / doing as she reported them with this reply, or null. */
+    /** mood / motion / doing / gesture as she reported them with this reply, or null. */
     private java.util.Map<String, String> state;
     /**
      * The id the client sent this line under. Lets a client that reloads still
