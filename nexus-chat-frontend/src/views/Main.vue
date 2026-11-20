@@ -47,7 +47,7 @@
     <CommandPalette v-model="paletteOpen" @action="handlePaletteAction" />
 
     <!-- Creator's Eye: fullscreen transition played when entering the AI section -->
-    <CreatorEyeWarp />
+    <TavernEntrance />
 
     <!-- Mobile overlay for right panel -->
     <div
@@ -78,8 +78,8 @@ import CallEndModal from '@/components/call/CallEndModal.vue'
 import CompanionAvatar3D from '@/components/companion/CompanionAvatar3D.vue'
 import RoleChatView from '@/views/companion/RoleChatView.vue'
 import CommandPalette from '@/components/layout/CommandPalette.vue'
-import CreatorEyeWarp from '@/components/warp/CreatorEyeWarp.vue'
-import { useCreatorWarp, WARP_PHASE } from '@/composables/useCreatorWarp'
+import TavernEntrance from '@/components/warp/TavernEntrance.vue'
+import { useTavernEntrance, ENTRANCE_PHASE } from '@/composables/useTavernEntrance'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
 import { useChatStore } from '@/stores/chat'
@@ -98,7 +98,7 @@ const messageStore = useMessageStore()
 const callStore = useCallStore()
 const companionStore = useCompanionStore()
 const agentStore = useAgentStore()
-const creatorWarp = useCreatorWarp()
+const tavernEntrance = useTavernEntrance()
 
 // ── Dual collapse (design: 200px<->64px dock, 320px<->44px blade) ───────────
 // [ toggles the global rail, ] toggles the message-list blade. Both live here so
@@ -193,21 +193,21 @@ const setActiveView = (view) => {
 const isAiChat = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
 
 // ── Entering the tavern ──────────────────────────────────────────────────────
-// The Creator's Eye announces a tavern and a character, so it guards the place
-// where characters actually are: the companion roles. The AI assistant is a
-// work tool and opens directly. Coming from outside, the warp plays first and
-// `commit` only runs once the user confirms on the arrival stage; ESC backs out
-// and nothing changes. Already inside, `commit` runs straight away.
+// The entrance plays where characters actually are: the companion roles. The AI
+// assistant is a work tool and opens directly. Coming from outside, a painting
+// is drawn over the app and `commit` runs by itself once it covers the screen;
+// the painting is then crumpled away to show the tavern. There is nothing to
+// confirm. ESC in the first moments, before `commit`, backs out and nothing
+// changes. Already inside, `commit` runs straight away.
 let enteringTavern = false
 const enterTavern = (commit) => {
   if (enteringTavern || activeView.value === 'companion') {
     commit()
     return
   }
-  if (creatorWarp.state.phase !== WARP_PHASE.IDLE) return
-  creatorWarp.trigger({
-    target: companionStore.activeRole?.name,
-    onEnter: () => {
+  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) return
+  tavernEntrance.enter({
+    onCommit: () => {
       enteringTavern = true
       try {
         commit()
@@ -218,11 +218,11 @@ const enterTavern = (commit) => {
   })
 }
 
-// A call must never ring behind the stage: the warp yields to it immediately.
+// A call must never ring behind the stage: the entrance yields to it immediately.
 watch(
   () => callStore.callStatus,
   (status) => {
-    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) creatorWarp.cancel()
+    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) tavernEntrance.cancel()
   }
 )
 
