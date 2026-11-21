@@ -495,8 +495,8 @@ const handleAvatarClick = (senderId) => {
 
 .bubble-in {
   background: rgba(27, 27, 30, 0.9);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   border: 1px solid rgba(68, 71, 72, 0.3);
   border-radius: 0 12px 12px 12px;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);

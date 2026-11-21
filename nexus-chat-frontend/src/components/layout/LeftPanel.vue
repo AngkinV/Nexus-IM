@@ -524,8 +524,8 @@ const handleGroupSelect = (group) => {
   cursor: pointer;
   user-select: none;
   position: relative;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   transition: background 0.2s ease;
 }
 
@@ -632,8 +632,8 @@ const handleGroupSelect = (group) => {
   max-width: calc(100vw - 150px);
   border-radius: 16px;
   background: rgba(14, 14, 17, 0.95);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(calc(20px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(20px * var(--glass-blur-scale, 1)));
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 14px;
   z-index: 50;

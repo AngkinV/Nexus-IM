@@ -714,8 +714,8 @@ const handleReactMessage = async (msg, emoji) => {
   align-items: center;
   gap: 16px;
   background: rgba(14, 14, 17, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   border-bottom: 1px solid rgba(68, 71, 72, 0.2);
   z-index: 20;
   flex-shrink: 0;

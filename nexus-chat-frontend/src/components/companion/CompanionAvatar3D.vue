@@ -48,6 +48,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { VRMLoaderPlugin, VRMUtils, VRMExpressionPresetName } from '@pixiv/three-vrm'
 import { createVrmExpressions } from './vrmExpressions'
+import { createRenderLoop, resolvePixelRatio } from '@/utils/renderLoop'
+import { useSettingsStore } from '@/stores/settings'
+import { useWindowFocus } from '@/composables/useWindowFocus'
 
 const { locale } = useI18n()
 
@@ -70,6 +73,9 @@ const hasWebGL = ref(true)
 const isReady = ref(false)
 const loadError = ref('')
 const rafId = ref(null)
+const settings = useSettingsStore()
+const { isSuspended } = useWindowFocus({ delayMs: 30_000 })
+let renderLoop = null
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
 let renderer = null
@@ -282,7 +288,7 @@ const initThree = () => {
   const canvas = canvasRef.value
   if (!canvas) return
   renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setPixelRatio(resolvePixelRatio(settings.renderScale, CANVAS_H))
   renderer.setClearColor(0x000000, 0)
 
   scene = new THREE.Scene()
@@ -308,10 +314,18 @@ const initThree = () => {
 
 const resizeRenderer = () => {
   if (!renderer || !camera) return
+  renderer.setPixelRatio(resolvePixelRatio(settings.renderScale, CANVAS_H))
   renderer.setSize(CANVAS_W, CANVAS_H, false)
   camera.aspect = CANVAS_W / CANVAS_H
   camera.updateProjectionMatrix()
 }
+
+// Changing the render scale must reapply the ratio and the drawing buffer.
+watch(() => settings.renderScale, () => {
+  if (!renderer) return
+  resizeRenderer()
+  render(0)
+})
 
 const disposeModel = () => {
   clearMotionOffsets()
@@ -1171,7 +1185,6 @@ const render = () => {
   if (vrm) vrm.update(delta)
   updateWalkMovement(delta)
   renderer.render(scene, camera)
-  rafId.value = requestAnimationFrame(render)
 }
 
 const handleMotionsUpdated = async () => {
@@ -1224,7 +1237,11 @@ onMounted(async () => {
   resizeRenderer()
   scheduleNextBlink(0)
   loadModel()
-  rafId.value = requestAnimationFrame(render)
+  renderLoop = createRenderLoop(render, {
+    fpsCap: () => settings.fpsCap,
+    suspended: () => isSuspended.value
+  })
+  renderLoop.start()
   window.addEventListener('resize', clampPosition)
   window.addEventListener('keydown', handleEscape)
   window.addEventListener('companion:motions-updated', handleMotionsUpdated)
@@ -1235,6 +1252,7 @@ onUnmounted(() => {
   disposed = true
   modelRequest++
   stopMotionCycle()
+  renderLoop?.stop()
   if (rafId.value) cancelAnimationFrame(rafId.value)
   window.removeEventListener('resize', clampPosition)
   window.removeEventListener('keydown', handleEscape)
@@ -1299,7 +1317,7 @@ watch([modelSource, modelType], loadModel)
   font-size: 11px;
   background: rgba(14, 14, 17, 0.85);
   color: #c4c7c8;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(calc(6px * var(--glass-blur-scale, 1)));
 }
 
 .loading-badge.error {
@@ -1329,7 +1347,7 @@ watch([modelSource, modelType], loadModel)
   border: 1px solid #2c2c30;
   border-radius: 8px;
   box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
 }
 
 .motion-menu-title {

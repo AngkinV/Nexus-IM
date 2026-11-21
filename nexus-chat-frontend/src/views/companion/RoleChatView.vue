@@ -972,7 +972,7 @@ function stop() {
   gap: 10px;
   padding: 0 16px;
   background: rgba(14, 14, 17, 0.8);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   border-bottom: 1px solid rgba(68, 71, 72, 0.3);
 }
 

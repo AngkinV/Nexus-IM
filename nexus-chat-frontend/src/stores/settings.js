@@ -18,7 +18,15 @@ const STORAGE_KEY = 'nexus.settings'
 
 export const DEFAULT_SETTINGS = Object.freeze({
   notificationsEnabled: true,
-  hourCycle: '24' // '24' | '12'
+  hourCycle: '24', // '24' | '12'
+  glassIntensity: 100, // 0-100, drives --glass-blur-scale
+  badgeEnabled: true, // dock / taskbar unread badge
+  zoomPercent: 100, // 50-200, whole-window zoom
+  suspendOnBlur: true, // pause 3D rendering while the window is unfocused
+  fpsCap: 60, // 30 | 60
+  renderScale: 'native', // 'native' | '1080p' | '720p'
+  soundEnabled: true, // UI sounds (Web Audio, synthesised)
+  encryptedStorage: false // encrypt the settings blob at rest
 })
 
 function readStored() {
@@ -45,12 +53,17 @@ export function to12Hour(fmt) {
 
 export const useSettingsStore = defineStore('settings', () => {
   const state = ref(readStored())
+  const ready = ref(false)
 
   // Persist on any change so a reload keeps the user's choice.
+  // Skipped while an encrypted blob is in place: secureStorage owns the write in
+  // that case, otherwise every keystroke would overwrite the ciphertext with
+  // plain JSON.
   watch(
     state,
     (value) => {
       if (typeof localStorage === 'undefined') return
+      if (value.encryptedStorage) return
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(value))
       } catch {
@@ -59,6 +72,42 @@ export const useSettingsStore = defineStore('settings', () => {
     },
     { deep: true }
   )
+
+  /**
+   * Load the stored blob. Called once at boot: when the payload is an encrypted
+   * envelope this decrypts it before anything reads the settings.
+   */
+  async function hydrate() {
+    if (typeof localStorage === 'undefined') {
+      ready.value = true
+      return
+    }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) {
+        ready.value = true
+        return
+      }
+      const parsed = JSON.parse(raw)
+      if (parsed && parsed.__encrypted === true) {
+        // Imported lazily: secureStorage pulls in IndexedDB/Web Crypto, which a
+        // node test run has no business loading just to read a plain blob.
+        const { decryptValue } = await import('@/utils/secureStorage')
+        const plain = await decryptValue(parsed)
+        if (plain && typeof plain === 'object') {
+          const merged = { ...DEFAULT_SETTINGS }
+          for (const key of Object.keys(DEFAULT_SETTINGS)) {
+            if (key in plain) merged[key] = plain[key]
+          }
+          state.value = merged
+        }
+      }
+    } catch {
+      /* corrupt blob: keep defaults */
+    } finally {
+      ready.value = true
+    }
+  }
 
   const notificationsEnabled = computed({
     get: () => state.value.notificationsEnabled !== false,
@@ -73,6 +122,104 @@ export const useSettingsStore = defineStore('settings', () => {
       state.value.hourCycle = v === '12' ? '12' : '24'
     }
   })
+
+  const glassIntensity = computed({
+    get: () => {
+      const v = Number(state.value.glassIntensity)
+      return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 100
+    },
+    set: (v) => {
+      const n = Number(v)
+      state.value.glassIntensity = Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 100
+    }
+  })
+
+  /**
+   * Push the glass intensity into CSS. Every backdrop-filter in the app
+   * multiplies its radius by --glass-blur-scale, so this one write retunes
+   * the whole interface.
+   */
+  function applyGlassIntensity() {
+    if (typeof document === 'undefined' || !document.documentElement) return
+    document.documentElement.style.setProperty(
+      '--glass-blur-scale',
+      String(glassIntensity.value / 100)
+    )
+  }
+
+  // Keep CSS in sync whenever the value changes, including on first load.
+  watch(glassIntensity, applyGlassIntensity, { immediate: true })
+
+  const badgeEnabled = computed({
+    get: () => state.value.badgeEnabled !== false,
+    set: (v) => {
+      state.value.badgeEnabled = !!v
+    }
+  })
+
+  const zoomPercent = computed({
+    get: () => {
+      const v = Number(state.value.zoomPercent)
+      return Number.isFinite(v) ? Math.min(200, Math.max(50, v)) : 100
+    },
+    set: (v) => {
+      const n = Number(v)
+      state.value.zoomPercent = Number.isFinite(n) ? Math.min(200, Math.max(50, n)) : 100
+    }
+  })
+
+  const suspendOnBlur = computed({
+    get: () => state.value.suspendOnBlur !== false,
+    set: (v) => {
+      state.value.suspendOnBlur = !!v
+    }
+  })
+
+  /**
+   * Apply the zoom factor to the window. Electron's zoom is per-origin and
+   * survives a reload only when re-applied, so this runs on boot too.
+   */
+  async function applyZoom() {
+    if (typeof window === 'undefined' || !window.electronAPI?.setZoom) return
+    try {
+      await window.electronAPI.setZoom(zoomPercent.value)
+    } catch {
+      /* the window may not exist yet during boot */
+    }
+  }
+
+  const fpsCap = computed({
+    get: () => (Number(state.value.fpsCap) === 30 ? 30 : 60),
+    set: (v) => {
+      state.value.fpsCap = Number(v) === 30 ? 30 : 60
+    }
+  })
+
+  const renderScale = computed({
+    get: () => {
+      const v = state.value.renderScale
+      return v === '1080p' || v === '720p' ? v : 'native'
+    },
+    set: (v) => {
+      state.value.renderScale = v === '1080p' || v === '720p' ? v : 'native'
+    }
+  })
+
+  const soundEnabled = computed({
+    get: () => state.value.soundEnabled !== false,
+    set: (v) => {
+      state.value.soundEnabled = !!v
+    }
+  })
+
+  const encryptedStorage = computed({
+    get: () => state.value.encryptedStorage === true,
+    set: (v) => {
+      state.value.encryptedStorage = v === true
+    }
+  })
+
+  watch(zoomPercent, applyZoom, { immediate: true })
 
   /**
    * Whether the OS-level notification should actually be shown.
@@ -102,9 +249,21 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     state,
+    ready,
+    hydrate,
     notificationsEnabled,
     hourCycle,
+    glassIntensity,
+    badgeEnabled,
+    zoomPercent,
+    suspendOnBlur,
+    fpsCap,
+    renderScale,
+    soundEnabled,
+    encryptedStorage,
+    applyZoom,
     shouldNotify,
+    applyGlassIntensity,
     format,
     resetToDefaults
   }

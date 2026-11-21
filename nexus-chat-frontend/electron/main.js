@@ -247,6 +247,110 @@ ipcMain.handle('app:show-notification', (_, title, body) => {
 ipcMain.handle('app:check-for-updates', () => checkForUpdates())
 
 /**
+ * Cache footprint for Settings → 清空缓存.
+ * getCacheSize() reports the HTTP cache only; storage (localStorage,
+ * IndexedDB) is reported separately so the number the UI shows is honest.
+ */
+ipcMain.handle('app:cache-info', async () => {
+  try {
+    const ses = session.defaultSession
+    const httpBytes = await ses.getCacheSize()
+    const storages = ['appcache', 'shadercache', 'serviceworkers', 'cachestorage']
+    let storageBytes = 0
+    try {
+      const info = await ses.getStorageUsage ? ses.getStorageUsage() : null
+      if (info && typeof info === 'object') {
+        for (const bytes of Object.values(info)) storageBytes += Number(bytes) || 0
+      }
+    } catch {
+      /* getStorageUsage is not available on every Electron version */
+    }
+    return {
+      available: true,
+      httpBytes,
+      storageBytes,
+      totalBytes: httpBytes + storageBytes
+    }
+  } catch (error) {
+    return { available: false, error: error.message }
+  }
+})
+
+ipcMain.handle('app:clear-cache', async () => {
+  try {
+    const ses = session.defaultSession
+    await ses.clearCache()
+    // Service workers keep their own store; clear it too so the reported size
+    // actually drops after the button is pressed.
+    try {
+      await ses.clearStorageData({ storages: ['serviceworkers'] })
+    } catch {
+      /* best effort */
+    }
+    const remaining = await ses.getCacheSize()
+    return { ok: true, remainingBytes: remaining }
+  } catch (error) {
+    return { ok: false, error: error.message }
+  }
+})
+
+/**
+ * Dock / taskbar badge for unread messages.
+ * macOS uses the dock badge string; Windows and Linux use setBadgeCount.
+ */
+/**
+ * Whole-window zoom. Chromium keeps the factor per-origin, so this survives a
+ * reload only if the renderer re-applies it — settings.js does that on boot.
+ */
+ipcMain.handle('window:set-zoom', (_, percent) => {
+  const n = Number(percent)
+  if (!Number.isFinite(n)) return false
+  const factor = Math.min(3, Math.max(0.5, n / 100))
+  try {
+    mainWindow?.webContents.setZoomFactor(factor)
+    return true
+  } catch {
+    return false
+  }
+})
+
+ipcMain.handle('window:get-zoom', () => {
+  try {
+    return Math.round((mainWindow?.webContents.getZoomFactor() ?? 1) * 100)
+  } catch {
+    return 100
+  }
+})
+
+/**
+ * Focus changes, so the renderer can suspend 3D work in the background.
+ * Sent to every window: the main window is the only one today, but the
+ * broadcast keeps it correct if a settings window is ever added.
+ */
+const broadcastFocus = (focused) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('window:focus-changed', focused)
+  }
+}
+
+app.on('browser-window-focus', () => broadcastFocus(true))
+app.on('browser-window-blur', () => broadcastFocus(false))
+
+ipcMain.handle('app:set-badge', (_, count) => {
+  const n = Number(count) || 0
+  try {
+    if (process.platform === 'darwin' && app.dock) {
+      app.dock.setBadge(n > 0 ? String(n) : '')
+    } else if (typeof app.setBadgeCount === 'function') {
+      app.setBadgeCount(n > 0 ? n : 0)
+    }
+    return true
+  } catch {
+    return false
+  }
+})
+
+/**
  * Live GPU / memory reading for the settings screen.
  *
  * Numbers come from Electron's own metrics, not from a mock: getAppMetrics()

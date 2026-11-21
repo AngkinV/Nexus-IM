@@ -154,6 +154,63 @@
                 <p class="preview">{{ t('settings.preview') }}: {{ timePreview }}</p>
               </div>
             </div>
+            <!-- 超感毛玻璃透明度 -->
+            <div class="card" :class="{ dimmed: !matches('glass') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">blur_on</span>
+                <div>
+                  <h3>{{ t('settings.glassIntensity') }}</h3>
+                  <p>{{ t('settings.glassIntensityDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="slider-row">
+                  <input
+                    v-model.number="settings.glassIntensity"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    class="slider"
+                  />
+                  <span class="slider-value">{{ settings.glassIntensity }}%</span>
+                </div>
+                <p class="preview">{{ t('settings.glassHint') }}</p>
+              </div>
+            </div>
+
+            <!-- 视窗缩放与字体微调 -->
+            <div class="card" :class="{ dimmed: !matches('zoom') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">zoom_in</span>
+                <div>
+                  <h3>{{ t('settings.zoom') }}</h3>
+                  <p>{{ t('settings.zoomDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="slider-row">
+                  <input
+                    v-model.number="settings.zoomPercent"
+                    type="range"
+                    min="50"
+                    max="200"
+                    step="10"
+                    class="slider"
+                  />
+                  <span class="slider-value">{{ settings.zoomPercent }}%</span>
+                </div>
+                <button
+                  v-if="settings.zoomPercent !== 100"
+                  type="button"
+                  class="ghost-btn reset-zoom"
+                  @click="settings.zoomPercent = 100"
+                >
+                  <span class="material-symbols-outlined">restart_alt</span>
+                  {{ t('settings.zoomReset') }}
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -210,6 +267,68 @@
               <span class="mini-note">{{ t('settings.accelerationNote') }}</span>
             </div>
           </div>
+
+          <div class="card-grid cols-3">
+            <!-- 渲染帧率上限 -->
+            <div class="card" :class="{ dimmed: !matches('fps') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">speed</span>
+                <div>
+                  <h3>{{ t('settings.fpsCap') }}</h3>
+                  <p>{{ t('settings.fpsCapDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="segmented">
+                  <button type="button" :class="{ on: settings.fpsCap === 30 }" @click="settings.fpsCap = 30">
+                    {{ t('settings.fps30') }}
+                  </button>
+                  <button type="button" :class="{ on: settings.fpsCap === 60 }" @click="settings.fpsCap = 60">
+                    {{ t('settings.fps60') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 视口渲染分辨率 -->
+            <div class="card" :class="{ dimmed: !matches('renderScale') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">aspect_ratio</span>
+                <div>
+                  <h3>{{ t('settings.renderScale') }}</h3>
+                  <p>{{ t('settings.renderScaleDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="segmented three">
+                  <button type="button" :class="{ on: settings.renderScale === '720p' }" @click="settings.renderScale = '720p'">720p</button>
+                  <button type="button" :class="{ on: settings.renderScale === '1080p' }" @click="settings.renderScale = '1080p'">1080p</button>
+                  <button type="button" :class="{ on: settings.renderScale === 'native' }" @click="settings.renderScale = 'native'">{{ t('settings.scaleNative') }}</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 后台失焦智能挂起 -->
+            <div class="card card-row" :class="{ dimmed: !matches('suspend') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">bedtime</span>
+                <div>
+                  <h3>{{ t('settings.suspendOnBlur') }}</h3>
+                  <p>{{ t('settings.suspendOnBlurDesc') }}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="toggle sm"
+                :class="{ on: settings.suspendOnBlur }"
+                role="switch"
+                :aria-checked="settings.suspendOnBlur"
+                @click="settings.suspendOnBlur = !settings.suspendOnBlur"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+          </div>
         </section>
 
         <!-- 3. 消息与通知 -->
@@ -253,6 +372,55 @@
                 </div>
               </div>
               <span class="value-note">{{ unreadTotal }}</span>
+            </div>
+
+            <!-- 程序坞/托盘角标 -->
+            <div class="card card-row" :class="{ dimmed: !matches('badge') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">apps</span>
+                <div>
+                  <h3>{{ t('settings.dockBadge') }}</h3>
+                  <p>{{ t('settings.dockBadgeDesc') }}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="toggle"
+                :class="{ on: settings.badgeEnabled }"
+                role="switch"
+                :aria-checked="settings.badgeEnabled"
+                :disabled="!isElectron"
+                @click="settings.badgeEnabled = !settings.badgeEnabled"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+
+            <!-- 触感与极简音效 -->
+            <div class="card" :class="{ dimmed: !matches('sound') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">volume_up</span>
+                <div>
+                  <h3>{{ t('settings.uiSound') }}</h3>
+                  <p>{{ t('settings.uiSoundDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-foot">
+                <button type="button" class="ghost-btn" @click="testSound">
+                  <span class="material-symbols-outlined">play_arrow</span>
+                  {{ t('settings.soundTest') }}
+                </button>
+                <button
+                  type="button"
+                  class="toggle"
+                  :class="{ on: settings.soundEnabled }"
+                  role="switch"
+                  :aria-checked="settings.soundEnabled"
+                  @click="settings.soundEnabled = !settings.soundEnabled"
+                >
+                  <span class="toggle-knob"></span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -397,6 +565,55 @@
                 </div>
               </div>
             </div>
+
+            <!-- 清空缓存 -->
+            <div class="card" :class="{ dimmed: !matches('cache') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">cleaning_services</span>
+                <div>
+                  <h3>{{ t('settings.clearCache') }}</h3>
+                  <p>{{ t('settings.clearCacheDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-foot">
+                <span class="cache-size">{{ cacheSizeText }}</span>
+                <button
+                  type="button"
+                  class="ghost-btn"
+                  :disabled="!isElectron || clearingCache"
+                  @click="clearCacheNow"
+                >
+                  <span class="material-symbols-outlined" :class="{ spinning: clearingCache }">delete_sweep</span>
+                  {{ clearingCache ? t('settings.clearing') : t('settings.clearCache') }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 本地端加密存储 -->
+            <div class="card" :class="{ dimmed: !matches('encrypt') }">
+              <div class="card-heading">
+                <span class="material-symbols-outlined">enhanced_encryption</span>
+                <div>
+                  <h3>{{ t('settings.encryptedStorage') }}</h3>
+                  <p>{{ t('settings.encryptedStorageDesc') }}</p>
+                </div>
+              </div>
+              <div class="card-foot">
+                <span class="cache-size">{{ settings.encryptedStorage ? 'AES-256-GCM' : t('settings.encryptionOff') }}</span>
+                <button
+                  type="button"
+                  class="toggle"
+                  :class="{ on: settings.encryptedStorage }"
+                  role="switch"
+                  :aria-checked="settings.encryptedStorage"
+                  :disabled="!encryptionSupported"
+                  @click="toggleEncryption"
+                >
+                  <span class="toggle-knob"></span>
+                </button>
+              </div>
+              <p class="preview">{{ t('settings.encryptionNote') }}</p>
+            </div>
           </div>
         </section>
 
@@ -455,7 +672,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -466,6 +683,8 @@ import { useCompanionStore } from '@/stores/companion'
 import { useSettingsStore } from '@/stores/settings'
 import { userAPI } from '@/services/api'
 import RoleSettingsPanel from '@/components/companion/RoleSettingsPanel.vue'
+import { playMessageSound, isSoundSupported } from '@/utils/uiSound'
+import { isEncryptionSupported, encryptValue, decryptValue } from '@/utils/secureStorage'
 
 const router = useRouter()
 const { locale, t } = useI18n()
@@ -533,9 +752,18 @@ const onScroll = () => {
 const CARD_KEYWORDS = {
   language: ['language', '语言', 'locale'],
   hourCycle: ['time', '时间', 'hour', '24', '12'],
+  glass: ['glass', '毛玻璃', 'blur', '透明'],
+  zoom: ['zoom', '缩放', '字体'],
+  fps: ['fps', '帧率', 'frame'],
+  renderScale: ['resolution', '分辨率', 'render'],
+  suspend: ['suspend', '挂起', '失焦', 'blur'],
   desktopPet: ['pet', '宠物', '3d', 'vrm'],
   notifications: ['notification', '通知'],
-  unread: ['unread', '未读', 'badge', '角标'],
+  unread: ['unread', '未读'],
+  badge: ['badge', '角标', 'dock', '托盘'],
+  cache: ['cache', '缓存', 'clear'],
+  sound: ['sound', '音效', 'audio'],
+  encrypt: ['encrypt', '加密', 'aes', 'security'],
   role: ['role', '角色', 'model', '模型'],
   privacy: ['privacy', '隐私', 'security', '安全'],
   shortcuts: ['shortcut', '快捷键', 'keyboard'],
@@ -649,6 +877,103 @@ const unreadTotal = computed(() => {
   return String(sum)
 })
 
+/* ── Cache size / clearing ──────────────────────────────── */
+const cacheBytes = ref(null)
+const clearingCache = ref(false)
+
+const cacheSizeText = computed(() => {
+  if (!isElectron.value) return '—'
+  if (cacheBytes.value === null) return '…'
+  return formatBytes(cacheBytes.value)
+})
+
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+const refreshCacheSize = async () => {
+  if (!isElectron.value || !window.electronAPI.getCacheInfo) return
+  try {
+    const info = await window.electronAPI.getCacheInfo()
+    cacheBytes.value = info.available ? info.totalBytes : null
+  } catch {
+    cacheBytes.value = null
+  }
+}
+
+const clearCacheNow = async () => {
+  if (!isElectron.value || clearingCache.value) return
+  clearingCache.value = true
+  try {
+    const result = await window.electronAPI.clearCache()
+    if (result.ok) {
+      ElMessage.success(t('settings.cacheCleared'))
+      await refreshCacheSize()
+    } else {
+      ElMessage.error(t('settings.cacheClearFailed'))
+    }
+  } catch {
+    ElMessage.error(t('settings.cacheClearFailed'))
+  } finally {
+    clearingCache.value = false
+  }
+}
+
+/* ── UI sound ───────────────────────────────────────────── */
+const soundSupported = isSoundSupported()
+
+function testSound() {
+  if (!soundSupported) return
+  playMessageSound()
+}
+
+/* ── Encrypted local storage ────────────────────────────── */
+const encryptionSupported = isEncryptionSupported()
+
+/**
+ * Turning encryption on re-writes the settings blob as ciphertext; turning it
+ * off writes it back as plain JSON. Either way the in-memory store keeps
+ * working, so nothing else in the app has to know.
+ */
+async function toggleEncryption() {
+  const next = !settings.encryptedStorage
+  try {
+    const payload = { ...settings.state }
+    if (next) {
+      const envelope = await encryptValue(payload)
+      localStorage.setItem('nexus.settings', JSON.stringify(envelope))
+    } else {
+      // Verify the current blob still decrypts before dropping the envelope,
+      // so a broken key cannot silently lose the user's preferences.
+      const raw = localStorage.getItem('nexus.settings')
+      const parsed = raw ? JSON.parse(raw) : null
+      if (parsed && parsed.__encrypted) {
+        const plain = await decryptValue(parsed)
+        if (!plain) throw new Error('decrypt failed')
+        localStorage.setItem('nexus.settings', JSON.stringify(plain))
+      }
+    }
+    settings.encryptedStorage = next
+    ElMessage.success(next ? t('settings.encryptionOn') : t('settings.encryptionOff'))
+  } catch {
+    ElMessage.error(t('settings.encryptionFailed'))
+  }
+}
+
+/* ── Dock badge: mirror the unread total ────────────────── */
+watch(
+  [unreadTotal, () => settings.badgeEnabled],
+  ([total, enabled]) => {
+    if (!isElectron.value || !window.electronAPI.setBadge) return
+    const n = enabled ? Number(total) || 0 : 0
+    window.electronAPI.setBadge(n).catch(() => {})
+  },
+  { immediate: true }
+)
+
 /* ── Shortcuts: the keys we actually bind ───────────────── */
 const shortcutPlatform = computed(() => (window.electronAPI?.platform === 'darwin' ? 'macOS' : 'Windows / Linux'))
 
@@ -724,7 +1049,7 @@ onMounted(async () => {
   }
 
   await nextTick()
-  await refreshGpu()
+  await Promise.all([refreshGpu(), refreshCacheSize()])
   if (isElectron.value) gpuTimer = setInterval(refreshGpu, 5000)
 })
 
@@ -756,8 +1081,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 0 16px;
   background: rgba(13, 13, 17, 0.65);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(calc(28px * var(--glass-blur-scale, 1))) saturate(180%);
+  -webkit-backdrop-filter: blur(calc(28px * var(--glass-blur-scale, 1))) saturate(180%);
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   -webkit-app-region: drag;
@@ -1395,11 +1720,74 @@ onBeforeUnmount(() => {
   color: #09090b;
 }
 
+.segmented.three button {
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.reset-zoom {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
 .preview {
   font-family: 'Geist Mono', ui-monospace, monospace;
   font-size: 10px;
   color: rgba(196, 199, 200, 0.6);
   margin: 0;
+}
+
+/* ── Range slider ─────────────────────────────────────────── */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fafafa;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fafafa;
+  border: none;
+  cursor: pointer;
+}
+
+.cache-size {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: #a1a1aa;
+}
+
+.slider-value {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: #fafafa;
+  min-width: 38px;
+  text-align: right;
 }
 
 /* ── Toggle ───────────────────────────────────────────────── */

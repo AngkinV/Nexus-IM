@@ -510,8 +510,8 @@ const goToProfile = () => router.push('/profile')
   border-radius: 16px;
   background-color: rgba(27, 27, 30, 0.5);
   box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.07) inset;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(calc(24px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(24px * var(--glass-blur-scale, 1)));
   transform: translateY(-50%);
 }
 
@@ -731,7 +731,7 @@ const goToProfile = () => router.push('/profile')
   padding: 4px 10px;
   border-radius: 6px;
   background: rgba(53, 52, 56, 0.95);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(calc(8px * var(--glass-blur-scale, 1)));
   color: #ffffff;
   font-size: 12px;
   line-height: 16px;

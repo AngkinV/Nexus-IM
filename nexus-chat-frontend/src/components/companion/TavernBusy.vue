@@ -34,7 +34,7 @@ defineProps({
   align-items: center;
   justify-content: center;
   background: rgba(6, 6, 8, 0.55);
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(calc(2px * var(--glass-blur-scale, 1)));
 }
 
 .busy-card {
