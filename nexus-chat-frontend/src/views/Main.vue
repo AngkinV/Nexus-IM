@@ -86,7 +86,8 @@ import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
 import { useCallStore, CallStatus } from '@/stores/call'
 import { useCompanionStore } from '@/stores/companion'
-import { useAgentStore } from '@/stores/agent'
+import { AI_ASSISTANT_CHAT_ID, useAgentStore } from '@/stores/agent'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import websocket from '@/services/websocket'
 import syncService from '@/services/syncService'
@@ -99,6 +100,12 @@ const callStore = useCallStore()
 const companionStore = useCompanionStore()
 const agentStore = useAgentStore()
 const tavernEntrance = useTavernEntrance()
+const { t } = useI18n()
+const activeView = ref('chats')
+const width = ref(window.innerWidth)
+const isMobile = computed(() => width.value <= 768)
+const handleResize = () => { width.value = window.innerWidth }
+const compactWorkbench = computed(() => activeView.value === 'ai' && !isMobile.value && width.value <= 1024)
 
 // ── Dual collapse (design: 200px<->64px dock, 320px<->44px blade) ───────────
 // [ toggles the global rail, ] toggles the message-list blade. Both live here so
@@ -106,16 +113,28 @@ const tavernEntrance = useTavernEntrance()
 const NAV_COLLAPSE_KEY = 'prism.navCollapsed'
 const LIST_COLLAPSE_KEY = 'prism.listCollapsed'
 
-const navCollapsed = ref(localStorage.getItem(NAV_COLLAPSE_KEY) === '1')
-const listCollapsed = ref(localStorage.getItem(LIST_COLLAPSE_KEY) === '1')
-
-const toggleNav = () => {
-  navCollapsed.value = !navCollapsed.value
-  localStorage.setItem(NAV_COLLAPSE_KEY, navCollapsed.value ? '1' : '0')
+// Tablet AI navigation starts compact. Expanding it must not change another
+// section (or the user's saved desktop layout when the window grows again).
+function paneFold(key) {
+  const saved = ref(localStorage.getItem(key) === '1')
+  const tablet = ref(true)
+  return computed({
+    get: () => compactWorkbench.value ? tablet.value : saved.value,
+    set: (folded) => {
+      if (compactWorkbench.value) tablet.value = folded
+      else {
+        saved.value = folded
+        localStorage.setItem(key, folded ? '1' : '0')
+      }
+    }
+  })
 }
+const navCollapsed = paneFold(NAV_COLLAPSE_KEY)
+const listCollapsed = paneFold(LIST_COLLAPSE_KEY)
+const toggleNav = () => { navCollapsed.value = !navCollapsed.value }
 const toggleList = () => {
-  listCollapsed.value = !listCollapsed.value
-  localStorage.setItem(LIST_COLLAPSE_KEY, listCollapsed.value ? '1' : '0')
+  if (isMobile.value && activeView.value === 'ai') chatStore.clearActiveChat()
+  else listCollapsed.value = !listCollapsed.value
 }
 
 // One keystroke into a clean canvas: collapse both, or restore both.
@@ -123,8 +142,6 @@ const toggleCinematic = () => {
   const collapsing = !(navCollapsed.value && listCollapsed.value)
   navCollapsed.value = collapsing
   listCollapsed.value = collapsing
-  localStorage.setItem(NAV_COLLAPSE_KEY, collapsing ? '1' : '0')
-  localStorage.setItem(LIST_COLLAPSE_KEY, collapsing ? '1' : '0')
 }
 
 const showRightPanel = ref(false)
@@ -159,19 +176,16 @@ const paletteOpen = ref(false)
 // it, so the character on screen and the character in the pet agree.
 const tavernMood = ref('idle')
 
-// Active left-nav view, driven by the NavRail and consumed by the LeftPanel.
-const activeView = ref('chats')
+// The assistant is a virtual sortedChats item, not a persisted chat record.
+const activateAssistantChat = () => {
+  chatStore.setActiveChat(chatStore.sortedChats.find(c => c.id === AI_ASSISTANT_CHAT_ID))
+}
 const applyActiveView = (view) => {
   activeView.value = view
-  // The companion and the AI section are both single canvases: entering either
-  // one must clear a chat that would otherwise render underneath it.
-  if (view === 'companion') {
+  if (view === 'companion' || (view === 'ai' && isMobile.value)) {
+    // On phones the AI list must be reachable even when coming from an open chat.
     chatStore.clearActiveChat()
-    return
-  }
-  // On phones the AI session list stays in front until one is picked.
-  if (view !== 'ai' || isMobile.value) return
-  chatStore.setActiveChat(chatStore.sortedChats.find((c) => c.id === 'ai-assistant'))
+  } else if (view === 'ai') activateAssistantChat()
 }
 
 const setActiveView = (view) => {
@@ -190,7 +204,7 @@ const setActiveView = (view) => {
 }
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
-const isAiChat = computed(() => chatStore.activeChat?.id === 'ai-assistant' || chatStore.activeChat?.type === 'AI')
+const isAiChat = computed(() => chatStore.activeChat?.id === AI_ASSISTANT_CHAT_ID || chatStore.activeChat?.type === 'AI')
 
 // ── Entering the tavern ──────────────────────────────────────────────────────
 // The entrance plays where characters actually are: the companion roles. The AI
@@ -226,12 +240,6 @@ watch(
   }
 )
 
-// Mobile detection
-const isMobile = ref(window.innerWidth <= 768)
-const handleResize = () => {
-  isMobile.value = window.innerWidth <= 768
-}
-
 // Handle open new chat from MiddlePanel
 const handleOpenNewChat = () => {
   // Switch to the contacts view so the user can pick someone to message.
@@ -245,8 +253,31 @@ const openPalette = () => {
 
 const openAiAssistant = () => {
   activeView.value = 'ai'
-  // AI 助手是 sortedChats 里的虚拟条目，不在 chats 数组里
-  chatStore.setActiveChat(chatStore.sortedChats.find((c) => c.id === 'ai-assistant'))
+  activateAssistantChat()
+}
+
+const agentHistoryFocusSignal = ref(0)
+const focusAgentHistory = () => {
+  if (activeView.value !== 'ai') return
+  if (isMobile.value) chatStore.clearActiveChat()
+  else if (listCollapsed.value) listCollapsed.value = false
+  agentHistoryFocusSignal.value++
+}
+
+const creatingAgentSession = ref(false)
+const newAgentSession = async () => {
+  if (activeView.value !== 'ai' || creatingAgentSession.value || agentStore.streaming || agentStore.switching) return
+  creatingAgentSession.value = true
+  try {
+    await agentStore.newSession()
+    // Don't navigate back into AI if the user left during the request.
+    if (activeView.value === 'ai') openAiAssistant()
+    ElMessage.success(t('agent.history.created'))
+  } catch (err) {
+    ElMessage.error(err.message || t('common.failed'))
+  } finally {
+    creatingAgentSession.value = false
+  }
 }
 
 const markAllRead = () => {
@@ -317,6 +348,8 @@ const handleCollapseKey = (event) => {
 
 // Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
 const handleGlobalKeydown = (event) => {
+  // Bubble on window: document capture (e.g. artifact tabs 1–3) gets first refusal.
+  if (event.defaultPrevented || event.isComposing) return
   handleCollapseKey(event)
   const mod = event.metaKey || event.ctrlKey
   if (!mod) return
@@ -324,7 +357,10 @@ const handleGlobalKeydown = (event) => {
 
   if (key === 'k') {
     event.preventDefault()
-    paletteOpen.value = !paletteOpen.value
+    if (activeView.value === 'ai') {
+      paletteOpen.value = false
+      focusAgentHistory()
+    } else paletteOpen.value = !paletteOpen.value
     return
   }
   // While the palette is open it owns the keyboard.
@@ -333,7 +369,7 @@ const handleGlobalKeydown = (event) => {
   if (key === 'n') {
     event.preventDefault()
     if (activeView.value !== 'ai') return handleOpenNewChat()
-    agentStore.newSession().catch((err) => ElMessage.error(err.message))
+    if (!event.repeat) newAgentSession()
   } else if (key === 'g') {
     event.preventDefault()
     setActiveView('groups')
@@ -364,6 +400,10 @@ provide('toggleNav', toggleNav)
 provide('listCollapsed', listCollapsed)
 provide('toggleList', toggleList)
 provide('toggleCinematic', toggleCinematic)
+provide('focusAgentHistory', focusAgentHistory)
+provide('agentHistoryFocusSignal', agentHistoryFocusSignal)
+provide('newAgentSession', newAgentSession)
+provide('creatingAgentSession', creatingAgentSession)
 
 // A tiny event counter used by the standby screen to ask the left pane to open
 // its create-group dialog (the dialog instance lives inside LeftPanel).
@@ -526,7 +566,7 @@ onUnmounted(() => {
   flex-direction: column;
   min-width: 360px;
   position: relative;
-  background: #131316;
+  background: #0e0e11;
   z-index: 1;
 }
 

@@ -689,7 +689,7 @@ const handleReactMessage = async (msg, emoji) => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #131316;
+  background: #0e0e11;
   position: relative;
   min-width: 0;
 }
@@ -896,7 +896,7 @@ const handleReactMessage = async (msg, emoji) => {
   min-height: 0;
   overflow-y: auto;
   padding: 0;
-  background: #131316;
+  background: #0e0e11;
   position: relative;
   z-index: 1;
 }
@@ -980,7 +980,7 @@ const handleReactMessage = async (msg, emoji) => {
 .input-area {
   flex-shrink: 0;
   padding: 0 16px 16px;
-  background: #131316;
+  background: #0e0e11;
   z-index: 20;
 }
 
@@ -994,7 +994,7 @@ const handleReactMessage = async (msg, emoji) => {
   align-items: center;
   justify-content: space-between;
   position: relative;
-  background: #131316;
+  background: #0e0e11;
   overflow: hidden;
   padding: 40px 24px;
 }

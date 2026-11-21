@@ -155,8 +155,8 @@ const navItems = computed(() => [
   { key: 'chats', icon: 'chat_bubble', label: t('leftPanel.navChats') },
   { key: 'contacts', icon: 'person_book', label: t('leftPanel.navContacts') },
   { key: 'groups', icon: 'group', label: t('leftPanel.navGroups') },
-  { key: 'ai', icon: 'auto_awesome', label: t('leftPanel.navAi') },
-  { key: 'companion', icon: 'nightlife', label: t('leftPanel.navCompanion') }
+  { key: 'ai', icon: 'bolt', label: t('leftPanel.navAi') },
+  { key: 'companion', icon: 'sports_bar', label: t('leftPanel.navCompanion') }
 ])
 
 const brandIcon = computed(() =>

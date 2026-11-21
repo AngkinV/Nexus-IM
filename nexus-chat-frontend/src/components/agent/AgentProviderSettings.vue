@@ -66,7 +66,7 @@
       </el-table-column>
       <el-table-column :label="$t('agent.providers.colActions')" width="220" align="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
+          <el-button link type="primary" size="small" :disabled="!canTest(row)" :title="$t('agent.providers.testHint')" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
           <el-button link size="small" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
           <el-button link size="small" :disabled="row.isDefault" @click="setDefault(row)">
             {{ $t('agent.providers.setDefault') }}
@@ -89,9 +89,9 @@
     append-to-body
     draggable
   >
-    <el-form :model="form" label-width="110px" label-position="left" ref="formRef">
+    <el-form :model="form" label-width="110px" label-position="left" :disabled="saving">
       <el-form-item :label="$t('agent.providers.preset')">
-        <el-select v-model="form.preset" placeholder="OpenAI / DeepSeek / ..." @change="applyPreset">
+        <el-select v-model="form.preset" :teleported="false" :aria-label="$t('agent.providers.preset')" @change="applyPreset">
           <el-option v-for="p in presetsForActiveTab" :key="p.key" :label="presetLabel(p)" :value="p.key" />
         </el-select>
       </el-form-item>
@@ -109,19 +109,6 @@
         <el-input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" />
       </el-form-item>
 
-      <el-form-item :label="$t('agent.providers.fieldModel')">
-        <el-autocomplete
-          v-model="form.defaultModel"
-          :fetch-suggestions="queryModelSuggestions"
-          clearable
-          :placeholder="$t('agent.providers.fieldModelHint')"
-          @select="onModelPicked"
-        />
-        <div v-if="remoteModelCount > 0" class="form-hint">
-          {{ t('agent.providers.modelsLoaded', { count: remoteModelCount }) }}
-        </div>
-      </el-form-item>
-
       <el-form-item :label="$t('agent.providers.fieldKey')">
         <el-input
           v-model="form.apiKey"
@@ -129,6 +116,11 @@
           show-password
           :placeholder="form.id ? $t('agent.providers.fieldKeyKeep') : 'sk-...'"
         />
+      </el-form-item>
+
+      <el-form-item :label="$t('agent.providers.fieldModel')">
+        <ProviderModelPicker v-if="formDialog" v-model="form.defaultModel" :provider-id="connectionDirty ? null : form.id"
+          :purpose="form.purpose" :label="$t('agent.providers.fieldModel')" :unavailable-hint="$t('agent.providers.saveForCatalog')" />
       </el-form-item>
 
       <el-form-item>
@@ -140,12 +132,12 @@
       <el-button @click="formDialog = false">{{ $t('common.cancel') }}</el-button>
       <el-button
         v-if="form.id"
-        :loading="testingId === form.id"
-        @click="testFromForm"
+        :loading="testingId === form.id" :disabled="!canTest(store.getById(form.id))"
+        :title="$t('agent.providers.testHint')" @click="testOne(store.getById(form.id))"
       >
-        {{ $t('agent.providers.testAndFetch') }}
+        {{ $t('agent.providers.test') }}
       </el-button>
-      <el-button type="primary" :loading="saving" @click="save">{{ $t('common.save') }}</el-button>
+      <el-button type="primary" :loading="saving" :disabled="incompatible || testingId != null" @click="save">{{ $t('common.save') }}</el-button>
     </template>
   </el-dialog>
 </template>
@@ -163,6 +155,7 @@ import {
   PROVIDER_PURPOSE
 } from '@/stores/agentProviders'
 import { useAgentStore } from '@/stores/agent'
+import ProviderModelPicker from './ProviderModelPicker.vue'
 
 const props = defineProps({ visible: Boolean })
 const emit = defineEmits(['update:visible'])
@@ -175,7 +168,6 @@ const { t } = useI18n()
 const store = useAgentProvidersStore()
 const agentStore = useAgentStore()
 
-const presets = PROVIDER_PRESETS
 const activeTab = ref('chat') // 'chat' | 'embedding'
 const formDialog = ref(false)
 const saving = ref(false)
@@ -204,33 +196,25 @@ function emptyForm(purpose = 'chat') {
   }
 }
 
-const modelSuggestions = computed(() => {
-  const preset = presetsForActiveTab.value.find(p => p.key === form.value.preset)
-  return preset?.suggestedModels || []
-})
+const original = ref(null)
+const dirty = computed(() => !original.value || Object.keys(original.value).some(k => form.value[k] !== original.value[k]))
+const connectionDirty = computed(() => !form.value.id || !original.value ||
+  ['provider', 'purpose', 'baseUrl', 'apiKey'].some(k => form.value[k] !== original.value[k]))
+const incompatible = computed(() => !connectionDirty.value && store.getModelsForProvider(form.value.id)
+  .find(m => m.id === form.value.defaultModel.trim())?.[form.value.purpose] === false)
 
-const remoteModels = computed(() => store.getModelsForProvider(form.value.id))
-const remoteModelCount = computed(() => remoteModels.value.length)
-const mergedModelSuggestions = computed(() => {
-  const merged = new Set()
-  for (const m of modelSuggestions.value) {
-    const v = (m || '').toString().trim()
-    if (v) merged.add(v)
-  }
-  for (const m of remoteModels.value) {
-    const v = (m || '').toString().trim()
-    if (v) merged.add(v)
-  }
-  const current = (form.value.defaultModel || '').trim()
-  if (current) merged.add(current)
-  return Array.from(merged)
-})
+watch([visibleModel, activeTab, () => store.accountId], async ([open, tab, accountId], _, onCleanup) => {
+  let current = true
+  onCleanup(() => { current = false })
+  formDialog.value = false
+  form.value = emptyForm(tab)
+  original.value = null
+  if (!open || accountId == null) return
+  await store.fetchAll()
+  if (current) visibleProviders.value.forEach(p => store.fetchModels(p.id))
+}, { immediate: true })
 
-watch(visibleModel, async (val) => {
-  if (val) {
-    await store.fetchAll()
-  }
-})
+watch(formDialog, open => { if (!open) form.value.apiKey = '' })
 
 function statusTagType(status) {
   if (status === 'ok') return 'success'
@@ -240,13 +224,14 @@ function statusTagType(status) {
 
 function openCreate() {
   form.value = emptyForm(activeTab.value)
-  applyPreset(presetsForActiveTab.value[0]?.key || 'openai')
+  original.value = null
+  applyPreset(form.value.preset)
   formDialog.value = true
 }
 
 function openEdit(row) {
   const list = presetsForActiveTab.value
-  const preset = list.find(p => row.provider?.startsWith(p.key)) || list[0] || presets[0]
+  const preset = list.find(p => row.provider?.startsWith(p.key)) || list.find(p => p.key === 'custom')
   form.value = {
     id: row.id,
     purpose: row.purpose || activeTab.value,
@@ -256,8 +241,9 @@ function openEdit(row) {
     baseUrl: row.baseUrl || '',
     defaultModel: row.defaultModel || '',
     apiKey: '',
-    makeDefault: !!row.isDefault
+    makeDefault: !!(row.isDefault ?? row.default)
   }
+  original.value = { ...form.value }
   formDialog.value = true
 }
 
@@ -268,28 +254,12 @@ function applyPreset(key) {
     form.value.provider = preset.key
     form.value.displayName = presetLabel(preset)
   }
-  if (preset.baseUrl) form.value.baseUrl = preset.baseUrl
-  if (preset.suggestedModels?.length && !form.value.defaultModel) {
-    form.value.defaultModel = preset.suggestedModels[0]
-  }
-}
-
-function queryModelSuggestions(queryString, cb) {
-  const q = (queryString || '').trim().toLowerCase()
-  const candidates = mergedModelSuggestions.value
-    .filter(m => !q || m.toLowerCase().includes(q))
-    .slice(0, 50)
-    .map(m => ({ value: m }))
-  cb(candidates)
-}
-
-function onModelPicked(item) {
-  if (!item?.value) return
-  form.value.defaultModel = item.value
+  form.value.baseUrl = preset.baseUrl
 }
 
 async function save() {
-  if (!form.value.provider) {
+  if (saving.value || incompatible.value || testingId.value != null) return
+  if (!form.value.provider.trim()) {
     ElMessage.warning(t('agent.providers.fieldIdHint'))
     return
   }
@@ -304,9 +274,15 @@ async function save() {
       apiKey: form.value.apiKey || null,
       makeDefault: form.value.makeDefault
     }
-    await store.upsert(payload)
+    const editing = form.value
+    const saved = await store.upsert(payload)
+    if (!saved?.id) return
+    store.fetchModels(saved.id)
+    if (!formDialog.value || form.value !== editing) return
     ElMessage.success(t('common.savedSuccess'))
-    formDialog.value = false
+    // A connection can be saved before choosing a model. Stay here for that choice.
+    if (!payload.defaultModel) openEdit(store.getById(saved.id) || saved)
+    else formDialog.value = false
   } catch (err) {
     ElMessage.error(err?.response?.data?.message || err.message || t('agent.providers.saveFailed'))
   } finally {
@@ -346,7 +322,14 @@ async function setDefault(row) {
   }
 }
 
+function canTest(row) {
+  return !!row?.id && !!row.defaultModel?.trim() && !saving.value && testingId.value == null &&
+    !(formDialog.value && dirty.value) &&
+    store.getModelsForProvider(row.id).find(m => m.id === row.defaultModel.trim())?.[row.purpose || 'chat'] !== false
+}
+
 async function testOne(row) {
+  if (!canTest(row)) return
   try {
     testingId.value = row.id
     const result = await store.test(row.id)
@@ -355,11 +338,11 @@ async function testOne(row) {
       if (result?.embeddingDimension) {
         ElMessage.info(`embedding dim = ${result.embeddingDimension}`)
       }
-      if (result?.availableModels?.length) {
-        ElMessage.info(t('agent.providers.modelsLoaded', { count: result.availableModels.length }))
-      }
     } else {
-      ElMessage.warning(`${t('agent.providers.testFail')}: ${result?.message || 'unknown'}`)
+      const error = result?.error
+      ElMessage.warning([t('agent.providers.testFail'), error?.code, error?.summary || result?.message,
+        error?.retryAfterSeconds != null && t('companion.session.retryAfter', { seconds: error.retryAfterSeconds })
+      ].filter(Boolean).join(' · '))
     }
   } catch (err) {
     ElMessage.error(err.message || t('agent.providers.testFail'))
@@ -368,17 +351,6 @@ async function testOne(row) {
   }
 }
 
-async function testFromForm() {
-  if (!form.value.id) return
-  await testOne({ id: form.value.id })
-  const fetched = store.getModelsForProvider(form.value.id)
-  if (!fetched.length) return
-  const current = (form.value.defaultModel || '').trim()
-  if (!current || !fetched.includes(current)) {
-    form.value.defaultModel = fetched[0]
-    ElMessage.success(t('agent.providers.modelAutoFilled'))
-  }
-}
 </script>
 
 <style scoped>
