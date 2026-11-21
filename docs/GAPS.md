@@ -43,19 +43,19 @@
 | 子项目 | 职责 | 关键入口 |
 |---|---|---|
 | `nexus-chat-backend` | 唯一业务数据源：用户/鉴权、私聊与群聊、消息、联系人、文件、同步、WebSocket 推送、Agent 网关、知识库编排、Companion（酒馆角色） | `controller/*`、`service/*`、`websocket/WebSocketController.java` |
-| `nexus-agent-backend` | 内网 Agent：意图编排、模型调用、只读工具、短期/长期记忆、知识库入库与检索；通过 HMAC 接收 Java 调用，通过 Bearer 回调 Java 内部接口 | `app/routes.py`、`app/tools.py`、`app/orchestrator.py` |
+| `nexus-agent-backend` | 内网 Agent：意图编排、模型调用、只读工具、短期/长期记忆、知识库入库与检索；通过 HMAC 接收 Java 调用，通过 Bearer 经 MCP 调用 Java 的工具 | `app/routes.py`、`app/mcp_tools.py`、`app/orchestrator.py` |
 | `nexus-chat-frontend` | Web + Electron 客户端：聊天 UI、STOMP 实时、IndexedDB 缓存、Agent 会话、Companion/3D、设置 | `src/views/Main.vue`、`src/services/websocket.js`、`electron/main.js` |
 
 ### 2.3 技术栈（按声明核对）
 
 - Java：Spring Boot 3.2.0、Java 17、Spring Web/WebSocket/Security/Data JPA/Data Redis/Mail、JJWT 0.12.3、MySQL、Lombok（`nexus-chat-backend/pom.xml`）。
-- Python：FastAPI、pydantic-settings、httpx、LangChain/ChromaDB（可选）、LangGraph（备选引擎，默认 `handcrafted`）（`nexus-agent-backend/app/config.py:136`）。
+- Python：FastAPI、pydantic-settings、httpx、LangChain/ChromaDB（可选）、LangGraph（唯一编排引擎，`nexus-agent-backend/app/orchestrator.py`）。
 - 前端：Vue 3、Vite 5、Pinia、Element Plus、Tailwind、vue-i18n、Dexie(IndexedDB)、@stomp/stompjs + SockJS、three + @pixiv/three-vrm、Electron 28 + electron-builder（`nexus-chat-frontend/package.json`）。
 
 ### 2.4 通信与数据落点
 
 - 前端 ↔ Java：REST 前缀 `/api`；STOMP over SockJS 端点 `/ws`；服务端统一向 `/topic/user.{userId}.messages` 与 `/topic/user.{userId}.contacts` 投递，新建会话走 `/user/queue/chats`（`src/services/websocket.js:153,218,224`；`SecurityConfig`、`WebSocketConfig`）。
-- Java ↔ Python：Java 以 HMAC 头调用 Python（`service/agent/AgentGatewayService.java`）；Python 以 Bearer 令牌 + `X-Actor-User-Id` 回调 `/internal/agent/**`（`app/tools.py`、`controller/agent/InternalAgentController.java`）。
+- Java ↔ Python：Java 以 HMAC 头调用 Python（`service/agent/AgentGatewayService.java`）；Python 以 Bearer 令牌 + `X-Actor-User-Id` 经 MCP 调用 `/internal/agent/mcp`（`app/mcp_tools.py`、`controller/agent/InternalAgentController.java`）。
 - MySQL：用户、会话、成员、消息、已读/送达状态、联系人、文件元数据、Agent 会话索引、Companion 数据等；`ddl-auto=update` 自动建表（`application.properties:17`）。
 - Redis：在线状态、离线消息队列、输入中、未读数缓存、消息序号（`chat:seq:{chatId}`）、跨实例转发；Agent 短期记忆使用独立 Redis DB（`REDIS_URL=redis://redis:6379/2`，`docker-compose.yml:94`）。
 - 向量库：Chroma，容器内 `/app/data/chroma`（`docker-compose.yml:95`，volume `agent_data`）。
@@ -452,18 +452,18 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 
 - **现状**：Python 工具集只有 7 个只读查询（最近消息、会话资料、用户资料、按 id 取消息、按用户名找人、我的会话、找私聊）；没有发消息、建群等写操作，也没有「逐次用户确认」机制。Java 暴露的 `/internal/agent/messages/publish` 在 Python 侧没有调用。
 - **缺什么**：写工具 + 确认协议 + 审计；`/messages/publish` 要么接入要么删除。
-- **证据**：`nexus-agent-backend/app/tools.py:29-134`（7 个 `name` 定义）；`nexus-chat-backend/src/main/java/com/nexus/chat/controller/agent/InternalAgentController.java:228-229`。
+- **证据**：`nexus-chat-backend/src/main/java/com/nexus/chat/service/agent/AgentToolService.java`（7 个 `@AgentTool` 方法）；`InternalAgentController` 的 `/messages/publish`。
 - **建议做法**：写工具采用「计划 → 用户确认 → 执行」两阶段；确认走 Java 的聊天内卡片；补权限与幂等。
 - **完成标准**：Agent 发起写操作前必须得到用户确认；未确认不落库。
-- **依赖/影响面**：`tools.py`、`orchestrator.py`、`InternalAgentController`、前端确认 UI。
+- **依赖/影响面**：`AgentToolService`、`orchestrator.py`（需要 `interrupt()` 式的确认节点）、`InternalAgentController`、前端确认 UI。
 - **优先级**：P2（ROADMAP M4）
 - **核对程度**：已读代码确认。
 
 #### AG-03 没有 MCP 双向集成
 
-- **现状**：三端都没有 MCP 客户端/服务端实现；现有工具是硬编码注册表。
-- **缺什么**：把内部工具暴露给外部 Agent 的 MCP server；接入外部 MCP 工具的客户端与权限/确认策略。
-- **证据**：`nexus-agent-backend/app/tools.py`（静态 `TOOL_SCHEMAS`）；全仓检索 `mcp` 无实现（仅文档/配置无命中）。
+- **现状**（2026-11-21 更新）：内部链路已走 MCP —— Java 在 `/internal/agent/mcp` 提供只读工具，Python 作为客户端发现并调用。外部 MCP 服务只有接入机制（运维白名单 `MCP_EXTERNAL_SERVERS`，默认空），没有接入任何实际服务。
+- **缺什么**：把工具提供给 Nexus 之外的 Agent（现在的端点只认内部令牌，且不经 nginx 对外）；接入并验证至少一个实际的外部 MCP 服务；外部工具的确认策略。
+- **证据**：`nexus-chat-backend/.../config/AgentMcpConfig.java`、`nexus-agent-backend/app/mcp_tools.py`。
 - **建议做法**：先做只读 MCP 暴露，再评估写工具；鉴权沿用内部令牌体系。
 - **完成标准**：外部 Agent 能列出并调用只读工具；内部能接入至少一个外部工具。
 - **依赖/影响面**：Agent 路由、工具注册、安全模型。
@@ -640,9 +640,9 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 
 #### FE-14 残留硬编码中文
 
-- **现状**：i18n 的 zh/en 键完全对齐（各 1049 键，键集合无差异、无空英文值），但仍有少量中文直接写在代码里：转场文案、Provider 显示名、3D 动作标签（部分有 `labelEn`）、部分开发页文案。
+- **现状**：i18n 的 zh/en 键完全对齐（各 1049 键，键集合无差异、无空英文值），但仍有少量中文直接写在代码里：Provider 显示名、3D 动作标签（部分有 `labelEn`）、部分开发页文案。
 - **缺什么**：把这些字符串迁入 locale，或明确标注为品牌/开发专用不翻译。
-- **证据**：`nexus-chat-frontend/src/components/warp/warpMessages.js:7-9`；`src/stores/agentProviders.js:34-50`；`src/components/companion/CompanionAvatar3D.vue` 的动作 `待机/走路/思考`（带 `labelEn`）。
+- **证据**：`nexus-chat-frontend/src/stores/agentProviders.js:34-50`；`src/components/companion/CompanionAvatar3D.vue` 的动作 `待机/走路/思考`（带 `labelEn`）。
 - **建议做法**：按「品牌文案 / 用户可见 / 仅开发」分类，前两类进 locale。
 - **完成标准**：英文界面无非品牌中文；扫描脚本可复核。
 - **依赖/影响面**：locale 文件、相关组件。
@@ -840,7 +840,7 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 本节只描述现状，不作为待办。
 
 - **社区帖子**：`PostController` 提供帖子、投票、收藏、评论等一整套 REST；前端没有对应页面/调用；数据表与 Service 仍在。冻结期实际效果是「后端仍在运行、无入口」。
-- **LangGraph 备选引擎**：Python 有 `orchestrator_langgraph.py` 与测试；`engine` 默认 `handcrafted`，只有显式配置才切换到 LangGraph，生产路径仍是手写 ReAct。
+- **编排引擎**：只有 LangGraph 一套（`orchestrator.py`），手写循环已删除；`ENGINE` 只接受 `langgraph`。
 - **音视频通话**：WebRTC 信令、`call.js`、`webrtc.js`、四个通话弹窗、Electron 媒体权限与防休眠均存在；UI 仍暴露入口（见 FE-10）。冻结期间没有质量投入的迹象（无测试覆盖）。
 - **手机端**：git 已无源码；本机残留 `nexus-chat-app/` 被忽略；相关后端接口未删（BE-17）。
 

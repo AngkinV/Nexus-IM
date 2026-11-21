@@ -48,7 +48,7 @@
 | 目录 | 角色 | 主要技术 |
 |---|---|---|
 | `nexus-chat-backend` | 核心服务端 (Java 网关)，提供鉴权、消息、群组、联系人、社区、AI 陪伴、文件、同步、版本更新、Agent/知识库网关等能力 | Spring Boot 3.2, Java 17, MySQL, Redis, STOMP WebSocket |
-| `nexus-agent-backend` | Python Agent 服务，负责 LLM 调用、工具编排、短期/长期记忆、RAG、知识库向量化与检索 | Python 3.10+, FastAPI, LangChain, LangGraph, ChromaDB, Redis, OpenAI / Anthropic / Gemini / OpenAI-compatible |
+| `nexus-agent-backend` | Python Agent 服务，负责 LLM 调用、工具编排、短期/长期记忆、RAG、知识库向量化与检索 | Python 3.11+, FastAPI, LangChain, LangGraph, ChromaDB, Redis, OpenAI / Anthropic / Gemini / OpenAI-compatible |
 | `nexus-chat-frontend` | Web + Electron 桌面端主界面，功能最完整 | Vue 3, Pinia, Vite, Element Plus, Electron, Dexie, Three.js |
 | `nexus-chat-app`（已暂停，源码已移出仓库） | Flutter 移动端客户端，偏移动场景体验 | Flutter, Dio, STOMP, Hive, SecureStorage, 本地通知 |
 
@@ -292,9 +292,11 @@ flowchart LR
   - 文档上传/列表/删除/状态查询
   - 触发 Python Agent 端的向量化入库
 - `InternalAgentController`  (`/internal/agent/*`)
-  - 仅供 Python Agent 反向调用，HMAC 鉴权
-  - 暴露 `recent-messages / chat-profile / user-profile / by-username / messages / me/chats` 等工具接口
-  - `/messages/publish` 让 Agent 代发消息
+  - 仅供 Python Agent 反向调用，内部 Bearer 令牌鉴权
+  - `/messages/publish` 让 Agent 代发消息（目前没有调用方）
+- Agent 工具 (`/internal/agent/mcp`)
+  - `AgentToolService` 里每个 `@AgentTool` 方法是一个只读工具，经 MCP 提供给 Python；新增工具只需加一个方法
+  - 调用者身份只取请求头 `X-Actor-User-Id`，每个工具各自做归属校验
 
 ### 3.5 实时通信架构
 
@@ -674,29 +676,30 @@ mvn clean package      # 打包；生产配置还需选择相应 profile
 - 短期记忆 (Redis) + 长期记忆 (RAG)
 - 知识库文档入库与向量检索 (ChromaDB)
 - 流式输出 (SSE)
-- 双引擎: 手写 ReAct 与 LangGraph StateGraph 可热切换
+- 单一 LangGraph 引擎，未完成的一轮可以继续
 
 它不直接对外，所有客户端流量先到 Java 网关 `/api/agent/*`，再经 HMAC 内部调用进入 Python。
 
 ### 4.2 技术栈与规模
 
-- Python 3.10+
-- FastAPI 0.115 + uvicorn
+- Python 3.11+
+- FastAPI + uvicorn
 - pydantic v2 / pydantic-settings
 - httpx (异步)
 - redis (短期记忆 / 限流)
 - openai SDK (兼容 DeepSeek / Moonshot / Groq / DashScope 等)
-- LangChain 0.3 + LangChain Community / Chroma / OpenAI / TextSplitters
-- LangGraph 0.2 (备选编排引擎)
+- LangChain 1.x + LangChain Community / Chroma / OpenAI / TextSplitters
+- LangGraph 1.2 (编排引擎) + SQLite checkpoint
+- MCP 客户端 (`langchain.mcp` + FastMCP)，工具来自 Java
+- anthropic / google-genai SDK
+- OpenTelemetry (默认不导出)
 - ChromaDB 0.5 (本地持久化向量库)
 - pypdf / unstructured / python-docx / docx2txt / markdown (Module B 文档加载器)
 - pytest + pytest-asyncio
 
 源码规模大致为:
 
-- `46` 个 Python 文件 (`app/` + `tests/` + `main.py`)
-- `16` 个测试文件 (RAG / 工具 / 路由 / 编排器 / mock 全覆盖)
-- 2 套编排引擎 (`orchestrator.py` 手写 + `orchestrator_langgraph.py`)
+- 1 套编排引擎 (`orchestrator.py`，LangGraph)
 - 4 个 LLM Client 适配 (`openai_like` / `anthropic_client` / `gemini_client` + `factory`)
 - 6 个 Embedding Provider 预设 (OpenAI / DashScope / Zhipu / SiliconFlow / Ollama / NewAPI)
 
@@ -718,10 +721,11 @@ nexus-agent-backend/
 │   ├── security.py          # HMAC 签名校验依赖
 │   ├── memory.py            # Redis 短期记忆
 │   ├── prompts.py           # 系统/业务 prompt + 注入清洗
-│   ├── tools.py             # Tool Schema + 反向调用 Java 的执行器
-│   ├── langchain_tools.py   # LangChain 适配的工具封装
-│   ├── orchestrator.py      # 手写 ReAct 编排
-│   ├── orchestrator_langgraph.py  # LangGraph StateGraph 编排
+│   ├── model_routes.py      # /v1/models/* 模型目录、测试、推理
+│   ├── mcp_tools.py         # 经 MCP 发现并调用 Java 的工具
+│   ├── orchestrator.py      # LangGraph 编排
+│   ├── checkpoint.py        # 未完成运行与已结束结果的 SQLite 存储
+│   ├── tracing.py           # OpenTelemetry
 │   ├── mock.py              # 无 OpenAI Key 时的确定性回复
 │   ├── sse.py               # SSE 帧封装
 │   ├── llm/                 # LLM Client 抽象与多家实现
@@ -755,18 +759,17 @@ nexus-agent-backend/
 
 ### 4.5 编排器与工具
 
-#### 双引擎可切换
+#### 编排引擎
 
-通过 `ENGINE` 环境变量切换:
+只有 LangGraph 一套引擎，图为 `prepare_context → reason ⇄ tools → validate_output → settle`。
+`ENGINE` 只接受 `langgraph`；旧 `.env` 里的 `ENGINE=handcrafted` 会让服务拒绝启动，改掉或删掉这一行即可。
 
-- `handcrafted` (默认): `orchestrator.py` 手写 ReAct loop
-- `langgraph`: `orchestrator_langgraph.py` 基于 LangGraph StateGraph
-
-两套引擎产出同样的 `Event` 序列，所以 SSE 线格式与引擎无关。
+每一步落 SQLite checkpoint。一轮因模型报错、断线或进程退出而中止时，可以从最后完成的一步继续，
+已完成的工具调用不重跑；被打断的那次模型调用会重新发起。
 
 #### 工具 (反向调用 Java)
 
-`TOOL_SCHEMAS` 当前注册了 7 个工具，全部由 `ToolExecutor` 通过 HMAC + Bearer 调到 `nexus-chat-backend` 的 `/internal/agent/*`:
+Python 里不定义任何工具。Java 在 `/internal/agent/mcp` 以 MCP 提供工具，`mcp_tools.py` 启动后发现并原样交给模型；目前是 7 个只读工具:
 
 - `get_recent_messages`
 - `get_chat_profile`
@@ -822,16 +825,17 @@ Embedding 走独立 Provider 通道 (因为很多便宜的 chat 厂商不出 emb
 - `REDIS_URL` (默认 `redis://localhost:6379/2`)
 - `CHROMA_PERSIST_DIR` (默认 `./data/chroma`)
 - `EMBEDDING_PROVIDER` + `EMBEDDING_*` 或各 Provider 预设变量
-- `ENGINE` (`handcrafted` | `langgraph`)
+- `ENGINE` (只接受 `langgraph`)
+- `CHECKPOINT_PATH` / `CHECKPOINT_TTL_SEC`、`TOOL_CATALOG_TTL_SEC`、`MCP_EXTERNAL_SERVERS`、`OTEL_EXPORTER_OTLP_ENDPOINT`（详见 `nexus-agent-backend/README.md`）
 - `MEMORY_RAG_ENABLED` / `KNOWLEDGE_RAG_ENABLED` 等开关
 
 启动:
 
 ```bash
 cd nexus-agent-backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python main.py        # 默认 :8100
+uv venv --python 3.11 .venv311
+uv pip install --python .venv311 -r requirements.txt
+.venv311/bin/python main.py        # 默认 :8100
 # 或: uvicorn app:app --port 8100
 ```
 
