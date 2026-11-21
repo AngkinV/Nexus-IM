@@ -71,6 +71,11 @@ node_modules
 # 忽略整个虚拟环境目录
 nexus-agent-backend/.venv/
 
+# Python 字节码缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+
 # 测试运行缓存（不含测试源码）
 /.pytest_cache/
 /nexus-agent-backend/.pytest_cache/

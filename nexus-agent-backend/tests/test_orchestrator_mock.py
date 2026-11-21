@@ -36,6 +36,9 @@ class _FakeToolExecutor:
     async def __aexit__(self, *exc_info):
         return False
 
+    async def schemas(self):
+        return []
+
     async def execute(self, tool_name: str, args: dict):
         return {
             "chatId": args.get("chat_id"),

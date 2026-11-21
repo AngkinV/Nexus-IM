@@ -16,6 +16,7 @@ so we don't block the event loop on disk/network IO.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -60,6 +61,7 @@ async def write(
     assistant_text: str,
     *,
     trace_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     provider: Optional[dict] = None,
 ) -> Optional[str]:
     """Persist one (user, assistant) exchange. Returns chunk_id on success,
@@ -75,11 +77,15 @@ async def write(
     if content_len < settings.memory_rag_min_chars:
         return None
 
-    store = _build_store(provider)
+    store = await asyncio.to_thread(_build_store, provider)
     if store is None:
         return None
 
-    chunk_id = f"mem_{uuid.uuid4().hex[:16]}"
+    if run_id:
+        identity = f"{user_id}:{session_id}:{run_id}".encode()
+        chunk_id = "mem_" + hashlib.sha256(identity).hexdigest()[:32]
+    else:
+        chunk_id = f"mem_{uuid.uuid4().hex[:16]}"
     metadata: dict = {
         "userId": int(user_id),
         "sessionId": str(session_id),
@@ -120,7 +126,7 @@ async def retrieve(
 
     k = top_k if top_k is not None else settings.memory_rag_top_k
 
-    store = _build_store(provider)
+    store = await asyncio.to_thread(_build_store, provider)
     if store is None:
         return []
 

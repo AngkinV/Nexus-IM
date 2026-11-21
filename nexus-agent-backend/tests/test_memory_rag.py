@@ -56,6 +56,13 @@ def _isolate(tmp_path: Path, monkeypatch):
     emb_mod.reset_cache()
 
 
+async def test_same_run_upserts_one_memory_chunk():
+    first = await memory_rag.write(1, "s1", "项目讨论", "确定交付日期", run_id="run_001")
+    second = await memory_rag.write(1, "s1", "项目讨论", "确定交付日期", run_id="run_001")
+    assert first == second
+    assert vs.get_chroma_client().get_collection(vs.MEMORY_COLLECTION).count() == 1
+
+
 async def test_write_returns_chunk_id_on_success():
     cid = await memory_rag.write(1, "s1", "你好", "你好我是 AI")
     assert cid is not None
