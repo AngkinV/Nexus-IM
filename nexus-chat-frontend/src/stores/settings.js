@@ -1,6 +1,7 @@
 import { ref, computed, watch } from 'vue'
 import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
+import { setFrameCap } from '../utils/frameGate.js'
 
 /**
  * User preferences that live on this machine only.
@@ -78,11 +79,32 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /**
+   * Held while an encryption toggle is rewriting the blob. Without this the
+   * 120ms coalescing timer can fire mid-toggle and re-encrypt a state that has
+   * not finished flipping, leaving the on-disk flag disagreeing with the data.
+   */
+  let persistHeld = false
+
+  function holdPersist() {
+    persistHeld = true
+    if (persistTimer) {
+      clearTimeout(persistTimer)
+      persistTimer = null
+    }
+    persistPending = false
+  }
+
+  function releasePersist(flush = true) {
+    persistHeld = false
+    if (flush) writeNow({ ...state.value })
+  }
+
   watch(
     state,
     (value) => {
       if (typeof localStorage === 'undefined') return
-      // While an encryption toggle is mid-flight the view owns the write.
+      if (persistHeld) return
       if (persistPending) return
       persistPending = true
       if (persistTimer) clearTimeout(persistTimer)
@@ -243,6 +265,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
   watch(zoomPercent, applyZoom, { immediate: true })
 
+  // Plain-JS renderers (tavernStage, abyssStage, ComputerEye, the entrance
+  // scene) cannot read Pinia, so mirror the cap into their shared gate.
+  watch(fpsCap, setFrameCap, { immediate: true })
+
   /**
    * Whether the OS-level notification should actually be shown.
    * Callers must still check for the Electron bridge themselves.
@@ -297,6 +323,8 @@ export const useSettingsStore = defineStore('settings', () => {
     shouldNotify,
     applyGlassIntensity,
     format,
-    resetToDefaults
+    resetToDefaults,
+    holdPersist,
+    releasePersist
   }
 })

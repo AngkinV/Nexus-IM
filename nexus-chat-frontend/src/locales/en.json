@@ -254,7 +254,9 @@
     "encryptionNote": "The key lives in this machine's IndexedDB. It stops plaintext reads, not code running on this machine.",
     "encryptionOn": "Local encryption enabled",
     "encryptionFailed": "Could not switch encryption",
-    "resetDoneEncrypted": "Defaults restored; local encryption stays on"
+    "resetDoneEncrypted": "Defaults restored; local encryption stays on",
+    "noResults": "No settings match “{q}”",
+    "clearSearch": "Clear search"
   },
   "contact": {
     "addContact": "Add Contact",

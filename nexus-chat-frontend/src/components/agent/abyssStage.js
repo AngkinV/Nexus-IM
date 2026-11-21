@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createFrameGate } from '../../utils/frameGate.js'
 
 // The AI canvas stage from the design export: an abyssal glyph-ring shader behind
 // a wireframe bust. Two layers, one clock. Nothing is drawn while the stage is
@@ -209,9 +210,12 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
   const clock = new THREE.Clock()
   let frame = 0
-  const animate = () => {
+  const gate = createFrameGate()
+  const animate = (now = performance.now()) => {
     frame = requestAnimationFrame(animate)
     if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
+    // Honour Settings → 渲染帧率上限.
+    if (!gate.shouldDraw(now)) return
     const time = reducedMotion.matches ? 0 : clock.getElapsedTime()
 
     gl.uniform1f(uTime, time)
@@ -290,9 +294,12 @@ export function mountMiniHologram(container, { shouldRender = () => true } = {})
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const clock = new THREE.Clock()
   let frame = 0
-  const animate = () => {
+  const gate = createFrameGate()
+  const animate = (now = performance.now()) => {
     frame = requestAnimationFrame(animate)
     if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
+    // Honour Settings → 渲染帧率上限.
+    if (!gate.shouldDraw(now)) return
     const time = reducedMotion ? 0 : clock.getElapsedTime()
     group.rotation.y = time * 0.55
     group.rotation.x = 0.2 + Math.sin(time * 0.7) * 0.08

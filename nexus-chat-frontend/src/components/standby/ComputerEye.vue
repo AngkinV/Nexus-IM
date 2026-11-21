@@ -4,6 +4,7 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { createFrameGate } from '@/utils/frameGate'
 
 /**
  * Standby eye — a machine eye built only from 0/1 and letters.
@@ -235,9 +236,18 @@ const draw = () => {
 
 const BLINK_MS = 240
 
+const gate = createFrameGate()
+
 const frame = (now) => {
   raf = 0
   if (!running) return
+  // Honour Settings → 渲染帧率上限. Skipped frames still advance `last`, so the
+  // next delta stays correct instead of jumping.
+  if (!gate.shouldDraw(now)) {
+    last = now
+    raf = requestAnimationFrame(frame)
+    return
+  }
   const dt = Math.min(now - last, 60)
   last = now
 

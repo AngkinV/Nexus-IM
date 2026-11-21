@@ -1,3 +1,4 @@
+import { createFrameGate } from '../../utils/frameGate.js'
 /**
  * Tavern entrance scene: the picture that plays when the user walks into the tavern.
  *
@@ -1863,9 +1864,13 @@ void main() { vec2 d = (gl_FragCoord.xy - uC) / uRad; o = vec4(0., 0., 0., uS * 
     cv.style.opacity = glcv.style.opacity = '0'
     fadeTimer = setTimeout(() => end(reason), 260)
   }
+  const gate = createFrameGate()
+
   function frame(now) {
     if (!run) return
     raf = requestAnimationFrame(frame)
+    // Honour Settings → 渲染帧率上限.
+    if (!gate.shouldDraw(now)) return
     const t = now / 1000,
       dt = last ? Math.min(0.05, t - last) : 0
     last = t

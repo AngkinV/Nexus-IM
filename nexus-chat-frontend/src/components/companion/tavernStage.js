@@ -1,7 +1,9 @@
 import * as THREE from 'three'
 import { createTavernSpeech } from './tavernSpeech.js'
+import { getFrameCap } from '../../utils/frameGate.js'
 
-const FRAME_MS = 1000 / 30
+// The cap is read per frame so Settings → 渲染帧率上限 takes effect live.
+const frameInterval = () => 1000 / getFrameCap()
 
 // ── Deterministic randomness ─────────────────────────────────────────────────
 function hashString(text) {
@@ -567,7 +569,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       renderFrame(0, 0, 1)
       return
     }
-    if (now - lastFrameAt < FRAME_MS - 1) return
+    if (now - lastFrameAt < frameInterval() - 1) return
     lastFrameAt = now
     const time = clock.getElapsedTime()
     const delta = Math.min(0.1, time - lastTime)

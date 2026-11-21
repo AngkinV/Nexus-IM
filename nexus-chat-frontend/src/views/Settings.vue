@@ -99,6 +99,15 @@
 
       <!-- ── Content ────────────────────────────────────────── -->
       <main ref="contentEl" class="settings-content prism-scroll" @scroll="onScroll">
+        <!-- Search filtered everything out: say so instead of showing a blank pane -->
+        <div v-if="hasNoMatches" class="no-results">
+          <span class="material-symbols-outlined">search_off</span>
+          <p>{{ t('settings.noResults', { q: searchQuery.trim() }) }}</p>
+          <button type="button" class="ghost-btn" @click="searchQuery = ''">
+            {{ t('settings.clearSearch') }}
+          </button>
+        </div>
+
         <!-- 1. 通用与界面 -->
         <section id="sec-general" class="settings-section">
           <div class="section-head">
@@ -780,6 +789,13 @@ const CARD_KEYWORDS = {
   update: ['update', '更新', 'version', '版本']
 }
 
+/** True when the query is non-empty and every card is filtered out. */
+const hasNoMatches = computed(() => {
+  const q = searchQuery.value.trim()
+  if (!q) return false
+  return !Object.keys(CARD_KEYWORDS).some((key) => matches(key))
+})
+
 const matches = (key) => {
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return true
@@ -950,6 +966,9 @@ const encryptionSupported = isEncryptionSupported()
  */
 async function toggleEncryption() {
   const next = !settings.encryptedStorage
+  // Hold the store's own persistence for the whole switch: it would otherwise
+  // fire mid-flight and write a blob whose flag disagrees with its contents.
+  settings.holdPersist()
   try {
     if (next) {
       // Flip the flag FIRST: the encrypted payload must record that encryption
@@ -968,7 +987,6 @@ async function toggleEncryption() {
         plain = await decryptValue(parsed)
         if (!plain) throw new Error('decrypt failed')
       }
-      // Clear the flag first so the persist watcher takes over the write again.
       settings.encryptedStorage = false
       localStorage.setItem('nexus.settings', JSON.stringify(plain || { ...settings.state }))
     }
@@ -977,6 +995,10 @@ async function toggleEncryption() {
     // Roll back so the switch never lies about the on-disk state.
     settings.encryptedStorage = !next
     ElMessage.error(t('settings.encryptionFailed'))
+  } finally {
+    // Resume normal persistence. The blob on disk is already correct, so do not
+    // flush — a flush here would just re-write what we just wrote.
+    settings.releasePersist(false)
   }
 }
 
@@ -1019,9 +1041,14 @@ const checkForUpdates = async () => {
 
 /* ── Reset / logout / back ──────────────────────────────── */
 const resetDefaults = async () => {
+  // Same guard as the encryption toggle: resetting while an encrypted blob is
+  // in place must not let the coalescing timer write a half-updated state.
+  settings.holdPersist()
   const { encryptionPreserved } = settings.resetToDefaults()
   currentLocale.value = 'zh'
   handleLanguageChange()
+  // Let the store write the reset state (re-encrypting when needed).
+  settings.releasePersist(true)
   // The store rewrites the blob on its own; if encryption is still on that
   // write is a re-encryption, so wait a beat before telling the user.
   if (encryptionPreserved) {
@@ -1563,6 +1590,27 @@ onBeforeUnmount(() => {
   font-size: 10px;
   letter-spacing: 0.04em;
   color: rgba(196, 199, 200, 0.7);
+}
+
+.no-results {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 64px 16px;
+  text-align: center;
+  color: #a1a1aa;
+}
+
+.no-results .material-symbols-outlined {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.no-results p {
+  font-size: 12px;
+  margin: 0;
 }
 
 /* ── Card grids ───────────────────────────────────────────── */
