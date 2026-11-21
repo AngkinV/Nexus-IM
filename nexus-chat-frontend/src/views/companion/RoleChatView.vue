@@ -52,7 +52,7 @@
         <button
           class="role-model-capsule"
           type="button"
-          :title="$t('companion.modelSettings.trigger')"
+          :title="$t('companion.modelSettings.trigger')" :aria-label="$t('companion.modelSettings.trigger')" :aria-expanded="modelPanelOpen"
           @click="modelPanelOpen = true"
         >
           <span class="material-symbols-outlined role-model-icon">memory</span>
@@ -224,6 +224,20 @@
                 <!-- The mood she reported with this reply. Absent when she reported none. -->
                 <span v-if="item.msg.state?.mood" class="role-mood">{{ $t(`companion.mood.${item.msg.state.mood}`) }}</span>
                 <span v-if="item.msg.stopped">{{ $t('companion.session.stopped') }}</span>
+                <span v-else-if="item.msg.partial">{{ $t('companion.session.partialReply') }}</span>
+                <template v-if="item.msg.modelError">
+                  <span role="alert" class="role-model-error">{{ modelErrorText(item.msg.modelError) }}</span>
+                  <span>{{ describeModelError(item.msg.modelError).detail }}</span>
+                  <button
+                    v-if="describeModelError(item.msg.modelError).settings"
+                    class="role-retry"
+                    type="button"
+                    @click="modelPanelOpen = true"
+                  >
+                    <span class="material-symbols-outlined">tune</span>
+                    <span>{{ $t('modelError.openSettings') }}</span>
+                  </button>
+                </template>
                 <!-- What this exchange changed, read back from the server after the reply. -->
                 <template v-if="growthGain?.messageId === item.msg.id">
                   <span v-for="gain in growthGain.items" :key="gain.key" class="role-gain">
@@ -234,11 +248,12 @@
                   v-if="item.retry"
                   class="role-retry"
                   type="button"
-                  :disabled="sending"
+                  :disabled="sending || waitSeconds(item.msg.retryAt) > 0"
                   @click="send(item.msg)"
                 >
                   <span class="material-symbols-outlined">refresh</span>
-                  <span>{{ $t(item.msg.failed ? 'companion.session.sendFailed' : 'companion.session.noReply') }}</span>
+                  <span v-if="waitSeconds(item.msg.retryAt) > 0">{{ $t('companion.session.retryAfter', { seconds: waitSeconds(item.msg.retryAt) }) }}</span>
+                  <span v-else>{{ $t(item.msg.modelError ? 'common.retry' : item.msg.failed ? 'companion.session.sendFailed' : 'companion.session.noReply') }}</span>
                 </button>
               </div>
             </div>
@@ -363,6 +378,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import { useCompanionStore } from '@/stores/companion'
+import { describeModelError } from '@/stores/agentProviders'
 import { useUserStore } from '@/stores/user'
 import RoleDossier from '@/components/companion/RoleDossier.vue'
 import MindOrbit from '@/components/companion/MindOrbit.vue'
@@ -485,10 +501,14 @@ const modelSubLabel = computed(() => {
     : t('companion.modelSettings.boundTag')
 })
 
+let channelRequest = 0
 const refreshModelChannel = async () => {
-  const roleId = activeRoleId.value
-  if (!roleId || !userId()) return
-  modelChannel.value = await companionStore.fetchModelChannel(userId(), roleId)
+  const request = ++channelRequest
+  const roleId = activeRoleId.value, accountId = userId()
+  modelChannel.value = null
+  if (!roleId || !accountId) return
+  const description = await companionStore.fetchModelChannel(accountId, roleId)
+  if (request === channelRequest && roleId === activeRoleId.value && accountId === userId()) modelChannel.value = description
 }
 
 watch(activeRoleId, refreshModelChannel)
@@ -686,7 +706,7 @@ const streamItems = computed(() => {
   }
   for (const item of items) {
     if (item.type !== 'msg' || item.msg.senderType !== 'user' || !item.msg.clientMsgId) continue
-    item.retry = !!item.msg.failed || (item === last && !sending.value)
+    item.retry = !!item.msg.failed || item.msg.partialId != null || (item === last && !sending.value)
   }
   return items
 })
@@ -833,6 +853,7 @@ onUnmounted(() => {
   motionQuery.removeEventListener('change', onMotionPreference)
   cancelAnimationFrame(scrollFrame)
   clearInterval(clockTimer)
+  clearInterval(waitTimer)
   teardownStages()
 })
 
@@ -865,6 +886,26 @@ function onEnter(event) {
   send()
 }
 
+function modelErrorText(error) {
+  const described = describeModelError(error)
+  return described.key ? t(described.key) : described.fallback
+}
+
+// A rate-limited line can be sent again once the wait the backend asked for is
+// over. The clock only re-enables the button; it never sends anything itself.
+const waitNow = ref(Date.now())
+let waitTimer = 0
+const waitSeconds = (retryAt) => Math.max(0, Math.ceil((retryAt - waitNow.value) / 1000))
+watch(() => Math.max(0, ...messages.value.map(m => m.retryAt || 0)), (until) => {
+  clearInterval(waitTimer)
+  waitNow.value = Date.now()
+  if (until <= waitNow.value) return
+  waitTimer = setInterval(() => {
+    waitNow.value = Date.now()
+    if (waitNow.value >= until) clearInterval(waitTimer)
+  }, 1000)
+}, { immediate: true })
+
 // Send a new line, or send one again. A retry goes out under the id the line
 // was first sent with, so the server answers it without filing it twice.
 async function send(retryOf = null) {
@@ -879,13 +920,17 @@ async function send(retryOf = null) {
   let reply = await companionStore.sendMessageStream(userId(), roleId, content, room, retryOf?.clientMsgId || null)
   // Only a server without the stream endpoint is sent to again — it did nothing
   // with the first request. Any other failure may already be filed.
-  if (reply?.unsupported) {
+  if (reply?.unsupported && !reply.modelError) {
     reply = await companionStore.sendMessage(userId(), roleId, content, room, reply.clientMsgId)
   }
   if (activeRoleId.value !== roleId) return
   if (reply?.stopped) {
     stage?.hush()
     return
+  }
+  if (reply?.modelError) {
+    stage?.hush()
+    return // The inline diagnostic stays with this turn, including any partial reply.
   }
   if (!reply?.roleMessage) {
     stage?.hush()
@@ -1903,6 +1948,11 @@ function stop() {
 
 .role-msg.is-preview .role-bubble {
   border-style: dashed;
+}
+
+.role-model-error {
+  color: #ffb4ab;
+  overflow-wrap: anywhere;
 }
 
 .role-msg.is-failed .role-bubble {

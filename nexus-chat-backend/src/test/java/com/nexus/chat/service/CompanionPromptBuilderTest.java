@@ -2,6 +2,7 @@ package com.nexus.chat.service;
 
 import com.nexus.chat.model.CompanionMessage;
 import com.nexus.chat.model.CompanionRole;
+import com.nexus.chat.util.CompanionStateTag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -27,6 +28,17 @@ class CompanionPromptBuilderTest {
         m.setFallback(fallback);
         m.setStateJson(state);
         return m;
+    }
+
+    @Test
+    void theCutShortMarkerNeverReachesThePrompt() {
+        List<Map<String, String>> messages = CompanionPromptBuilder.messages(
+                new CompanionPromptBuilder.Context(role(), null, null, null, null, List.of(), true),
+                List.of(msg(CompanionMessage.SenderType.role, "半句", false,
+                                CompanionStateTag.toJson(new CompanionStateTag.State("shy", null, null, null), true)),
+                        msg(CompanionMessage.SenderType.role, "又半句", false, CompanionStateTag.toJson(null, true))));
+        assertEquals("<state>{\"mood\":\"shy\"}</state>\n半句", messages.get(1).get("content"));
+        assertEquals("又半句", messages.get(2).get("content"));
     }
 
     @Test

@@ -25,4 +25,10 @@ public class CompanionMessageDTO {
      * retry a line that never got an answer, under the same id.
      */
     private String clientMsgId;
+    /**
+     * True when this reply was cut short (the model failed or the reader left
+     * mid-answer); null otherwise. Survives a reload, so the client can still
+     * offer a retry — which regenerates the reply under the same clientMsgId.
+     */
+    private Boolean partial;
 }
