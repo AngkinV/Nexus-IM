@@ -245,6 +245,41 @@ ipcMain.handle('app:show-notification', (_, title, body) => {
 })
 
 ipcMain.handle('app:check-for-updates', () => checkForUpdates())
+
+/**
+ * Live GPU / memory reading for the settings screen.
+ *
+ * Numbers come from Electron's own metrics, not from a mock: getAppMetrics()
+ * reports the renderer's working set, and getGPUFeatureStatus() reports which
+ * hardware acceleration paths Chromium actually enabled.
+ */
+ipcMain.handle('system:gpu-status', () => {
+  try {
+    const metrics = app.getAppMetrics()
+    // Sum resident memory across every process this app owns (main, renderer,
+    // GPU, utility). This is what Activity Monitor would show for the bundle.
+    let workingSetKb = 0
+    let peakWorkingSetKb = 0
+    for (const m of metrics) {
+      workingSetKb += m.memory?.workingSetSize || 0
+      peakWorkingSetKb += m.memory?.peakWorkingSetSize || 0
+    }
+
+    const features = app.getGPUFeatureStatus ? app.getGPUFeatureStatus() : {}
+    // Chromium reports 'enabled', 'disabled_software', 'unavailable_software', etc.
+    const accelerated = Object.values(features).some((v) => String(v).startsWith('enabled'))
+
+    return {
+      available: true,
+      memoryMB: Math.round(workingSetKb / 1024),
+      peakMemoryMB: Math.round(peakWorkingSetKb / 1024),
+      gpuAccelerated: accelerated,
+      features
+    }
+  } catch (error) {
+    return { available: false, error: error.message }
+  }
+})
 ipcMain.handle('system:request-media-permissions', (_, callType) => requestMediaPermissions(callType))
 
 ipcMain.handle('system:prevent-display-sleep', (_, shouldPrevent) => {

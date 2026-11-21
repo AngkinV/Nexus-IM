@@ -67,9 +67,11 @@
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessageStore } from '@/stores/message'
+import { useSettingsStore } from '@/stores/settings'
 import dayjs from 'dayjs'
 
 const { t } = useI18n()
+const settings = useSettingsStore()
 const messageStore = useMessageStore()
 
 const props = defineProps({
@@ -150,11 +152,11 @@ const formatTime = (time) => {
   const now = dayjs()
 
   if (date.isSame(now, 'day')) {
-    return date.format('HH:mm')
+    return settings.format(time)
   } else if (date.isSame(now, 'year')) {
-    return date.format('MM-DD HH:mm')
+    return settings.format(time, 'MM-DD HH:mm')
   } else {
-    return date.format('YYYY-MM-DD HH:mm')
+    return settings.format(time, 'YYYY-MM-DD HH:mm')
   }
 }
 

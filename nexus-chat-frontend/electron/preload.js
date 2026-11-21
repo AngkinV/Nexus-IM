@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   showNotification: (title, body) => ipcRenderer.invoke('app:show-notification', title, body),
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
+  getGpuStatus: () => ipcRenderer.invoke('system:gpu-status'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   requestMediaPermissions: (callType) => ipcRenderer.invoke('system:request-media-permissions', callType),
   preventDisplaySleep: (shouldPrevent) => ipcRenderer.invoke('system:prevent-display-sleep', shouldPrevent)

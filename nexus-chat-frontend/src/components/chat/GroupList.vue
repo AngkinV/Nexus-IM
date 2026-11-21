@@ -57,7 +57,10 @@
 <script setup>
 import { computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useSettingsStore } from '@/stores/settings'
 import dayjs from 'dayjs'
+
+const settings = useSettingsStore()
 
 const props = defineProps({
   searchQuery: {
@@ -102,9 +105,9 @@ const formatTime = (time) => {
   const now = dayjs()
 
   if (date.isSame(now, 'day')) {
-    return date.format('HH:mm')
+    return settings.format(time)
   } else if (date.isSame(now.subtract(1, 'day'), 'day')) {
-    return 'Yesterday'
+    return date.format('MM-DD')
   } else if (date.isSame(now, 'week')) {
     return date.format('ddd')
   } else {

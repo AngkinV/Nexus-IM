@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import { useContactStore } from '@/stores/contact'
 import { useUserStore } from '@/stores/user'
 import { useConnectionStore } from '@/stores/connection'
+import { useSettingsStore } from '@/stores/settings'
 import { resolveFileUrl } from '@/services/api'
 import { WS_URL } from '@/services/runtimeConfig'
 import i18n from '@/locales/i18n'
@@ -320,7 +321,8 @@ class WebSocketService {
         if (chatStore.selectedChatId !== msg.chatId) {
             chatStore.incrementUnreadCount(msg.chatId)
 
-            if (window.electronAPI) {
+            // The settings switch is authoritative: an explicit "off" wins.
+            if (window.electronAPI && useSettingsStore().shouldNotify()) {
                 window.electronAPI.showNotification(msg.senderName, msg.content)
             }
         }

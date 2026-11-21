@@ -149,6 +149,7 @@
 import { computed, inject, reactive, ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
+import { useSettingsStore } from '@/stores/settings'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
@@ -166,6 +167,7 @@ const props = defineProps({
 
 const { t } = useI18n()
 const chatStore = useChatStore()
+const settings = useSettingsStore()
 const messageStore = useMessageStore()
 
 // Remote avatars can 404; remember which ones did so we render the initial tile.
@@ -320,10 +322,7 @@ const handleDelete = async (chat) => {
   }
 }
 
-const formatTime = (time) => {
-  if (!time) return ''
-  return dayjs(time).format('HH:mm')
-}
+const formatTime = (time) => settings.format(time)
 </script>
 
 <style scoped>

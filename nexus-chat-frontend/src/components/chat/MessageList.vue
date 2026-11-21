@@ -189,6 +189,7 @@ import { ref, onMounted, onBeforeUnmount, onUpdated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { WarningFilled, Download, PictureFilled, Loading } from '@element-plus/icons-vue'
 import { API_BASE_URL } from '@/services/runtimeConfig'
+import { useSettingsStore } from '@/stores/settings'
 
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
@@ -197,6 +198,7 @@ import 'vue3-emoji-picker/css'
 
 const router = useRouter()
 const { t } = useI18n()
+const settings = useSettingsStore()
 
 const props = defineProps({
   messages: {
@@ -313,9 +315,7 @@ const formatDayLabel = (time) => {
   return `${day} ${d.format('HH:mm')}`
 }
 
-const formatTime = (time) => {
-  return dayjs(time).format('HH:mm')
-}
+const formatTime = (time) => settings.format(time)
 
 const formatFileSize = (bytes) => {
   if (!bytes) return ''
