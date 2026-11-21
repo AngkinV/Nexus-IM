@@ -26,6 +26,13 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 // Load persisted preferences (decrypting the blob when encryption is on)
 // before mounting, so the first render already has the right zoom, glass and
 // sound settings rather than flashing defaults.
-useSettingsStore(pinia)
+const settingsStore = useSettingsStore(pinia)
+settingsStore
   .hydrate()
+  .then(() => {
+    // Pull account-scoped preferences once the local blob is loaded. The mount
+    // does not wait on this: if the network is slow or the user is anonymous,
+    // the local values are already correct.
+    settingsStore.syncFromAccount()
+  })
   .finally(() => app.mount('#app'))

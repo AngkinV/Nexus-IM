@@ -88,6 +88,12 @@ export const userAPI = {
     updatePrivacySettings: (id, settings) =>
         apiClient.put(`/users/${id}/privacy`, settings),
 
+    /** Account-scoped interface preferences (hour cycle, glass, sounds). */
+    getPreferences: (id) => apiClient.get(`/users/${id}/preferences`),
+
+    /** Merge semantics: omitted fields are left untouched server-side. */
+    updatePreferences: (id, prefs) => apiClient.put(`/users/${id}/preferences`, prefs),
+
     getUserStats: (id) => apiClient.get(`/users/${id}/stats`),
 
     // Profile background

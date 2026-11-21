@@ -74,6 +74,17 @@ export const useUserStore = defineStore('user', () => {
             localStorage.setItem('user', JSON.stringify(currentUser.value))
             localStorage.setItem('token', token.value)
 
+            // Settings are stored per user id. Reload this account's bucket and
+            // pull its account-scoped preferences before the app renders.
+            try {
+                const { useSettingsStore } = await import('./settings')
+                const settingsStore = useSettingsStore()
+                await settingsStore.hydrate()
+                settingsStore.syncFromAccount()
+            } catch {
+                /* a settings failure must not block sign-in */
+            }
+
             return currentUser.value
         } catch (error) {
             throw error.response?.data?.message || error.message || 'Login failed'

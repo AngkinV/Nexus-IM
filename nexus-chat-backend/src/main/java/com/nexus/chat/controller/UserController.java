@@ -7,6 +7,7 @@ import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.service.RedisCacheService;
 import com.nexus.chat.service.RedisMessageRelay;
+import com.nexus.chat.service.UserPreferenceService;
 import com.nexus.chat.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +29,7 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final UserPreferenceService userPreferenceService;
     private final ContactRepository contactRepository;
     private final PresenceService presenceService;
     private final RedisCacheService redisCacheService;
@@ -224,6 +226,39 @@ public class UserController {
             PrivacySettingsDTO settings = userService.updatePrivacySettings(id, request);
             return ResponseEntity.ok(settings);
         } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * Account-scoped interface preferences.
+     * GET /api/users/{id}/preferences
+     *
+     * Only settings that should follow the account across machines live here;
+     * device-bound settings stay on the client.
+     */
+    @GetMapping("/{id}/preferences")
+    public ResponseEntity<UserPreferenceDTO> getPreferences(@PathVariable Long id) {
+        CurrentUser.require(id);
+        return ResponseEntity.ok(userPreferenceService.getPreferences(id));
+    }
+
+    /**
+     * Merge account-scoped preferences.
+     * PUT /api/users/{id}/preferences
+     *
+     * Null fields are left untouched, so a partial update from one window does
+     * not erase what another window just set.
+     */
+    @PutMapping("/{id}/preferences")
+    public ResponseEntity<UserPreferenceDTO> updatePreferences(
+            @PathVariable Long id,
+            @jakarta.validation.Valid @RequestBody UserPreferenceDTO request) {
+        CurrentUser.require(id);
+        try {
+            return ResponseEntity.ok(userPreferenceService.updatePreferences(id, request));
+        } catch (RuntimeException e) {
+            log.warn("Failed to update preferences for user {}: {}", id, e.getMessage());
             return ResponseEntity.badRequest().build();
         }
     }

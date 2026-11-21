@@ -13,7 +13,24 @@
 
 const DB_NAME = 'nexus-secure'
 const STORE = 'keys'
-const KEY_ID = 'local-settings'
+/**
+ * One key per user.
+ *
+ * A single shared key meant any account signing in on this machine could
+ * decrypt the previous account's blob. Scoping the id to the user keeps the
+ * ciphertext unreadable across accounts even though the key store itself is
+ * shared.
+ */
+function keyId() {
+  try {
+    const raw = localStorage.getItem('user')
+    if (!raw) return 'local-settings.anon'
+    const user = JSON.parse(raw)
+    return user?.id != null ? `local-settings.${user.id}` : 'local-settings.anon'
+  } catch {
+    return 'local-settings.anon'
+  }
+}
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -56,13 +73,13 @@ function idbPut(key, value) {
 }
 
 async function getKey() {
-  const existing = await idbGet(KEY_ID)
+  const existing = await idbGet(keyId())
   if (existing) return existing
   const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, [
     'encrypt',
     'decrypt'
   ])
-  await idbPut(KEY_ID, key)
+  await idbPut(keyId(), key)
   return key
 }
 
