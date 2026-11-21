@@ -37,6 +37,16 @@
           />
           <kbd>⌘K</kbd>
         </div>
+        <button
+          v-if="settings.zoomPercent !== 100"
+          type="button"
+          class="zoom-chip"
+          :title="t('settings.zoomReset')"
+          @click="settings.zoomPercent = 100"
+        >
+          <span class="material-symbols-outlined">zoom_out_map</span>
+          <span>{{ settings.zoomPercent }}%</span>
+        </button>
         <button type="button" class="reset-pill" :title="t('settings.resetHint')" @click="resetDefaults">
           <span class="material-symbols-outlined">history</span>
           <span>{{ t('settings.resetDefaults') }}</span>
@@ -941,24 +951,31 @@ const encryptionSupported = isEncryptionSupported()
 async function toggleEncryption() {
   const next = !settings.encryptedStorage
   try {
-    const payload = { ...settings.state }
     if (next) {
-      const envelope = await encryptValue(payload)
+      // Flip the flag FIRST: the encrypted payload must record that encryption
+      // is on, otherwise the next boot decrypts a blob that claims it is off,
+      // and the store's persist watcher immediately rewrites plaintext over it.
+      settings.encryptedStorage = true
+      const envelope = await encryptValue({ ...settings.state })
       localStorage.setItem('nexus.settings', JSON.stringify(envelope))
     } else {
-      // Verify the current blob still decrypts before dropping the envelope,
-      // so a broken key cannot silently lose the user's preferences.
+      // Verify the current blob still decrypts before dropping the envelope, so
+      // a broken key cannot silently lose the user's preferences.
       const raw = localStorage.getItem('nexus.settings')
       const parsed = raw ? JSON.parse(raw) : null
+      let plain = null
       if (parsed && parsed.__encrypted) {
-        const plain = await decryptValue(parsed)
+        plain = await decryptValue(parsed)
         if (!plain) throw new Error('decrypt failed')
-        localStorage.setItem('nexus.settings', JSON.stringify(plain))
       }
+      // Clear the flag first so the persist watcher takes over the write again.
+      settings.encryptedStorage = false
+      localStorage.setItem('nexus.settings', JSON.stringify(plain || { ...settings.state }))
     }
-    settings.encryptedStorage = next
     ElMessage.success(next ? t('settings.encryptionOn') : t('settings.encryptionOff'))
   } catch {
+    // Roll back so the switch never lies about the on-disk state.
+    settings.encryptedStorage = !next
     ElMessage.error(t('settings.encryptionFailed'))
   }
 }
@@ -1001,11 +1018,17 @@ const checkForUpdates = async () => {
 }
 
 /* ── Reset / logout / back ──────────────────────────────── */
-const resetDefaults = () => {
-  settings.resetToDefaults()
+const resetDefaults = async () => {
+  const { encryptionPreserved } = settings.resetToDefaults()
   currentLocale.value = 'zh'
   handleLanguageChange()
-  ElMessage.success(t('settings.resetDone'))
+  // The store rewrites the blob on its own; if encryption is still on that
+  // write is a re-encryption, so wait a beat before telling the user.
+  if (encryptionPreserved) {
+    ElMessage.success(t('settings.resetDoneEncrypted'))
+  } else {
+    ElMessage.success(t('settings.resetDone'))
+  }
 }
 
 const handleLogout = async () => {
@@ -1245,6 +1268,32 @@ onBeforeUnmount(() => {
   font-size: 9px;
   color: rgba(196, 199, 200, 0.6);
   pointer-events: none;
+}
+
+/* Always reachable escape hatch: at 200% zoom the card that owns the slider
+   may be off-screen, so the header carries a one-click reset. */
+.zoom-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: #fafafa;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.zoom-chip:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.zoom-chip .material-symbols-outlined {
+  font-size: 16px;
 }
 
 .reset-pill {

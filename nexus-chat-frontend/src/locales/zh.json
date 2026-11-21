@@ -253,7 +253,8 @@
     "encryptionOff": "未启用",
     "encryptionNote": "密钥保存在本机 IndexedDB，可防读取明文，但不防本机有执行权限的程序。",
     "encryptionOn": "已开启本地加密",
-    "encryptionFailed": "切换加密失败"
+    "encryptionFailed": "切换加密失败",
+    "resetDoneEncrypted": "已恢复默认设置，本地加密保持开启"
   },
   "contact": {
     "addContact": "添加联系人",

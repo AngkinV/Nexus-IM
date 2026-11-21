@@ -15,6 +15,9 @@
  * While suspended the loop keeps a rAF pending but skips the callback, so
  * resuming is instant and does not rebuild any WebGL state.
  */
+/** How often to check for a resume while suspended. */
+const SUSPEND_POLL_MS = 500
+
 export function createRenderLoop(callback, options = {}) {
   const {
     fpsCap = () => 60,
@@ -25,9 +28,27 @@ export function createRenderLoop(callback, options = {}) {
   let handle = null
   let lastRun = 0
   let running = false
+  let suspendPoll = null
 
   const tick = (timestamp) => {
     if (!running) return
+
+    // While suspended, drop out of the rAF loop entirely instead of spinning at
+    // display rate doing nothing. A cheap timeout polls for the resume; that is
+    // ~60x less work than a no-op rAF, and it is what makes the "suspend in
+    // background" switch actually save power.
+    if (suspended()) {
+      handle = null
+      suspendPoll = setTimeout(() => {
+        suspendPoll = null
+        if (!running) return
+        // Restart the clock on resume so the first frame is not "late".
+        if (!suspended()) lastRun = 0
+        handle = requestAnimationFrame(tick)
+      }, SUSPEND_POLL_MS)
+      return
+    }
+
     const cap = Math.max(1, Number(fpsCap()) || 60)
     const interval = 1000 / cap
     const elapsed = timestamp - lastRun
@@ -35,7 +56,7 @@ export function createRenderLoop(callback, options = {}) {
     if (elapsed >= interval) {
       // Advance by whole intervals so a 30 FPS cap does not drift to 29.9.
       lastRun = timestamp - (elapsed % interval)
-      if (!suspended()) callback(timestamp)
+      callback(timestamp)
     }
 
     handle = requestAnimationFrame(tick)
@@ -53,6 +74,10 @@ export function createRenderLoop(callback, options = {}) {
       if (handle !== null) {
         cancelAnimationFrame(handle)
         handle = null
+      }
+      if (suspendPoll !== null) {
+        clearTimeout(suspendPoll)
+        suspendPoll = null
       }
     },
     get isRunning() {

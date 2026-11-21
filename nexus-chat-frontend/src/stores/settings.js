@@ -56,19 +56,41 @@ export const useSettingsStore = defineStore('settings', () => {
   const ready = ref(false)
 
   // Persist on any change so a reload keeps the user's choice.
-  // Skipped while an encrypted blob is in place: secureStorage owns the write in
-  // that case, otherwise every keystroke would overwrite the ciphertext with
-  // plain JSON.
+  //
+  // When encryption is on the blob is re-encrypted instead of written as plain
+  // JSON. Writes are coalesced: dragging a slider fires a change per pixel, and
+  // AES-GCM on every one of those would be wasteful.
+  let persistTimer = null
+  let persistPending = false
+
+  const writeNow = async (value) => {
+    try {
+      if (value.encryptedStorage) {
+        const { encryptValue } = await import('@/utils/secureStorage')
+        const envelope = await encryptValue({ ...value })
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope))
+      } else {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(value))
+      }
+    } catch {
+      /* quota, private mode, or crypto unavailable — the in-memory value
+         still applies for this session */
+    }
+  }
+
   watch(
     state,
     (value) => {
       if (typeof localStorage === 'undefined') return
-      if (value.encryptedStorage) return
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(value))
-      } catch {
-        /* quota or private mode — the in-memory value still applies */
-      }
+      // While an encryption toggle is mid-flight the view owns the write.
+      if (persistPending) return
+      persistPending = true
+      if (persistTimer) clearTimeout(persistTimer)
+      persistTimer = setTimeout(() => {
+        persistPending = false
+        persistTimer = null
+        writeNow(value)
+      }, 120)
     },
     { deep: true }
   )
@@ -243,8 +265,18 @@ export const useSettingsStore = defineStore('settings', () => {
     return d.format(hourCycle.value === '12' ? to12Hour(fmt) : fmt)
   }
 
+  /**
+   * Restore factory defaults.
+   *
+   * Encryption is a security posture, not a preference: resetting it silently
+   * would write plaintext back to disk while the user believes their data is
+   * still encrypted. It therefore survives a reset, and the caller is told
+   * whether it was preserved so the UI can say so.
+   */
   function resetToDefaults() {
-    state.value = { ...DEFAULT_SETTINGS }
+    const keepEncrypted = state.value.encryptedStorage === true
+    state.value = { ...DEFAULT_SETTINGS, encryptedStorage: keepEncrypted }
+    return { encryptionPreserved: keepEncrypted }
   }
 
   return {
