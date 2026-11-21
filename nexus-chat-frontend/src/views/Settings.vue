@@ -8,6 +8,9 @@
     <!-- ── Header ───────────────────────────────────────────── -->
     <header class="settings-header">
       <div class="header-left">
+        <!-- macOS draws its own traffic lights over the frameless window; this
+             spacer keeps the back pill clear of them. Mirrors NavRail's 78px. -->
+        <div v-if="isMac" class="traffic-spacer" aria-hidden="true"></div>
         <button type="button" class="back-pill" :title="t('settings.backToChat')" @click="goBack">
           <span class="material-symbols-outlined">arrow_back</span>
           <span>{{ t('settings.backToChat') }}</span>
@@ -472,6 +475,7 @@ const companionStore = useCompanionStore()
 const settings = useSettingsStore()
 
 const isElectron = computed(() => typeof window !== 'undefined' && !!window.electronAPI)
+const isMac = computed(() => (typeof window !== 'undefined' && window.electronAPI?.platform) === 'darwin')
 
 /* ── Header ─────────────────────────────────────────────── */
 const appVersion = ref('')
@@ -597,7 +601,7 @@ const gpuBarWidth = computed(() => {
   return `${pct.toFixed(1)}%`
 })
 
-const gpuEngineText = computed(() => (gpuStatus.gpuAccelerated ? 'WebGL 渲染引擎' : 'WebGL 渲染引擎'))
+const gpuEngineText = 'WebGL 渲染引擎'
 const gpuEngineState = computed(() => {
   if (!isElectron.value) return 'N/A'
   if (!gpuStatus.available) return '—'
@@ -767,12 +771,29 @@ onBeforeUnmount(() => {
   -webkit-app-region: no-drag;
 }
 
+/* On macOS the spacer must start at the window edge so the traffic lights sit
+   exactly where the system puts them. */
+.settings-header:has(.traffic-spacer) {
+  padding-left: 0;
+}
+
 .header-left,
 .header-center,
 .header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Reserved for the macOS traffic lights, which float over this frameless
+   window. The trailing hairline matches the reference design's divider. */
+.traffic-spacer {
+  /* Measured against the live window: the third light ends at x=65, so 72px puts
+     the hairline a few pixels past it instead of floating in dead space. */
+  width: 72px;
+  height: 100%;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .back-pill {
@@ -1591,6 +1612,16 @@ onBeforeUnmount(() => {
   }
 
   .header-search {
+    display: none;
+  }
+
+  /* Narrow windows: keep the back pill but drop its label so the traffic lights
+     and the pill never compete for the same pixels. */
+  .back-pill span:not(.material-symbols-outlined) {
+    display: none;
+  }
+
+  .header-center .version-chip {
     display: none;
   }
 }
