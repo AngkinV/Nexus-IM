@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setBadge: (count) => ipcRenderer.invoke('app:set-badge', count),
   setZoom: (percent) => ipcRenderer.invoke('window:set-zoom', percent),
   getZoom: () => ipcRenderer.invoke('window:get-zoom'),
+  getWindowState: () => ipcRenderer.invoke('window:get-state'),
+  setMenuLocale: (locale) => ipcRenderer.invoke('app:set-menu-locale', locale),
   onWindowFocus: (handler) => {
     const listener = (_event, focused) => handler(focused)
     ipcRenderer.on('window:focus-changed', listener)

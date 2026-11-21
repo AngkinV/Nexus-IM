@@ -32,6 +32,8 @@ public class UserProfileDTO {
     private Boolean showLastSeen;
     private Boolean showEmail;
     private Boolean showPhone;
+    /** DIRECT or VERIFY. Only on the owner's full profile, never on the viewer one. */
+    private String friendRequestMode;
 
     // Statistics
     private Long contactCount;

@@ -6,6 +6,7 @@ import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
@@ -59,6 +60,26 @@ public class GlobalExceptionHandler {
         body.put("message", ex.getReason());
 
         return ResponseEntity.status(ex.getStatusCode()).body(body);
+    }
+
+    /**
+     * Bean validation failure on a request body: the client sent something invalid, so 400.
+     * Without this it fell through to the generic handler below and came back as 500.
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        ex.getBindingResult().getFieldErrors()
+                .forEach(error -> fields.putIfAbsent(error.getField(), error.getDefaultMessage()));
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        body.put("error", "Bad Request");
+        body.put("message", fields.isEmpty() ? "validation failed" : String.join("; ", fields.values()));
+        body.put("fields", fields);
+
+        return ResponseEntity.badRequest().body(body);
     }
 
     /**

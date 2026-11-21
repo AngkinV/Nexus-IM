@@ -28,14 +28,14 @@ const PALM_NORMALS = {
 const CURL = { chin: 1.2, sip: 0.95, wipe: 0.45, wave: 0.06, shrug: 0.16, cover: 0.12, cross: 0.32, tuck: 0.2 }
 const TABLE_Y = -1.22
 
-export async function loadTavernActor(url, signal, { seed = 0 } = {}) {
-  const response = await fetch(url, { signal })
+export async function loadTavernActor(url, signal, { seed = 0, request = { url, headers: {} } } = {}) {
+  const response = await fetch(request.url, { signal, headers: request.headers })
   if (!response.ok) throw new Error(`Character model request failed (${response.status})`)
   const buffer = await response.arrayBuffer()
   signal.throwIfAborted()
   const loader = new GLTFLoader()
   loader.register(parser => new VRMLoaderPlugin(parser))
-  const gltf = await loader.parseAsync(buffer, new URL('.', new URL(url, window.location.href)).href)
+  const gltf = await loader.parseAsync(buffer, new URL('.', new URL(request.url, window.location.href)).href)
   const vrm = gltf.userData.vrm
   if (signal.aborted || !vrm?.humanoid) {
     VRMUtils.deepDispose(gltf.scene)

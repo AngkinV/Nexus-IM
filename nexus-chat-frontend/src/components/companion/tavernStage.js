@@ -1,6 +1,13 @@
 import * as THREE from 'three'
 import { createTavernSpeech } from './tavernSpeech.js'
-import { getFrameCap } from '../../utils/frameGate.js'
+import {
+  getFrameCap,
+  scaledPixelRatio,
+  onRenderQualityChange,
+  isRenderSuspended,
+  requestFrame,
+  cancelFrame
+} from '../../utils/renderGovernor.js'
 
 // The cap is read per frame so Settings → 渲染帧率上限 takes effect live.
 const frameInterval = () => 1000 / getFrameCap()
@@ -109,14 +116,14 @@ export function characterModelSource(character) {
   return url
 }
 
-export function mountTavernStage(container, { shouldRender = () => true, reducedMotion = false, onActorStatus = () => {} } = {}) {
+export function mountTavernStage(container, { shouldRender = () => true, reducedMotion = false, onActorStatus = () => {}, requestAsset = (url) => ({ url, headers: {} }) } = {}) {
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(42, 1.5, 0.1, 100)
   camera.position.set(0, 0.1, 6.4)
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
   renderer.localClippingEnabled = true
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+  renderer.setPixelRatio(scaledPixelRatio(1.5))
   renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block'
   container.appendChild(renderer.domElement)
 
@@ -204,7 +211,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     try {
       const { loadTavernActor } = await import('./tavernActor')
       controller.signal.throwIfAborted()
-      const loaded = await loadTavernActor(source, controller.signal, { seed: actorSeed })
+      const loaded = await loadTavernActor(source, controller.signal, { seed: actorSeed, request: requestAsset(source) })
       if (destroyed || request !== actorRequest) {
         loaded.destroy()
         return
@@ -412,12 +419,15 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     if (!width || !height) return
     camera.aspect = width / height
     camera.updateProjectionMatrix()
+    // Settings → 视口渲染分辨率.
+    renderer.setPixelRatio(scaledPixelRatio(1.5))
     renderer.setSize(width, height, false)
     dirty = true
   }
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container)
   resize()
+  const stopQualityWatch = onRenderQualityChange(resize)
 
   const clock = new THREE.Clock()
   let lastFrameAt = 0
@@ -553,8 +563,9 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let paused = false
   let frame = 0
   const animate = (now) => {
-    frame = requestAnimationFrame(animate)
-    if (!shouldRender() || document.hidden || !drawable()) {
+    frame = requestFrame(animate)
+    // Settings → 后台失焦智能挂起 is treated exactly like a hidden tab here.
+    if (!shouldRender() || document.hidden || isRenderSuspended() || !drawable()) {
       if (!paused) pause()
       paused = true
       lastTime = clock.getElapsedTime()
@@ -576,7 +587,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     lastTime = time
     renderFrame(time, delta, Math.min(1, delta * 4))
   }
-  frame = requestAnimationFrame(animate)
+  frame = requestFrame(animate)
 
   return {
     /** Whose silhouette is on stage. Rebuilds only when the character changes. */
@@ -703,7 +714,8 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       actorAbort?.abort()
       actor?.destroy()
       actor = null
-      cancelAnimationFrame(frame)
+      cancelFrame(frame)
+      stopQualityWatch()
       window.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('visibilitychange', onVisibility)
       resizeObserver.disconnect()
@@ -732,9 +744,10 @@ export function mountTavernMini(container, { shouldRender = () => true, reducedM
   let dirty = true
   let lastFrameAt = 0
   let frames = 0
+  const stopMiniQualityWatch = onRenderQualityChange(() => { dirty = true; draw() })
 
   function draw() {
-    const ratio = Math.min(window.devicePixelRatio || 1, 2)
+    const ratio = scaledPixelRatio(2)
     const width = container.clientWidth
     const height = container.clientHeight
     if (!width || !height || !edges) return
@@ -762,8 +775,8 @@ export function mountTavernMini(container, { shouldRender = () => true, reducedM
 
   let frame = 0
   const animate = (now) => {
-    frame = requestAnimationFrame(animate)
-    if (!shouldRender() || document.hidden) return
+    frame = requestFrame(animate)
+    if (!shouldRender() || document.hidden || isRenderSuspended()) return
     if (reducedMotion) {
       if (!dirty) return
       dirty = false
@@ -772,11 +785,12 @@ export function mountTavernMini(container, { shouldRender = () => true, reducedM
     }
     // A badge this small does not need more than 20 fps.
     if (now - lastFrameAt < 50) return
-    angle += ((now - (lastFrameAt || now)) / 1000) * 0.5
+    // Clamp the step: after a pause the badge resumes turning, it does not spin to catch up.
+    angle += (Math.min(now - (lastFrameAt || now), 100) / 1000) * 0.5
     lastFrameAt = now
     draw()
   }
-  frame = requestAnimationFrame(animate)
+  frame = requestFrame(animate)
 
   return {
     setCharacter(character) {
@@ -799,7 +813,8 @@ export function mountTavernMini(container, { shouldRender = () => true, reducedM
       return { seed, edges: edges ? edges.length / 6 : 0, frames, webgl: false }
     },
     destroy() {
-      cancelAnimationFrame(frame)
+      cancelFrame(frame)
+      stopMiniQualityWatch()
       canvas.remove()
     }
   }

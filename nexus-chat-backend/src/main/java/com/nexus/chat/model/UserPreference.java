@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
@@ -20,6 +21,7 @@ import java.time.LocalDateTime;
  * Modeled on {@link UserPrivacySettings}: one row per user, audited timestamps.
  */
 @Entity
+@DynamicUpdate // write only the changed columns: concurrent partial updates must not clobber each other
 @Table(name = "user_preferences")
 @Data
 @NoArgsConstructor

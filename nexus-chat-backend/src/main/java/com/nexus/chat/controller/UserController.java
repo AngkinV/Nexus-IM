@@ -12,6 +12,9 @@ import com.nexus.chat.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataAccessException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -220,7 +223,7 @@ public class UserController {
     @PutMapping("/{id}/privacy")
     public ResponseEntity<PrivacySettingsDTO> updatePrivacySettings(
             @PathVariable Long id,
-            @RequestBody PrivacySettingsDTO request) {
+            @jakarta.validation.Valid @RequestBody PrivacySettingsDTO request) {
         CurrentUser.require(id);
         try {
             PrivacySettingsDTO settings = userService.updatePrivacySettings(id, request);
@@ -240,7 +243,17 @@ public class UserController {
     @GetMapping("/{id}/preferences")
     public ResponseEntity<UserPreferenceDTO> getPreferences(@PathVariable Long id) {
         CurrentUser.require(id);
-        return ResponseEntity.ok(userPreferenceService.getPreferences(id));
+        try {
+            return ResponseEntity.ok(userPreferenceService.getPreferences(id));
+        } catch (DataAccessException e) {
+            log.error("Preference storage unavailable for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Preference storage unavailable");
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("Could not read preferences for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not read preferences");
+        }
     }
 
     /**
@@ -255,11 +268,18 @@ public class UserController {
             @PathVariable Long id,
             @jakarta.validation.Valid @RequestBody UserPreferenceDTO request) {
         CurrentUser.require(id);
+        // Validation is 400, ownership is 401/403, transient storage failure is 503.
+        // Keep these distinct: the client must retry a server fault, not an invalid edit.
         try {
             return ResponseEntity.ok(userPreferenceService.updatePreferences(id, request));
+        } catch (DataAccessException e) {
+            log.error("Preference storage unavailable for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Preference storage unavailable");
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (RuntimeException e) {
-            log.warn("Failed to update preferences for user {}: {}", id, e.getMessage());
-            return ResponseEntity.badRequest().build();
+            log.error("Could not save preferences for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not save preferences");
         }
     }
 

@@ -48,9 +48,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { VRMLoaderPlugin, VRMUtils, VRMExpressionPresetName } from '@pixiv/three-vrm'
 import { createVrmExpressions } from './vrmExpressions'
-import { createRenderLoop, resolvePixelRatio } from '@/utils/renderLoop'
+import { createRenderLoop, scaledPixelRatio, onRenderQualityChange } from '@/utils/renderGovernor'
 import { useSettingsStore } from '@/stores/settings'
-import { useWindowFocus } from '@/composables/useWindowFocus'
+import { useUserStore } from '@/stores/user'
+import { userAPI } from '@/services/api'
+import { SERVER_BASE_URL } from '@/services/runtimeConfig'
+import { assetRequest } from '@/utils/assetRequest'
 
 const { locale } = useI18n()
 
@@ -72,10 +75,12 @@ const canvasRef = ref(null)
 const hasWebGL = ref(true)
 const isReady = ref(false)
 const loadError = ref('')
-const rafId = ref(null)
 const settings = useSettingsStore()
-const { isSuspended } = useWindowFocus({ delayMs: 30_000 })
+const userStore = useUserStore()
 let renderLoop = null
+let stopQualityWatch = null
+// Animation time, accumulated from clamped deltas (see render()).
+let animationTime = 0
 const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
 let renderer = null
@@ -133,6 +138,7 @@ const gazeState = {
 }
 
 const motionConfig = ref(null)
+let motionLibraryConfirmed = false
 const motionList = ref([])
 const currentMotionKey = ref('')
 const defaultMotionKey = ref('walk')
@@ -288,7 +294,7 @@ const initThree = () => {
   const canvas = canvasRef.value
   if (!canvas) return
   renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
-  renderer.setPixelRatio(resolvePixelRatio(settings.renderScale, CANVAS_H))
+  renderer.setPixelRatio(scaledPixelRatio(2))
   renderer.setClearColor(0x000000, 0)
 
   scene = new THREE.Scene()
@@ -314,18 +320,18 @@ const initThree = () => {
 
 const resizeRenderer = () => {
   if (!renderer || !camera) return
-  renderer.setPixelRatio(resolvePixelRatio(settings.renderScale, CANVAS_H))
+  renderer.setPixelRatio(scaledPixelRatio(2))
   renderer.setSize(CANVAS_W, CANVAS_H, false)
   camera.aspect = CANVAS_W / CANVAS_H
   camera.updateProjectionMatrix()
 }
 
-// Changing the render scale must reapply the ratio and the drawing buffer.
-watch(() => settings.renderScale, () => {
+// Settings → 视口渲染分辨率 (or a window resize that changes the effective
+// factor) must reapply the ratio and the drawing buffer.
+const applyRenderQuality = () => {
   if (!renderer) return
   resizeRenderer()
-  render(0)
-})
+}
 
 const disposeModel = () => {
   clearMotionOffsets()
@@ -360,12 +366,20 @@ const loadGLTF = (url, isVrm) => new Promise((resolve, reject) => {
   if (isVrm) {
     loader.register((parser) => new VRMLoaderPlugin(parser))
   }
-  loader.load(url, resolve, undefined, reject)
+  try {
+    const request = assetRequest(url, SERVER_BASE_URL, userStore.token)
+    loader.setRequestHeader(request.headers)
+    loader.load(request.url, resolve, undefined, reject)
+  } catch (error) { reject(error) }
 })
 
 const loadFBX = (url) => new Promise((resolve, reject) => {
   const loader = new FBXLoader()
-  loader.load(url, resolve, undefined, reject)
+  try {
+    const request = assetRequest(url, SERVER_BASE_URL, userStore.token)
+    loader.setRequestHeader(request.headers)
+    loader.load(request.url, resolve, undefined, reject)
+  } catch (error) { reject(error) }
 })
 
 const fitModelToView = (object) => {
@@ -649,17 +663,21 @@ const retargetMixamoClipToVrm = (clip, fbx) => {
 
 const fetchMotionConfig = async () => {
   try {
-    const res = await fetch('/motions/motions.json?t=' + Date.now())
-    const data = await res.json()
+    const owner = userStore.currentUser?.id
+    const { data } = await userAPI.getSettingMotions()
+    if (disposed || owner !== userStore.currentUser?.id) return
+    if (!Array.isArray(data?.motions)) throw new Error('Invalid motion library response')
+    motionLibraryConfirmed = true
     motionConfig.value = data
-    motionList.value = data.motions || []
+    motionList.value = data.motions
     defaultMotionKey.value = data.default || 'walk'
-  } catch (error) {
-    console.warn('[Companion] Failed to load motions.json, using defaults')
+  } catch {
+    motionLibraryConfirmed = false
+    // Built-ins are a read-only fallback, never a stand-in for uploaded user data.
     motionList.value = [
-      { key: 'idle', file: 'idle.fbx', label: '待机', labelEn: 'Idle' },
-      { key: 'walk', file: 'walk.fbx', label: '走路', labelEn: 'Walk' },
-      { key: 'think', file: 'think.fbx', label: '思考', labelEn: 'Think' }
+      { key: 'idle', file: 'idle.fbx', label: '待机', labelEn: 'Idle', owned: false },
+      { key: 'walk', file: 'walk.fbx', label: '走路', labelEn: 'Walk', owned: false },
+      { key: 'think', file: 'think.fbx', label: '思考', labelEn: 'Think', owned: false }
     ]
     defaultMotionKey.value = 'walk'
   }
@@ -687,10 +705,12 @@ const loadMixamoClips = async () => {
 
   for (const motion of motionList.value) {
     if (disposed || vrm !== targetVrm || mixer !== targetMixer) return
-    const url = `/motions/${motion.file}`
+    const url = motion.owned ? motion.file : `/motions/${motion.file}`
     try {
+      const request = assetRequest(url, SERVER_BASE_URL, userStore.token)
+      loader.setRequestHeader(request.headers)
       const fbx = await new Promise((resolve, reject) => {
-        loader.load(url, resolve, undefined, reject)
+        loader.load(request.url, resolve, undefined, reject)
       })
 
       if (disposed || vrm !== targetVrm || mixer !== targetMixer) {
@@ -895,14 +915,29 @@ const handleMouseLeave = () => {
   }
 }
 
+// The motion the user last picked is one of their settings: it comes back
+// after a reload, and after the pet is switched off and on again.
+const rememberMotion = (key) => {
+  userSelectedMotionKey = key
+  settings.petMotion = key && key !== 'walk' ? key : ''
+}
+
 const playDefaultMotion = () => {
   loadMixamoClips().then(() => {
+    const remembered = settings.petMotion
+    if (remembered && mixamoActions[remembered]) {
+      userSelectedMotionKey = remembered
+      startMotionCycle(remembered)
+      return
+    }
+    // The remembered motion is gone (deleted, or not in this model's set).
+    if (remembered && motionLibraryConfirmed && !motionList.value.some((m) => m.key === remembered)) settings.petMotion = ''
     playMixamoAction('walk')
   })
 }
 
 const switchMotion = (key) => {
-  userSelectedMotionKey = key
+  rememberMotion(key)
   startMotionCycle(key)
   showContextMenu.value = false
 }
@@ -1172,8 +1207,13 @@ const updateProceduralMotion = (time) => {
 
 const render = () => {
   if (!renderer || !scene || !camera) return
-  const delta = clock.getDelta()
-  const elapsed = clock.elapsedTime
+  // Clamp the step and keep our own running time. THREE.Clock keeps counting
+  // while the loop is suspended or throttled, and feeding minutes of background
+  // time into the mixer / VRM spring bones / walk in one frame makes the pet
+  // lurch across the screen.
+  const delta = Math.min(clock.getDelta(), 0.1)
+  animationTime += delta
+  const elapsed = animationTime
   // mixer targets normalized bones → vrm.update() transfers normalized → raw
   clearMotionOffsets()
   if (mixer) mixer.update(delta)
@@ -1208,8 +1248,7 @@ const handleMotionsUpdated = async () => {
 const handleSwitchMotionEvent = async (event) => {
   const key = event.detail?.key
   if (!key) return
-  console.log(`[Companion] switch-motion event: key="${key}", loaded=${mixamoLoaded}, hasAction=${!!mixamoActions[key]}`)
-  userSelectedMotionKey = key
+  rememberMotion(key)
   // If the clip is already loaded, start the motion cycle
   if (mixamoLoaded && mixamoActions[key]) {
     startMotionCycle(key)
@@ -1238,10 +1277,11 @@ onMounted(async () => {
   scheduleNextBlink(0)
   loadModel()
   renderLoop = createRenderLoop(render, {
-    fpsCap: () => settings.fpsCap,
-    suspended: () => isSuspended.value
+    // Back from a suspension: throw away the time that passed in the background.
+    onResume: () => clock?.getDelta()
   })
   renderLoop.start()
+  stopQualityWatch = onRenderQualityChange(applyRenderQuality)
   window.addEventListener('resize', clampPosition)
   window.addEventListener('keydown', handleEscape)
   window.addEventListener('companion:motions-updated', handleMotionsUpdated)
@@ -1253,7 +1293,7 @@ onUnmounted(() => {
   modelRequest++
   stopMotionCycle()
   renderLoop?.stop()
-  if (rafId.value) cancelAnimationFrame(rafId.value)
+  stopQualityWatch?.()
   window.removeEventListener('resize', clampPosition)
   window.removeEventListener('keydown', handleEscape)
   window.removeEventListener('companion:motions-updated', handleMotionsUpdated)

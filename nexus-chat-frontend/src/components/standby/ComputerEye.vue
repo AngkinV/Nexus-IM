@@ -4,7 +4,7 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { createFrameGate } from '@/utils/frameGate'
+import { createFrameGate, isRenderSuspended, onRenderSuspendChange, scaledPixelRatio, onRenderQualityChange } from '@/utils/renderGovernor'
 
 /**
  * Standby eye — a machine eye built only from 0/1 and letters.
@@ -62,13 +62,15 @@ let running = false
 let reduced = false
 let ro = null
 let io = null
+let stopSuspendWatch = null
+let stopQualityWatch = null
 
 const layout = () => {
   if (!canvas) return false
   W = canvas.clientWidth
   H = canvas.clientHeight
   if (!W || !H) return false
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const dpr = scaledPixelRatio(2)
   canvas.width = Math.round(W * dpr)
   canvas.height = Math.round(H * dpr)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -240,11 +242,13 @@ const gate = createFrameGate()
 
 const frame = (now) => {
   raf = 0
-  if (!running) return
-  // Honour Settings → 渲染帧率上限. Skipped frames still advance `last`, so the
-  // next delta stays correct instead of jumping.
+  // Suspended (Settings → 后台失焦智能挂起): stop here. The suspend watcher
+  // below calls wake() when the window comes back.
+  if (!running || isRenderSuspended()) return
+  // Honour Settings → 渲染帧率上限. A skipped frame must NOT advance `last`: the
+  // next drawn frame has to account for the whole interval, otherwise the eye
+  // would run at half speed under a 30 FPS cap.
   if (!gate.shouldDraw(now)) {
-    last = now
     raf = requestAnimationFrame(frame)
     return
   }
@@ -282,7 +286,7 @@ const frame = (now) => {
 }
 
 const wake = () => {
-  if (raf || !running || !W) return
+  if (raf || !running || !W || isRenderSuspended()) return
   last = performance.now()
   if (!blinkAt) blinkAt = last + 2200
   raf = requestAnimationFrame(frame)
@@ -354,9 +358,20 @@ onMounted(() => {
     }
   })
   io.observe(canvas)
+  stopQualityWatch = onRenderQualityChange(() => {
+    if (layout()) { if (reduced) still(); else wake() }
+  })
 
   window.addEventListener('pointermove', onPointerMove, { passive: true })
   document.addEventListener('visibilitychange', onVisibility)
+  stopSuspendWatch = onRenderSuspendChange((suspended) => {
+    if (suspended) {
+      if (raf) cancelAnimationFrame(raf)
+      raf = 0
+    } else {
+      wake()
+    }
+  })
 })
 
 onBeforeUnmount(() => {
@@ -365,6 +380,8 @@ onBeforeUnmount(() => {
   raf = 0
   ro?.disconnect()
   io?.disconnect()
+  stopSuspendWatch?.()
+  stopQualityWatch?.()
   window.removeEventListener('pointermove', onPointerMove)
   document.removeEventListener('visibilitychange', onVisibility)
 })

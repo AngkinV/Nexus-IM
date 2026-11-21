@@ -6,7 +6,7 @@ import { useContactStore } from '@/stores/contact'
 import { useUserStore } from '@/stores/user'
 import { useConnectionStore } from '@/stores/connection'
 import { useSettingsStore } from '@/stores/settings'
-import { playMessageSound } from '@/utils/uiSound'
+import { playMessageSound, playSendSound, playErrorSound } from '@/utils/uiSound'
 import { resolveFileUrl } from '@/services/api'
 import { WS_URL } from '@/services/runtimeConfig'
 import i18n from '@/locales/i18n'
@@ -288,7 +288,7 @@ class WebSocketService {
                 avatar: resolveFileUrl(msg.senderAvatar),
                 lastMessage: msg.content,
                 lastMessageTime: msg.createdAt,
-                unreadCount: 1,
+                unreadCount: 0, // inbound count is incremented once below; not again on creation
                 online: true,
                 status: 'online',
                 type: 'DIRECT',
@@ -319,7 +319,7 @@ class WebSocketService {
         })
 
         // Increment unread count if not current chat
-        if (chatStore.selectedChatId !== msg.chatId) {
+        if (!isSelf && chatStore.selectedChatId !== msg.chatId) {
             chatStore.incrementUnreadCount(msg.chatId)
 
             const settings = useSettingsStore()
@@ -327,7 +327,7 @@ class WebSocketService {
             if (window.electronAPI && settings.shouldNotify()) {
                 window.electronAPI.showNotification(msg.senderName, msg.content)
             }
-            if (settings.soundEnabled) playMessageSound()
+            if (settings.ready && settings.soundEnabled) playMessageSound()
         }
     }
 
@@ -341,6 +341,8 @@ class WebSocketService {
         // Resolve pending ACK promise
         const pending = this.pendingAcks.get(clientMsgId)
         if (pending) {
+            const settings = useSettingsStore()
+            if (settings.ready && settings.soundEnabled) playSendSound()
             clearTimeout(pending.timeout)
             pending.resolve({ serverMsgId, chatId, sequenceNumber })
             this.pendingAcks.delete(clientMsgId)
@@ -373,6 +375,8 @@ class WebSocketService {
 
         const pending = this.pendingAcks.get(clientMsgId)
         if (pending) {
+            const settings = useSettingsStore()
+            if (settings.ready && settings.soundEnabled) playErrorSound()
             clearTimeout(pending.timeout)
             pending.reject(new Error(error))
             this.pendingAcks.delete(clientMsgId)
@@ -466,6 +470,8 @@ class WebSocketService {
         const { chatId, error } = data.payload || {}
         console.error('WebSocket error:', error, 'chatId:', chatId)
         if (chatId) {
+            const settings = useSettingsStore()
+            if (settings.ready && settings.soundEnabled) playErrorSound()
             const messageStore = useMessageStore()
             messageStore.markLastMessageFailed(chatId)
         }

@@ -1,9 +1,8 @@
 /**
  * UI sounds synthesised with the Web Audio API.
  *
- * No audio assets ship with the app, and none are needed: every cue here is two
- * oscillators with a short gain envelope. That keeps the bundle small and lets
- * the timbre stay monochrome, matching the interface.
+ * Cues are driven by actual incoming, acknowledged-send and failed-send events,
+ * plus the explicit preview button. No downloaded audio resource is needed.
  *
  * Browsers refuse to start an AudioContext before a user gesture, so the
  * context is created lazily on the first cue and resumed if suspended.
@@ -15,9 +14,11 @@ function getContext() {
   if (typeof window === 'undefined') return null
   const Ctor = window.AudioContext || window.webkitAudioContext
   if (!Ctor) return null
-  if (!ctx) ctx = new Ctor()
-  if (ctx.state === 'suspended') ctx.resume().catch(() => {})
-  return ctx
+  try {
+    if (!ctx) ctx = new Ctor()
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+    return ctx
+  } catch { return null }
 }
 
 /**
@@ -32,7 +33,7 @@ function getContext() {
  */
 function tone({ from, to, duration = 0.12, gain = 0.05, delay = 0, type = 'sine' }) {
   const audio = getContext()
-  if (!audio) return false
+  if (!audio || audio.state === 'closed') return false
 
   const start = audio.currentTime + delay
   const osc = audio.createOscillator()
@@ -50,6 +51,7 @@ function tone({ from, to, duration = 0.12, gain = 0.05, delay = 0, type = 'sine'
   env.connect(audio.destination)
   osc.start(start)
   osc.stop(start + duration + 0.02)
+  osc.onended = () => { osc.disconnect(); env.disconnect() }
   return true
 }
 
@@ -59,26 +61,19 @@ export function playMessageSound() {
   tone({ from: 1318, to: 1318, duration: 0.12, delay: 0.09, gain: 0.035 })
 }
 
-/** One short blip — the user sent something. */
-export function playSendSound() {
-  tone({ from: 660, to: 880, duration: 0.08, gain: 0.04 })
-}
-
-/** Two falling notes — something failed. */
-export function playErrorSound() {
-  tone({ from: 440, to: 330, duration: 0.12, gain: 0.05 })
-  tone({ from: 330, to: 220, duration: 0.16, delay: 0.1, gain: 0.04 })
-}
+/** Played only after the server acknowledges a sent message. */
+export function playSendSound() { return tone({ from: 660, to: 880, duration: 0.08, gain: 0.025 }) }
+/** Played for an actual failed send, never for a scripted/demo response. */
+export function playErrorSound() { return tone({ from: 440, to: 220, duration: 0.16, gain: 0.035 }) }
 
 /** Whether the platform can play synthesised audio at all. */
 export function isSoundSupported() {
   return typeof window !== 'undefined' && !!(window.AudioContext || window.webkitAudioContext)
 }
 
-/** Release the context (used by tests and on teardown). */
 export function disposeAudio() {
-  if (ctx) {
-    ctx.close().catch(() => {})
-    ctx = null
-  }
+  if (ctx) { ctx.close().catch(() => {}); ctx = null }
 }
+
+/** Call during a user gesture so later notification sounds are not blocked by autoplay. */
+export function unlockAudio() { const audio = getContext(); return !!audio && audio.state !== 'closed' }

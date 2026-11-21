@@ -2,9 +2,12 @@
   <!-- Prism settings: companion role + 3D model + motions + model credential.
        Moved out of the floating companion panel so the role has one home. -->
   <div class="role-settings">
-    <div v-if="!activeRole" class="nx-empty">{{ $t('companion.emptyRole') }}</div>
+    <div v-if="panelLoading" class="nx-empty">{{ $t('common.loading') }}</div>
+    <div v-else-if="panelError" class="nx-empty">{{ $t('settings.roleLoadFailed') }} <button type="button" class="role-btn" @click="loadPanel">{{ $t('common.retry') }}</button></div>
+    <div v-else-if="!activeRole" class="nx-empty">{{ $t('companion.emptyRole') }}</div>
 
     <template v-else>
+      <p v-if="libraryError" class="role-help">{{ $t('settings.assetLoadFailed') }}</p>
       <section class="role-section">
         <div class="role-section-head">
           <span class="material-symbols-outlined">badge</span>
@@ -59,7 +62,7 @@
             v-for="model in uploadedModels"
             :key="model.fileUrl"
             class="role-row"
-            :class="{ 'is-active': model.fileUrl === roleModelUrl }"
+            :class="{ 'is-active': model.fileUrl === activeRole.modelUrl }"
             role="button"
             tabindex="0"
             @click="switchModel(model)"
@@ -76,7 +79,7 @@
               @blur="confirmRenameModel(model)"
             />
             <span v-else class="role-row-name" @dblclick.stop="startRenameModel(model)">{{ model.fileName }}</span>
-            <span v-if="model.fileUrl === roleModelUrl" class="role-chip">{{ $t('companion.modelInUse') }}</span>
+            <span v-if="model.fileUrl === activeRole.modelUrl" class="role-chip">{{ $t('companion.modelInUse') }}</span>
           </div>
         </div>
       </section>
@@ -118,7 +121,7 @@
             </span>
             <span v-if="motion.key === activeMotionKey" class="role-chip">{{ $t('companion.motionInUse') }}</span>
             <button
-              v-if="motion.uploaded"
+              v-if="motion.owned"
               class="role-row-remove"
               type="button"
               :title="$t('companion.delete')"
@@ -144,18 +147,20 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
-import { companionAPI } from '@/services/api'
+import { useSettingsStore } from '@/stores/settings'
+import { userAPI, companionAPI } from '@/services/api'
 import ModelSettingsPanel from './ModelSettingsPanel.vue'
 
 const { t } = useI18n()
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
+const settings = useSettingsStore()
 const { roles, activeRoleId, activeRole } = storeToRefs(companionStore)
 
 const roleModelUrl = ref('')
@@ -163,21 +168,45 @@ const roleModelType = ref('vrm')
 const modelPanelOpen = ref(false)
 const localMotions = ref([])
 const uploadedModels = ref([])
-const activeMotionKey = ref('walk')
+// The pet's motion is remembered in the user's settings ('' = its default walk).
+const activeMotionKey = computed(() => settings.petMotion || 'walk')
 const renamingModelUrl = ref(null)
 const renamingMotionKey = ref(null)
 const renamingValue = ref('')
 const modelFileInput = ref(null)
 const motionFileInput = ref(null)
 
+const panelLoading = ref(true)
+const panelError = ref(false)
+const libraryError = ref(false)
+let panelDisposed = false
 const userId = () => userStore.currentUser?.id
+const context = () => ({ owner: userId(), session: userStore.token, roleId: activeRoleId.value })
+const current = (ctx, bound = false) => !!ctx?.owner && !!ctx.session && !panelDisposed && userId() === ctx.owner &&
+  userStore.token === ctx.session && (!bound || activeRoleId.value === ctx.roleId)
 
-onMounted(async () => {
-  if (!userId()) return
-  await companionStore.ensureInitialized(userId())
-  await Promise.all([loadMotions(), loadModels()])
-  syncRoleModel()
-})
+
+async function loadPanel() {
+  const owner = userId()
+  if (!owner) return
+  panelLoading.value = true
+  panelError.value = false
+  libraryError.value = false
+  try {
+    await companionStore.ensureInitialized(owner)
+    const response = await companionAPI.getRoles(owner)
+    if (panelDisposed || userId() !== owner) return
+    if (!Array.isArray(response.data)) throw new Error('Invalid role response')
+    roles.value = response.data // server data, not stale local model overrides
+    companionStore.rolesOwnerId = owner
+    await Promise.all([loadMotions(), loadModels()])
+    syncRoleModel()
+  } catch {
+    if (!panelDisposed && userId() === owner) panelError.value = true
+  } finally { panelLoading.value = false }
+}
+onMounted(loadPanel)
+onBeforeUnmount(() => { panelDisposed = true })
 
 watch(activeRole, syncRoleModel)
 
@@ -188,45 +217,63 @@ function syncRoleModel() {
   roleModelType.value = role.modelType || 'vrm'
 }
 
-async function loadMotions() {
+async function loadMotions(ctx = context()) {
   try {
-    const response = await companionAPI.getMotionAssets()
-    localMotions.value = Array.isArray(response.data?.motions) ? response.data.motions : []
+    const response = await userAPI.getSettingMotions(ctx)
+    if (!current(ctx)) return
+    if (!Array.isArray(response.data?.motions)) throw new Error('Invalid motion library response')
+    localMotions.value = response.data.motions
   } catch (error) {
-    console.error('Fetch motion assets failed:', error)
+    if (current(ctx)) libraryError.value = true
   }
 }
 
-async function loadModels() {
+async function loadModels(ctx = context()) {
   try {
-    const response = await companionAPI.getModelAssets()
-    uploadedModels.value = Array.isArray(response.data) ? response.data : []
+    const response = await userAPI.getSettingModels(ctx)
+    if (!current(ctx)) return
+    if (!Array.isArray(response.data)) throw new Error('Invalid model library response')
+    uploadedModels.value = response.data
   } catch (error) {
-    console.error('Fetch model assets failed:', error)
+    if (current(ctx)) libraryError.value = true
   }
 }
 
 // applyRoleModel persists the role's model and keeps the local role list in sync,
 // so the on-screen widget picks the new model up without a reload.
-async function applyRoleModel(payload) {
-  const roleId = activeRoleId.value
-  const updated = await companionStore.updateRole(userId(), roleId, payload)
+async function applyRoleModel(payload, ctx = context()) {
+  if (!current(ctx, true)) throw new Error('Account or role changed')
+  const { roleId, owner, session } = ctx
+  if (!owner || !roleId) throw new Error('No active role')
+  const response = await companionAPI.updateRole(roleId, owner, payload)
+  const updated = response.data
+  if (!current(ctx, true) || !updated || updated.id !== roleId || updated.modelUrl !== payload.modelUrl) {
+    throw new Error('Model binding was not confirmed')
+  }
   const index = roles.value.findIndex((r) => r.id === roleId)
-  if (index < 0) return
-  roles.value.splice(index, 1, updated || { ...roles.value[index], ...payload })
+  if (index < 0) throw new Error('Role no longer available')
+  roles.value.splice(index, 1, updated)
+
 }
 
 async function saveRoleModel() {
+  const ctx = context()
+  if (!current(ctx)) return
   const url = roleModelUrl.value.trim()
   if (!url) {
     ElMessage.error(t('companion.modelUrlRequired'))
     return
   }
-  await applyRoleModel({ modelUrl: url, modelType: roleModelType.value || 'vrm' })
-  ElMessage.success(t('companion.modelSaved'))
+  try {
+    await applyRoleModel({ modelUrl: url, modelType: roleModelType.value || 'vrm' }, ctx)
+    if (!current(ctx, true)) return
+    ElMessage.success(t('companion.modelSaved'))
+  } catch { ElMessage.error(t('companion.modelSaveFailed')) }
 }
 
 async function onModelFile(event) {
+  const ctx = context()
+  if (!current(ctx)) return
   const file = event.target.files?.[0]
   event.target.value = ''
   if (!file) return
@@ -234,60 +281,65 @@ async function onModelFile(event) {
     ElMessage.error(t('companion.modelFileInvalid'))
     return
   }
-  const existing = uploadedModels.value.find((m) => m.fileName === file.name)
-  if (existing) {
-    await switchModel(existing)
-    ElMessage.success(t('companion.modelAlreadyExists'))
-    return
-  }
   try {
-    const upload = await companionAPI.uploadModelAsset(file)
+    const upload = await userAPI.uploadSettingAsset('model', file, ctx)
+    if (!current(ctx, true)) return
     const fileUrl = upload.data?.fileUrl
     if (!fileUrl) throw new Error('Missing fileUrl')
-    await applyRoleModel({ modelUrl: fileUrl, modelType: 'vrm' })
+    await applyRoleModel({ modelUrl: fileUrl, modelType: 'vrm' }, ctx)
+    if (!current(ctx, true)) return
     roleModelUrl.value = fileUrl
     roleModelType.value = 'vrm'
-    await loadModels()
+    await loadModels(ctx)
+    if (!current(ctx)) return
     ElMessage.success(t('companion.modelFileApplied'))
   } catch (error) {
-    console.error('Model upload failed:', error)
-    ElMessage.error(t('companion.modelSaveFailed'))
+    if (current(ctx)) ElMessage.error(t('companion.modelSaveFailed'))
   }
 }
 
 async function switchModel(model) {
-  if (!model?.fileUrl || model.fileUrl === roleModelUrl.value) return
-  await applyRoleModel({ modelUrl: model.fileUrl, modelType: 'vrm' })
-  roleModelUrl.value = model.fileUrl
-  roleModelType.value = 'vrm'
-  ElMessage.success(t('companion.modelSwitched'))
+  const ctx = context()
+  if (!current(ctx)) return
+  if (!model?.fileUrl || model.fileUrl === activeRole.value?.modelUrl) return
+  try {
+    await applyRoleModel({ modelUrl: model.fileUrl, modelType: 'vrm' }, ctx)
+    if (!current(ctx, true)) return
+    roleModelUrl.value = model.fileUrl
+    roleModelType.value = 'vrm'
+    ElMessage.success(t('companion.modelSwitched'))
+  } catch { ElMessage.error(t('companion.modelSaveFailed')) }
 }
 
 function startRenameModel(model) {
+  if (!model.owned) return
   renamingModelUrl.value = model.fileUrl
   renamingValue.value = model.fileName.replace(/\.vrm$/i, '')
 }
 
 async function confirmRenameModel(model) {
+  const ctx = context()
+  if (!current(ctx)) return
   const raw = renamingValue.value.trim()
   renamingModelUrl.value = null
   if (!raw || raw === model.fileName.replace(/\.vrm$/i, '')) return
   const nextName = raw.endsWith('.vrm') ? raw : `${raw}.vrm`
   try {
-    const response = await companionAPI.renameModelAsset(model.fileName, nextName)
-    if (model.fileUrl === roleModelUrl.value && response.data?.newFileUrl) {
-      await applyRoleModel({ modelUrl: response.data.newFileUrl, modelType: 'vrm' })
-      roleModelUrl.value = response.data.newFileUrl
-    }
-    await loadModels()
+    const response = await userAPI.renameSettingAsset('model', model.id, nextName, ctx)
+    if (!current(ctx)) return
+    // Display-name edits keep the stable fileUrl; existing role bindings need no rewrite.
+    if (!response.data?.fileUrl) throw new Error('Invalid asset rename response')
+    await loadModels(ctx)
+    if (!current(ctx)) return
     ElMessage.success(t('companion.modelRenamed'))
   } catch (error) {
-    console.error('Rename model failed:', error)
-    ElMessage.error(t('companion.renameFailed'))
+    if (current(ctx)) ElMessage.error(t('companion.renameFailed'))
   }
 }
 
 async function onMotionFile(event) {
+  const ctx = context()
+  if (!current(ctx)) return
   const file = event.target.files?.[0]
   event.target.value = ''
   if (!file) return
@@ -296,43 +348,52 @@ async function onMotionFile(event) {
     return
   }
   try {
-    await companionAPI.uploadMotionAsset(file)
-    await loadMotions()
+    await userAPI.uploadSettingAsset('motion', file, ctx)
+    if (!current(ctx)) return
+    await loadMotions(ctx)
+    if (!current(ctx)) return
     window.dispatchEvent(new CustomEvent('companion:motions-updated'))
     ElMessage.success(t('companion.motionAdded'))
   } catch (error) {
-    console.error('Motion upload failed:', error)
-    ElMessage.error(t('companion.motionUploadFailed'))
+    if (current(ctx)) ElMessage.error(t('companion.motionUploadFailed'))
   }
 }
 
 function switchMotion(motion) {
-  if (!motion?.key) return
-  activeMotionKey.value = motion.key
+  if (!motion?.key || !settings.ready || settings.busy) return
+  // Saved first: the pet may be switched off right now, in which case nobody
+  // hears the event and the choice applies when it is next shown.
+  settings.petMotion = motion.key === 'walk' ? '' : motion.key
   window.dispatchEvent(new CustomEvent('companion:switch-motion', { detail: { key: motion.key } }))
 }
 
 function startRenameMotion(motion) {
+  if (!motion.owned) return
   renamingMotionKey.value = motion.key
   renamingValue.value = motion.label || motion.labelEn || motion.key
 }
 
 async function confirmRenameMotion(motion) {
+  const ctx = context()
+  if (!current(ctx)) return
   const raw = renamingValue.value.trim()
   renamingMotionKey.value = null
   if (!raw || raw === (motion.label || motion.labelEn || motion.key)) return
   try {
-    await companionAPI.renameMotionAsset(motion.key, raw)
-    await loadMotions()
+    await userAPI.renameSettingAsset('motion', motion.id, raw, ctx)
+    if (!current(ctx)) return
+    await loadMotions(ctx)
+    if (!current(ctx)) return
     window.dispatchEvent(new CustomEvent('companion:motions-updated'))
     ElMessage.success(t('companion.motionRenamed'))
   } catch (error) {
-    console.error('Rename motion failed:', error)
-    ElMessage.error(t('companion.renameFailed'))
+    if (current(ctx)) ElMessage.error(t('companion.renameFailed'))
   }
 }
 
 async function removeMotion(motion) {
+  const ctx = context()
+  if (!current(ctx)) return
   try {
     await ElMessageBox.confirm(
       t('companion.motionDeleteConfirm', { name: motion.label || motion.key }),
@@ -343,13 +404,16 @@ async function removeMotion(motion) {
     return
   }
   try {
-    await companionAPI.deleteMotionAsset(motion.key)
-    await loadMotions()
+    if (!current(ctx)) return
+    await userAPI.deleteSettingMotion(motion.id, ctx)
+    if (!current(ctx)) return
+    if (settings.petMotion === motion.key) settings.petMotion = ''
+    await loadMotions(ctx)
+    if (!current(ctx)) return
     window.dispatchEvent(new CustomEvent('companion:motions-updated'))
     ElMessage.success(t('companion.motionRemoved'))
   } catch (error) {
-    console.error('Remove motion failed:', error)
-    ElMessage.error(t('companion.motionRemoveFailed'))
+    if (current(ctx)) ElMessage.error(t('companion.motionRemoveFailed'))
   }
 }
 

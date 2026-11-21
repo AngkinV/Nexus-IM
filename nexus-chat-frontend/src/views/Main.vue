@@ -35,7 +35,7 @@
     <!-- Desktop pet. v-if, not v-show: turning it off must release the WebGL
          context and the loaded VRM, not just hide them. -->
     <CompanionAvatar3D
-      v-if="companionStore.petVisible && activeView !== 'companion'"
+      v-if="settings.ready && userStore.isLoggedIn && String(companionStore.rolesOwnerId) === String(userStore.currentUser.id) && settings.petVisible && activeView !== 'companion'"
       :active-role="companionStore.activeRole"
       :status="companionStore.status"
       :growth="companionStore.growth"
@@ -86,6 +86,7 @@ import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
 import { useCallStore, CallStatus } from '@/stores/call'
 import { useCompanionStore } from '@/stores/companion'
+import { useSettingsStore } from '@/stores/settings'
 import { AI_ASSISTANT_CHAT_ID, useAgentStore } from '@/stores/agent'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -98,6 +99,7 @@ const chatStore = useChatStore()
 const messageStore = useMessageStore()
 const callStore = useCallStore()
 const companionStore = useCompanionStore()
+const settings = useSettingsStore()
 const agentStore = useAgentStore()
 const tavernEntrance = useTavernEntrance()
 const { t } = useI18n()

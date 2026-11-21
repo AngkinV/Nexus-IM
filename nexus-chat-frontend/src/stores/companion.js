@@ -34,6 +34,7 @@ function modelFailure(data, headers, status) {
 
 export const useCompanionStore = defineStore('companion', () => {
     const roles = ref([])
+    const rolesOwnerId = ref(null)
     const activeRoleId = ref(null)
     const messages = ref([])
     const memories = ref([])
@@ -86,13 +87,8 @@ export const useCompanionStore = defineStore('companion', () => {
     // Off is the default — new users, and anyone who never touched the switch,
     // get no model loaded. Only an explicit "true" turns it on, so turning it
     // off and coming back later stays off.
-    const PET_VISIBLE_KEY = 'companion.petVisible'
-    const petVisible = ref(localStorage.getItem(PET_VISIBLE_KEY) === 'true')
-
-    const setPetVisible = (visible) => {
-        petVisible.value = !!visible
-        localStorage.setItem(PET_VISIBLE_KEY, String(petVisible.value))
-    }
+    // Desktop-pet visibility is owned by the per-account settings store.
+    // No second machine-wide persisted value is kept here.
 
     const conversationRoles = computed(() => roles.value.filter(r => !r.conversationHidden))
     const activeRole = computed(() => {
@@ -102,36 +98,8 @@ export const useCompanionStore = defineStore('companion', () => {
     /** True while the character on screen has a send in flight. */
     const isSending = computed(() => sendingRoleIds.value.includes(activeRoleId.value))
 
-    const getLocalModelOverrides = () => {
-        try {
-            return JSON.parse(localStorage.getItem('companionModelOverrides') || '{}')
-        } catch (e) {
-            return {}
-        }
-    }
-
-    const applyLocalOverrides = (list) => {
-        const overrides = getLocalModelOverrides()
-        if (!Array.isArray(list) || !Object.keys(overrides).length) return list
-
-        // Purge stale asset:// overrides (legacy IndexedDB references)
-        let dirty = false
-        for (const key of Object.keys(overrides)) {
-            if (overrides[key]?.modelUrl?.startsWith('asset://')) {
-                delete overrides[key]
-                dirty = true
-            }
-        }
-        if (dirty) {
-            localStorage.setItem('companionModelOverrides', JSON.stringify(overrides))
-        }
-        if (!Object.keys(overrides).length) return list
-
-        return list.map(role => {
-            const local = overrides[role.id]
-            return local ? { ...role, ...local } : role
-        })
-    }
+    // Server role bindings are the only model source. Legacy local overrides
+    // remain inert; no init/refresh/update path merges them into real data.
 
     const ensureInitialized = async (userId) => {
         if (!userId) return
@@ -153,7 +121,9 @@ export const useCompanionStore = defineStore('companion', () => {
         try {
             const response = await companionAPI.initRoles(userId)
             if (epoch !== historyEpoch || clearingRoleIds.value.length || openingRoleIds.value.length) return
-            roles.value = applyLocalOverrides(response.data || [])
+            if (!Array.isArray(response.data)) throw new Error('Invalid role list response')
+            roles.value = response.data
+            rolesOwnerId.value = userId
             if (activeRoleId.value && !activeRole.value) await setActiveRole(userId, null)
         } catch (error) {
             console.error('Init companion roles failed:', error)
@@ -168,7 +138,9 @@ export const useCompanionStore = defineStore('companion', () => {
         try {
             const response = await companionAPI.getRoles(userId)
             if (epoch !== historyEpoch || clearingRoleIds.value.length || openingRoleIds.value.length) return
-            roles.value = applyLocalOverrides(response.data || [])
+            if (!Array.isArray(response.data)) throw new Error('Invalid role list response')
+            roles.value = response.data
+            rolesOwnerId.value = userId
             if (activeRoleId.value && !activeRole.value) await setActiveRole(userId, null)
         } catch (error) {
             console.error('Fetch companion roles failed:', error)
@@ -206,11 +178,7 @@ export const useCompanionStore = defineStore('companion', () => {
         const response = await companionAPI.updateRole(roleId, userId, data)
         const updated = response.data
         const idx = roles.value.findIndex(r => r.id === roleId)
-        if (idx >= 0 && updated) {
-            const overrides = getLocalModelOverrides()
-            const local = overrides[roleId]
-            roles.value[idx] = local ? { ...updated, ...local } : updated
-        }
+        if (idx >= 0 && updated) roles.value[idx] = updated
         return updated
     }
 
@@ -855,6 +823,7 @@ export const useCompanionStore = defineStore('companion', () => {
 
     return {
         roles,
+        rolesOwnerId,
         conversationRoles,
         activeRoleId,
         activeRole,
@@ -872,8 +841,6 @@ export const useCompanionStore = defineStore('companion', () => {
         speaking,
         liveState,
         lastContext,
-        petVisible,
-        setPetVisible,
         ensureInitialized,
         initRoles,
         fetchRoles,

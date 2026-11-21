@@ -8,38 +8,63 @@
 </template>
 
 <script setup>
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 import { useUserStore } from '@/stores/user'
+import { useChatStore } from '@/stores/chat'
+import { useSettingsStore } from '@/stores/settings'
+import { unlockAudio, disposeAudio } from '@/utils/uiSound'
 import ConnectionBanner from '@/components/common/ConnectionBanner.vue'
 
 const userStore = useUserStore()
+const chatStore = useChatStore()
+const settings = useSettingsStore()
 const { locale } = useI18n()
+
+// Dock / taskbar badge. It lives at the app root, not on the settings screen:
+// unread counts change while the user is anywhere in the app, and signing out
+// has to clear it.
+watch(
+  [() => chatStore.totalUnreadCount, () => settings.badgeEnabled, () => userStore.isLoggedIn],
+  ([total, enabled, loggedIn]) => {
+    if (!window.electronAPI?.setBadge) return
+    const count = loggedIn && enabled ? Math.max(0, Math.floor(Number(total)) || 0) : 0
+    Promise.resolve(window.electronAPI.setBadge(count)).catch(() => {})
+  },
+  { immediate: true }
+)
 
 // Element Plus ships its own copy (table "No Data", dialog close labels, …).
 // Keep it in step with the app language so no stray English leaks through.
 const elementLocale = computed(() => (locale.value === 'zh' ? zhCn : en))
 
-// Keep <html lang> and the persisted preference in step with the active locale,
-// so the document declares the language it is actually rendering (screen
-// readers, hyphenation, and the Electron title bar all read this).
-watch(
-  locale,
-  (next) => {
-    document.documentElement.lang = next === 'zh' ? 'zh-CN' : 'en'
-    localStorage.setItem('locale', next)
-  },
-  { immediate: true }
-)
+// Settings are the per-account authority for the language. The global locale
+// key is only a login-screen hint, never a source for another account's bucket.
+watch(() => settings.locale, (next) => { locale.value = next }, { immediate: true })
+watch(locale, (next) => {
+  document.documentElement.lang = next === 'zh' ? 'zh-CN' : 'en'
+  localStorage.setItem('locale', next)
+  if (window.electronAPI?.setMenuLocale) {
+    Promise.resolve(window.electronAPI.setMenuLocale(next)).catch(() => {})
+  }
+}, { immediate: true })
 
+const onAudioGesture = () => { if (userStore.isLoggedIn && settings.soundEnabled) unlockAudio() }
 onMounted(() => {
+  window.addEventListener('pointerdown', onAudioGesture, { passive: true })
+  window.addEventListener('keydown', onAudioGesture)
   // Check if user is logged in
   const token = localStorage.getItem('token')
   if (token) {
     userStore.loadUserFromStorage()
   }
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', onAudioGesture)
+  window.removeEventListener('keydown', onAudioGesture)
+  disposeAudio()
 })
 </script>
 
