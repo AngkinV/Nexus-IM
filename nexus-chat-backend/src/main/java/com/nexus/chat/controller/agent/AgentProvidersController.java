@@ -1,5 +1,6 @@
 package com.nexus.chat.controller.agent;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nexus.chat.dto.agent.AgentCommonResponse;
 import com.nexus.chat.dto.agent.AgentProviderDtos;
 import com.nexus.chat.exception.agent.AgentErrorCode;
@@ -66,6 +67,13 @@ public class AgentProvidersController {
     ) {
         Long userId = requireUserId(httpRequest);
         return ResponseEntity.ok(AgentCommonResponse.ok(ensureRequestId(httpRequest), providerService.setDefault(userId, id)));
+    }
+
+    @GetMapping("/{id}/models")
+    public ResponseEntity<AgentCommonResponse<ObjectNode>> models(
+            @PathVariable Long id, HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(AgentCommonResponse.ok(ensureRequestId(httpRequest),
+                providerService.catalog(requireUserId(httpRequest), id)));
     }
 
     @PostMapping("/{id}/test")

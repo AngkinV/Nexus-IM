@@ -8,6 +8,7 @@ public enum AgentErrorCode {
     AGENT_AUTH_40101(HttpStatus.UNAUTHORIZED, "JWT invalid or expired"),
     AGENT_AUTHZ_40301(HttpStatus.FORBIDDEN, "No permission for this chat"),
     AGENT_PARAM_40001(HttpStatus.BAD_REQUEST, "Parameter validation failed"),
+    AGENT_DOCUMENT_42202(HttpStatus.UNPROCESSABLE_ENTITY, "The document request was refused"),
     AGENT_SESSION_40401(HttpStatus.NOT_FOUND, "Session not found"),
     AGENT_KB_40402(HttpStatus.NOT_FOUND, "Knowledge base not found"),
     AGENT_KB_DOC_40403(HttpStatus.NOT_FOUND, "Knowledge document not found"),

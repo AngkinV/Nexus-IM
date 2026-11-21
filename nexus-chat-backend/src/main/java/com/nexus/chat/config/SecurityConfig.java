@@ -51,7 +51,7 @@ public class SecurityConfig {
                 .requestMatchers("/models/**", "/motions/**").permitAll() // 3D assets
                 .requestMatchers("/apk/**").permitAll() // APK 下载
                 .requestMatchers("/api/app/**").permitAll() // 版本检查
-                .requestMatchers("/internal/agent/**").permitAll() // Python Agent <-> Java internal API（控制器内做 Bearer token 校验）
+                .requestMatchers("/internal/agent/**").permitAll() // Python Agent <-> Java internal API（Bearer token 校验：publish 在控制器内，MCP 在 AgentInternalTokenFilter）
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

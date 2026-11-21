@@ -12,19 +12,13 @@ import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -184,51 +178,7 @@ public class KnowledgeGatewayService {
 
     private HttpHeaders buildInternalHeaders(Long actorUserId, String traceId, String bodyJson,
                                              AgentProviderService.ResolvedProvider provider) throws Exception {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        String timestamp = String.valueOf(System.currentTimeMillis());
-        String nonce = UUID.randomUUID().toString();
-        String bodyHash = sha256Hex(bodyJson);
-
-        StringBuilder providerSig = new StringBuilder();
-        if (provider != null) {
-            String safeBaseUrl = provider.baseUrl() == null ? "" : provider.baseUrl();
-            String safeModel = provider.defaultModel() == null ? "" : provider.defaultModel();
-            String apiKeyB64 = provider.apiKeyPlain() == null
-                    ? ""
-                    : Base64.getEncoder().encodeToString(provider.apiKeyPlain().getBytes(StandardCharsets.UTF_8));
-            headers.set("X-Model-Provider", provider.provider());
-            headers.set("X-Model-Base-URL", safeBaseUrl);
-            headers.set("X-Model-Name", safeModel);
-            headers.set("X-Model-Api-Key", apiKeyB64);
-            providerSig.append(".").append(sha256Hex(provider.provider() + "|" + safeBaseUrl + "|" + safeModel + "|" + apiKeyB64));
-        }
-
-        String signature = hmacSha256Hex(signingSecret, timestamp + "." + nonce + "." + bodyHash + providerSig);
-        headers.set("X-Internal-Service", "nexus-chat-backend");
-        headers.set("X-Internal-Timestamp", timestamp);
-        headers.set("X-Internal-Nonce", nonce);
-        headers.set("X-Internal-Signature", signature);
-        headers.set("X-Trace-Id", traceId);
-        headers.set("X-Actor-User-Id", String.valueOf(actorUserId));
-        return headers;
-    }
-
-    private static String sha256Hex(String content) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hash = digest.digest(content.getBytes(StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) sb.append(String.format("%02x", b));
-        return sb.toString();
-    }
-
-    private static String hmacSha256Hex(String secret, String content) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-        byte[] hash = mac.doFinal(content.getBytes(StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) sb.append(String.format("%02x", b));
-        return sb.toString();
+        return InternalRequestSigner.headers(signingSecret, actorUserId, traceId, bodyJson, provider);
     }
 
     // -------- DTOs --------
