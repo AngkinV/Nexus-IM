@@ -101,17 +101,16 @@ public class CompanionService {
             presence.put(status.getRoleId(), status.getSummary());
         }
         // The row preview: the newest line per character, one query for the list.
-        Map<Long, String> lastLine = new HashMap<>();
+        // The message itself is kept, so the line and its sender are one row's.
+        Map<Long, CompanionMessage> lastMessage = new HashMap<>();
         for (CompanionMessage msg : messageRepository.findLatestPerRole(userId)) {
-            if (msg.getContent() != null && !msg.getContent().isBlank()) {
-                lastLine.put(msg.getRoleId(), msg.getContent());
-            }
+            lastMessage.put(msg.getRoleId(), msg);
         }
 
         List<CompanionRoleDTO> result = new ArrayList<>(roles.size());
         for (CompanionRole role : roles) {
             result.add(toRoleDTO(role, lastAt.get(role.getId()), presence.get(role.getId()),
-                    lastLine.get(role.getId())));
+                    lastMessage.get(role.getId())));
         }
         return result;
     }
@@ -851,6 +850,10 @@ public class CompanionService {
         return statusRepository.findByUserIdAndRoleId(userId, roleId).map(this::toStatusDTO).orElse(null);
     }
 
+    /**
+     * One character on its own — after an edit or an invitation. Carries what a
+     * list row carries, so putting it in place of that row loses nothing.
+     */
     public CompanionRoleDTO toRoleDTO(CompanionRole role) {
         LocalDateTime lastMessageAt = conversationRepository
                 .findByUserIdAndRoleId(role.getUserId(), role.getId())
@@ -860,17 +863,17 @@ public class CompanionService {
                 .findByUserIdAndRoleId(role.getUserId(), role.getId())
                 .map(CompanionStatus::getSummary)
                 .orElse(null);
-        return toRoleDTO(role, lastMessageAt, presence, null);
+        return toRoleDTO(role, lastMessageAt, presence,
+                messageRepository.findLatestForRole(role.getUserId(), role.getId()).orElse(null));
     }
 
-    /** Bulk-aware variant — no per-row queries. */
-    public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence) {
-        return toRoleDTO(role, lastMessageAt, presence, null);
-    }
-
-    /** Bulk-aware variant carrying the row's conversation preview. */
+    /**
+     * Bulk-aware variant — no per-row queries. The preview line and its sender
+     * are both read off {@code lastMessage}, so they always describe the same
+     * message; null means nothing has been said yet.
+     */
     public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence,
-                                      String lastMessage) {
+                                      CompanionMessage lastMessage) {
         return new CompanionRoleDTO(
                 role.getId(),
                 role.getName(),
@@ -884,7 +887,10 @@ public class CompanionService {
                 role.getKind() == null ? CompanionRole.Kind.regular.name() : role.getKind().name(),
                 lastMessageAt,
                 presence,
-                lastMessage,
+                lastMessage == null ? null : lastMessage.getContent(),
+                // A message that names no sender stays unattributed; the list must not guess one.
+                lastMessage == null || lastMessage.getSenderType() == null
+                        ? null : lastMessage.getSenderType().name(),
                 role.getBackground(),
                 role.getGreeting(),
                 role.isConversationHidden()

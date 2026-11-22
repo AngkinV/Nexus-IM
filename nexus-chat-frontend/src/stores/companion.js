@@ -32,6 +32,21 @@ function modelFailure(data, headers, status) {
         ? { ...error, retryAfterSeconds: Math.max(0, Number(seconds)) } : error
 }
 
+/**
+ * A role handed back on its own (after an edit), about to replace its list row.
+ * A server that predates lastMessageSender answers without the preview line at
+ * all, and putting that in place blanked the row until the next list read. Only
+ * then — no sender field, no line, the same visible conversation and exchange time —
+ * the row keeps the line it already knew, with the sender that came with that
+ * same line. An answer carrying its own line is taken whole: its sender is what
+ * the server said, or unknown, never borrowed from the row it replaces.
+ */
+export function withKnownPreview(row, updated) {
+    if ('lastMessageSender' in updated || updated.lastMessage || !updated.lastMessageAt || !row.lastMessage ||
+        row.id !== updated.id || row.lastMessageAt !== updated.lastMessageAt || updated.conversationHidden) return updated
+    return { ...updated, lastMessage: row.lastMessage, lastMessageSender: row.lastMessageSender ?? null }
+}
+
 export const useCompanionStore = defineStore('companion', () => {
     const roles = ref([])
     const rolesOwnerId = ref(null)
@@ -178,7 +193,7 @@ export const useCompanionStore = defineStore('companion', () => {
         const response = await companionAPI.updateRole(roleId, userId, data)
         const updated = response.data
         const idx = roles.value.findIndex(r => r.id === roleId)
-        if (idx >= 0 && updated) roles.value[idx] = updated
+        if (idx >= 0 && updated) roles.value[idx] = withKnownPreview(roles.value[idx], updated)
         return updated
     }
 
@@ -249,6 +264,7 @@ export const useCompanionStore = defineStore('companion', () => {
                 // The preview line belongs to the deleted conversation; leaving it
                 // behind would show a sentence from a chat that no longer exists.
                 seat.lastMessage = null
+                seat.lastMessageSender = null
                 seat.presence = null
                 seat.originSessionId = null
                 seat.conversationHidden = true
@@ -331,18 +347,26 @@ export const useCompanionStore = defineStore('companion', () => {
 
     /** Put the server's version of an exchange in place of the optimistic rows. */
     const settleExchange = (roleId, data, ...optimisticIds) => {
-        // The seat list sorts by last exchange and shows what she is doing; both
-        // just changed, whichever character is on screen by now.
+        // The seat list sorts by last exchange and previews its last line, and
+        // the dossier shows what she is doing; all of it just changed, whichever
+        // character is on screen by now.
         const seat = roles.value.find(r => r.id === roleId)
         if (seat && data.roleMessage) {
             seat.conversationHidden = false
             seat.lastMessageAt = data.roleMessage.createdAt
             if (data.status?.summary) seat.presence = data.status.summary
-            // The row's preview line. Without this the list keeps showing the
-            // previous exchange until the roles are re-fetched — the timestamp
-            // moves but the sentence under it does not, which reads as stale.
-            const latest = data.roleMessage.content || data.userMessage?.content
-            if (latest) seat.lastMessage = latest
+            // The row's preview line and who said it. Without this the list keeps
+            // showing the previous exchange until the roles are re-fetched — the
+            // timestamp moves but the sentence under it does not, which reads as
+            // stale. Both are read off one message so they always belong
+            // together: the newest one that says something, as the server picks
+            // it. A message with no senderType (an older server) leaves the
+            // sender unknown rather than keeping whoever spoke before.
+            const latest = [data.roleMessage, data.userMessage].find(m => m?.content?.trim())
+            if (latest) {
+                seat.lastMessage = latest.content
+                seat.lastMessageSender = latest.senderType ?? null
+            }
         }
         if (!isCurrent(roleId)) return
         const serverIds = [data.openingMessage?.id, data.userMessage?.id, data.roleMessage?.id].filter(Boolean)
@@ -392,12 +416,16 @@ export const useCompanionStore = defineStore('companion', () => {
         settleExchange(roleId, result, row.id, live?.id)
         // A failure with no reply at all still stamps the conversation (the
         // server does the same), but the preview must not keep an older sentence
-        // while the timestamp says now — show what the user just sent instead.
+        // while the timestamp says now — show what the user just sent instead,
+        // as the user's line and not under the sender of the sentence it replaces.
         if (!roleMessage) {
             const seat = roles.value.find(r => r.id === roleId)
             if (seat) {
                 seat.lastMessageAt = userMessage.createdAt || new Date().toISOString()
-                if (userMessage.content) seat.lastMessage = userMessage.content
+                if (userMessage.content.trim()) {
+                    seat.lastMessage = userMessage.content
+                    seat.lastMessageSender = userMessage.senderType
+                }
             }
         }
         return result

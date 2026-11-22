@@ -348,3 +348,151 @@ test('a rate-limited line carries the wait the backend gave, and none otherwise'
   await store.sendMessageStream(7, 1, 'b', null, 'free')
   assert.equal(store.messages.find(m => m.clientMsgId === 'free').retryAt, null)
 })
+
+// ── The seat list's preview line ─────────────────────────────────────────────
+// The list shows the last line and reads it according to who said it, so the two
+// must always be written together, from one message.
+const streamed = body => new Response(body, { headers: { 'Content-Type': 'text/event-stream' } })
+
+test('a settled exchange moves the preview line and its sender together', async () => {
+  Object.assign(store.roles[0], { lastMessage: 'an older question (1+1)', lastMessageSender: 'user' })
+  api.sendMessage = async () => ({ data: {
+    userMessage: { id: 50, senderType: 'user', content: 'hi' },
+    roleMessage: { id: 51, senderType: 'role', content: '（抬头）来了。', createdAt: '2026-11-22T10:00:00' }
+  } })
+  await store.sendMessage(7, 1, 'hi', null, 'settled')
+  assert.equal(store.roles[0].lastMessage, '（抬头）来了。')
+  assert.equal(store.roles[0].lastMessageSender, 'role')
+  assert.equal(store.roles[0].lastMessageAt, '2026-11-22T10:00:00')
+
+  // A reply that says nothing is passed over for the line that does, as on the server.
+  api.sendMessage = async () => ({ data: {
+    userMessage: { id: 52, senderType: 'user', content: 'still there? (2*3)' },
+    roleMessage: { id: 53, senderType: 'role', content: '  \n', createdAt: '2026-11-22T10:01:00' }
+  } })
+  await store.sendMessage(7, 1, 'still there? (2*3)', null, 'blank-reply')
+  assert.equal(store.roles[0].lastMessage, 'still there? (2*3)')
+  assert.equal(store.roles[0].lastMessageSender, 'user')
+
+  // A server that does not say who spoke leaves the sender unknown; the previous one is not carried over.
+  api.sendMessage = async () => ({ data: {
+    userMessage: { id: 54, content: 'again' },
+    roleMessage: { id: 55, content: 'reply (a+b)', createdAt: '2026-11-22T10:02:00' }
+  } })
+  await store.sendMessage(7, 1, 'again', null, 'older-server')
+  assert.equal(store.roles[0].lastMessage, 'reply (a+b)')
+  assert.equal(store.roles[0].lastMessageSender, null)
+  // The other seat was never touched.
+  assert.equal(store.roles[1].lastMessage, undefined)
+  assert.equal(store.roles[1].lastMessageSender, undefined)
+})
+
+test('a failed send leaves the row on the half reply as hers, or on the unanswered line as yours', async t => {
+  Object.assign(store.roles[0], { lastMessage: 'earlier line', lastMessageSender: 'user' })
+  let body = frame('delta', '*sighs* half a') + frame('done', {
+    userMessage: { id: 60, senderType: 'user', content: 'q (1+1)' }, modelError: limited, partial: true })
+  t.mock.method(globalThis, 'fetch', async () => streamed(body))
+  const half = await store.sendMessageStream(7, 1, 'q (1+1)', null, 'half')
+  assert.equal(half.partial, true)
+  assert.equal(store.roles[0].lastMessage, '*sighs* half a')
+  assert.equal(store.roles[0].lastMessageSender, 'role')
+
+  // The partial the server stored outranks what was streamed, and is still hers.
+  body = frame('delta', 'streamed') + frame('done', {
+    userMessage: { id: 61, senderType: 'user', content: 'q2' },
+    roleMessage: { id: 62, senderType: 'role', content: '（停住）stored half' }, modelError: limited, partial: true })
+  await store.sendMessageStream(7, 1, 'q2', null, 'stored-half')
+  assert.equal(store.roles[0].lastMessage, '（停住）stored half')
+  assert.equal(store.roles[0].lastMessageSender, 'role')
+
+  // No reply at all: the row shows the line just sent, as the user's — not under the last speaker.
+  body = frame('error', { modelError: limited })
+  const none = await store.sendMessageStream(7, 1, 'f(x) = (a+b)*c', null, 'none')
+  assert.equal(none.partial, false)
+  assert.equal(store.roles[0].lastMessage, 'f(x) = (a+b)*c')
+  assert.equal(store.roles[0].lastMessageSender, 'user')
+
+  // The plain endpoint settles the same way.
+  Object.assign(store.roles[0], { lastMessage: 'hers', lastMessageSender: 'role' })
+  api.sendMessage = async () => ({ data: { modelError: limited } })
+  await store.sendMessage(7, 1, 'plain (x)', null, 'plain-none')
+  assert.equal(store.roles[0].lastMessage, 'plain (x)')
+  assert.equal(store.roles[0].lastMessageSender, 'user')
+})
+
+test('deleting a conversation removes its preview line and sender', async () => {
+  Object.assign(store.roles[0], { lastMessage: '（笑）bye', lastMessageSender: 'role' })
+  await store.clearConversation(7, 1)
+  assert.equal(store.roles[0].lastMessage, null)
+  assert.equal(store.roles[0].lastMessageSender, null)
+  assert.equal(store.roles[0].lastMessageAt, null)
+})
+
+test('a failed deletion keeps the preview line and its sender', async () => {
+  Object.assign(store.roles[0], { lastMessage: '（笑）bye', lastMessageSender: 'role' })
+  api.clearConversation = async () => { throw new Error('database unavailable') }
+  await assert.rejects(store.clearConversation(7, 1))
+  assert.equal(store.roles[0].lastMessage, '（笑）bye')
+  assert.equal(store.roles[0].lastMessageSender, 'role')
+})
+
+test('saving a role keeps what the server returned and neither loses nor misattributes the preview', async () => {
+  const known = { id: 1, name: 'Ann', lastMessageAt: '2026-11-21T09:00:00', lastMessage: '（笑）hello', lastMessageSender: 'role' }
+  const save = async answer => {
+    api.updateRole = async (roleId, userId, data) => {
+      assert.deepEqual([roleId, userId], [1, 7])
+      return { data: { id: 1, name: 'Ann', ...data, ...answer } }
+    }
+    return store.updateRole(7, 1, { greeting: 'new greeting' })
+  }
+
+  // The current server answers with the row itself: it is put in place as returned.
+  store.roles[0] = { ...known }
+  const answered = await save({ lastMessageAt: '2026-11-22T08:00:00', lastMessage: 'newer (a+b)', lastMessageSender: 'user' })
+  assert.deepEqual(store.roles[0], answered)
+  assert.equal(store.roles[0].greeting, 'new greeting')
+  assert.equal(store.roles[0].lastMessage, 'newer (a+b)')
+  assert.equal(store.roles[0].lastMessageSender, 'user')
+
+  // The current server saying "nothing has been said" is believed.
+  store.roles[0] = { ...known }
+  await save({ lastMessageAt: '2026-11-21T09:00:00', lastMessage: null, lastMessageSender: null })
+  assert.equal(store.roles[0].lastMessage, null)
+  assert.equal(store.roles[0].lastMessageSender, null)
+
+  // A server without the sender field answers an edit with no line: the row keeps
+  // the line it knew, with that line's own sender, and still takes the edit.
+  store.roles[0] = { ...known }
+  await save({ lastMessageAt: '2026-11-21T09:00:00', lastMessage: null })
+  assert.equal(store.roles[0].greeting, 'new greeting')
+  assert.equal(store.roles[0].lastMessage, '（笑）hello')
+  assert.equal(store.roles[0].lastMessageSender, 'role')
+  store.roles[0] = { ...known, lastMessageSender: undefined }
+  await save({ lastMessageAt: '2026-11-21T09:00:00' })
+  assert.equal(store.roles[0].lastMessage, '（笑）hello')
+  assert.equal(store.roles[0].lastMessageSender, null)
+
+  // If that server does send a line, it is a line of unknown sender — never the old row's.
+  store.roles[0] = { ...known }
+  await save({ lastMessageAt: '2026-11-22T08:00:00', lastMessage: 'someone said (x)' })
+  assert.equal(store.roles[0].lastMessage, 'someone said (x)')
+  assert.equal(store.roles[0].lastMessageSender, undefined)
+
+  // A different exchange time gives no proof the old line is still the latest.
+  store.roles[0] = { ...known }
+  await save({ lastMessageAt: '2026-11-22T08:00:00', lastMessage: null })
+  assert.equal(store.roles[0].lastMessage, null)
+  assert.equal(store.roles[0].lastMessageSender, undefined)
+
+  // A hidden conversation must not be kept alive by the legacy compatibility path.
+  store.roles[0] = { ...known }
+  await save({ lastMessageAt: known.lastMessageAt, lastMessage: null, conversationHidden: true })
+  assert.equal(store.roles[0].lastMessage, null)
+  assert.equal(store.roles[0].lastMessageSender, undefined)
+
+  // And when it reports no conversation at all, nothing is kept alive.
+  store.roles[0] = { ...known }
+  await save({ lastMessageAt: null, lastMessage: null })
+  assert.equal(store.roles[0].lastMessage, null)
+  assert.equal(store.roles[0].lastMessageSender, undefined)
+})

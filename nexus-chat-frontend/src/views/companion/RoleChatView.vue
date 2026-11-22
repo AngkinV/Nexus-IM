@@ -389,6 +389,9 @@ import ModelSettingsPanel from '@/components/companion/ModelSettingsPanel.vue'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
 import { mountTavernStage, mountTavernMini } from '@/components/companion/tavernStage'
 import { TAVERN_SCENES, findScene, readSceneKey, writeSceneKey } from '@/components/companion/tavernScenes'
+// Narration — （…）, (…) or *…* — is set apart from what is said aloud. The role
+// list previews a line through the same cut.
+import { segmentsOf } from '@/components/companion/roleText'
 
 const emit = defineEmits(['back', 'goAi', 'mood'])
 
@@ -727,21 +730,6 @@ const awaitingFirstWord = computed(() => {
   const last = messages.value[messages.value.length - 1]
   return !(last?.live && last.content)
 })
-
-// Narration — （…）, (…) or *…* — is set apart from what is said aloud.
-const NARRATION = /（[^（）]*）|\([^()]*\)|\*[^*\n]+\*/g
-function segmentsOf(content) {
-  const text = content || ''
-  const out = []
-  let last = 0
-  for (const match of text.matchAll(NARRATION)) {
-    if (match.index > last) out.push({ narration: false, text: text.slice(last, match.index) })
-    out.push({ narration: true, text: match[0] })
-    last = match.index + match[0].length
-  }
-  if (last < text.length) out.push({ narration: false, text: text.slice(last) })
-  return out
-}
 
 // The newest memory fragment, newest first as the server returns them.
 const latestMemory = computed(() => memories.value[0] || null)

@@ -151,7 +151,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useCompanionStore } from '@/stores/companion'
+import { useCompanionStore, withKnownPreview } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
 import { userAPI, companionAPI } from '@/services/api'
@@ -252,7 +252,7 @@ async function applyRoleModel(payload, ctx = context()) {
   }
   const index = roles.value.findIndex((r) => r.id === roleId)
   if (index < 0) throw new Error('Role no longer available')
-  roles.value.splice(index, 1, updated)
+  roles.value.splice(index, 1, withKnownPreview(roles.value[index], updated))
 
 }
 
