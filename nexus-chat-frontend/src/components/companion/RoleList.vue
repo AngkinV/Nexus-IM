@@ -26,9 +26,11 @@
       <button
         class="w-full flex items-center justify-between py-2 px-3 rounded-lg bg-surface-container-low border border-outline-variant/40 text-primary hover:bg-surface-container hover:border-outline-variant transition-all duration-150 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
         type="button"
-        :disabled="inviting"
+        :disabled="inviting || !userStore.currentUser?.id"
         :title="$t('companion.seats.inviteHint')"
-        @click="invite"
+        aria-haspopup="dialog"
+        :aria-expanded="pickerVisible"
+        @click="openInvitePicker"
       >
         <div class="flex items-center gap-2">
           <span class="material-symbols-outlined text-[18px] text-primary">
@@ -103,14 +105,22 @@
             <span v-else class="material-symbols-outlined text-[16px]">person</span>
           </div>
           <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <div
+                class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
+                :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
+              >{{ role.name || $t('companion.defaultName') }}</div>
+              <span
+                v-if="role.lastMessageAt"
+                class="font-code text-[10px] text-on-surface-variant/60 shrink-0 tabular-nums"
+              >{{ formatStamp(role.lastMessageAt) }}</span>
+            </div>
+            <!-- The last line said, the way a chat list row reads. Falls back to
+                 what she is doing when nothing has been said yet. -->
             <div
-              class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
-              :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
-            >{{ role.name || $t('companion.defaultName') }}</div>
-            <div
-              class="font-body-md text-[14px] truncate mt-0.5"
+              class="font-body-md text-[13px] leading-[17px] truncate mt-0.5"
               :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
-            >{{ role.presence || role.tone || $t('companion.defaultStatus') }}</div>
+            >{{ previewOf(role) }}</div>
           </div>
           <span
             v-if="role.id === companionStore.activeRoleId"
@@ -162,14 +172,20 @@
             <span v-else class="material-symbols-outlined text-[16px]">person</span>
           </div>
           <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <div
+                class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
+                :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
+              >{{ role.name || $t('companion.defaultName') }}</div>
+              <span
+                v-if="role.lastMessageAt"
+                class="font-code text-[10px] text-on-surface-variant/60 shrink-0 tabular-nums"
+              >{{ formatStamp(role.lastMessageAt) }}</span>
+            </div>
             <div
-              class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
-              :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
-            >{{ role.name || $t('companion.defaultName') }}</div>
-            <div
-              class="font-body-md text-[14px] truncate mt-0.5"
+              class="font-body-md text-[13px] leading-[17px] truncate mt-0.5"
               :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
-            >{{ role.presence || role.tone || $t('companion.defaultStatus') }}</div>
+            >{{ previewOf(role) }}</div>
           </div>
           <button
             class="role-adopt-btn shrink-0 mt-0.5"
@@ -189,6 +205,81 @@
       :title="$t('companion.seats.invitingTitle')"
       :hint="$t('companion.seats.invitingHint')"
     />
+
+    <!-- Which face walks in. Default is "let the tavern choose" — the room
+         fills without a decision, and the server prefers an unused model. -->
+    <el-dialog
+      v-model="pickerVisible"
+      :title="localT('inviteTitle')"
+      width="min(460px, calc(100vw - 32px))"
+      append-to-body
+      :close-on-click-modal="!inviting"
+      :close-on-press-escape="!inviting"
+      :show-close="!inviting"
+    >
+      <p class="mb-3 text-on-surface-variant text-[13px]">{{ localT('inviteHint') }}</p>
+
+      <div class="flex flex-col gap-2 max-h-[50vh] overflow-y-auto" :aria-busy="pickerLoading">
+        <div v-if="pickerLoading" class="px-3 py-6 flex items-center justify-center gap-2 text-on-surface-variant/70">
+          <span class="role-list-spinner"></span>
+          <span class="font-body-md text-[14px]">{{ localT('loadingModels') }}</span>
+        </div>
+
+        <div v-if="pickerError" class="invite-model-error" role="alert">
+          <span>{{ localT('modelsLoadFailed') }}</span>
+          <el-button :disabled="pickerLoading" @click="openInvitePicker">{{ localT('retry') }}</el-button>
+        </div>
+
+        <template v-if="inviteModels.length || (!pickerLoading && !pickerError)">
+          <!-- No assets is a valid text-only invitation; an I/O failure is not. -->
+          <button
+            class="invite-model-row"
+            :class="{ 'is-active': chosenModelUrl === null }"
+            :aria-pressed="chosenModelUrl === null"
+            :disabled="pickerLoading || !!pickerError"
+            type="button"
+            @click="chosenModelUrl = null"
+          >
+            <span class="material-symbols-outlined text-[18px]">auto_awesome</span>
+            <span class="min-w-0 flex-1 text-left">
+              <span class="block truncate">{{ localT('letTavernChoose') }}</span>
+              <span class="block truncate text-[12px] text-on-surface-variant/70">{{ localT('letTavernChooseHint') }}</span>
+            </span>
+            <span v-if="chosenModelUrl === null" class="material-symbols-outlined text-[16px]">check</span>
+          </button>
+
+          <button
+            v-for="model in inviteModels"
+            :key="model.fileUrl"
+            class="invite-model-row"
+            :class="{ 'is-active': chosenModelUrl === model.fileUrl }"
+            :aria-pressed="chosenModelUrl === model.fileUrl"
+            :disabled="pickerLoading || !!pickerError"
+            type="button"
+            @click="chosenModelUrl = model.fileUrl"
+          >
+            <span class="material-symbols-outlined text-[18px]">view_in_ar</span>
+            <span class="min-w-0 flex-1 text-left">
+              <span class="block truncate">{{ model.fileName }}</span>
+              <span class="block truncate text-[12px] text-on-surface-variant/70">{{ formatModelSize(model.size) }}</span>
+            </span>
+            <span v-if="chosenModelUrl === model.fileUrl" class="material-symbols-outlined text-[16px]">check</span>
+          </button>
+
+          <!-- Nothing uploaded yet: say so instead of showing an empty box. -->
+          <p v-if="!inviteModels.length && !pickerLoading && !pickerError" class="text-on-surface-variant text-[13px] px-1 py-2">
+            {{ localT('noModelsYet') }}
+          </p>
+        </template>
+      </div>
+
+      <template #footer>
+        <el-button :disabled="inviting" @click="pickerVisible = false">{{ localT('cancel') }}</el-button>
+        <el-button type="primary" :loading="inviting" :disabled="!canConfirmInvite" @click="confirmInvite">
+          {{ inviting ? localT('inviting') : localT('inviteAction') }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="restoreDialogVisible"
@@ -245,12 +336,15 @@
 </template>
 
 <script setup>
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import dayjs from 'dayjs'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
+import { useSettingsStore } from '@/stores/settings'
 import { ElButton, ElDialog, ElMessage } from 'element-plus'
 import { readSceneKey } from '@/components/companion/tavernScenes'
+import { useTavernInvite } from '@/composables/useTavernInvite'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
 import ClearConversationButton from '@/components/companion/ClearConversationButton.vue'
 
@@ -267,6 +361,21 @@ const { t: localT } = useI18n({
       startConversation: '开始对话',
       restoring: '正在开启…',
       restoreFailed: '无法重新开启对话，请稍后重试。',
+      noLineYet: '还没有说过话',
+      inviteTitle: '邀请一个人入座',
+      inviteHint: '选择已有的 VRM 建模，或自动选择。建模与设置中的资源共用。',
+      letTavernChoose: '自动选择建模',
+      letTavernChooseHint: '优先选择未使用的形象，全部使用时允许复用',
+      loadingModels: '正在读取建模…',
+      noModelsYet: '暂无可用于酒馆的 VRM 建模。可在「设置 → 角色与模型」导入，也可以先以文字方式对话。',
+      modelsLoadFailed: '建模列表读取失败，请重试；当前不能确认邀请。',
+      retry: '重试',
+      inviteSucceeded: '已创建对话。',
+      inviteUnknown: '尚未确认邀请结果，请刷新列表核实，不要重复提交。',
+      inviteBusy: '当前账号的另一项邀请仍在处理中，请稍后查看列表。',
+      modelNoLongerAvailable: '所选建模不可用或已变更，请重新选择。',
+      inviting: '邀请中…',
+      inviteAction: '邀请入座',
       cancel: '取消'
     },
     en: {
@@ -278,6 +387,21 @@ const { t: localT } = useI18n({
       startConversation: 'Start conversation',
       restoring: 'Starting…',
       restoreFailed: 'Could not reopen the conversation. Please try again later.',
+      noLineYet: 'Nothing said yet',
+      inviteTitle: 'Invite someone to sit down',
+      inviteHint: 'Choose an existing VRM model or select automatically. Models are shared with Settings.',
+      letTavernChoose: 'Choose automatically',
+      letTavernChooseHint: 'Prefer unused models; reuse is allowed when all are assigned',
+      loadingModels: 'Reading models…',
+      noModelsYet: 'No VRM models are available for the tavern. Import one in Settings → Roles & Models, or start a text-only conversation.',
+      modelsLoadFailed: 'Could not load the model list. Retry before confirming the invitation.',
+      retry: 'Retry',
+      inviteSucceeded: 'Conversation created.',
+      inviteUnknown: 'The invitation result is not confirmed. Refresh the list to check; do not submit it again.',
+      inviteBusy: 'Another invitation for this account is still in progress. Check the list later.',
+      modelNoLongerAvailable: 'The selected model is unavailable or has changed. Choose again.',
+      inviting: 'Inviting…',
+      inviteAction: 'Invite',
       cancel: 'Cancel'
     }
   }
@@ -285,6 +409,41 @@ const { t: localT } = useI18n({
 const companionStore = useCompanionStore()
 const toggleList = inject('toggleList', () => {})
 const userStore = useUserStore()
+const settings = useSettingsStore()
+let alive = true
+onBeforeUnmount(() => { alive = false })
+const stillCurrent = (userId, epoch) => alive && companionStore.isUserCurrent(userId) && epoch === companionStore.ownerEpoch
+
+/**
+ * The row's timestamp, the same way the chat list reads one: time today, the
+ * date before that. Follows the user's 24h/12h setting, never a fixed format.
+ */
+function formatStamp(value) {
+  if (!value) return ''
+  const d = dayjs(value)
+  if (!d.isValid()) return ''
+  const now = dayjs()
+  if (d.isSame(now, 'day')) return settings.format(value, 'HH:mm')
+  if (d.isSame(now, 'year')) return d.format('MM-DD')
+  return d.format('YYYY-MM-DD')
+}
+
+/**
+ * The line under the name. The last thing actually said wins — that is what a
+ * conversation row is for. A character nobody has spoken to yet falls back to
+ * what she is doing, then to her tone, so the row is never blank.
+ */
+function previewOf(role) {
+  const line = typeof role.lastMessage === 'string' ? role.lastMessage.replace(/\s+/g, ' ').trim() : ''
+  return line || role.presence || role.tone || localT('noLineYet')
+}
+
+/** A model's file size, so two same-named uploads can be told apart. */
+function formatModelSize(bytes) {
+  if (!Number.isFinite(Number(bytes)) || Number(bytes) <= 0) return ''
+  const mb = Number(bytes) / (1024 * 1024)
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
 
 // Like the chat list: order follows the last time you actually spoke to this
 // character, NOT which one happens to be selected. Selecting a row is just
@@ -321,19 +480,23 @@ const hiddenRoles = computed(() => companionStore.roles.filter((role) => role.co
 const restoreDialogVisible = ref(false)
 const restoringRoleId = ref(null)
 const isRestoring = computed(() => restoringRoleId.value !== null)
+watch(() => companionStore.ownerEpoch, () => {
+  restoreDialogVisible.value = false
+  restoringRoleId.value = null
+}, { flush: 'sync' })
 
 async function restoreRole(role) {
-  const userId = userStore.currentUser?.id
+  const userId = userStore.currentUser?.id, epoch = companionStore.ownerEpoch
   if (!userId || isRestoring.value || !role.conversationHidden || companionStore.isRoleBusy(role.id)) return
   restoringRoleId.value = role.id
   try {
     // The store reopens and selects the conversation only after the POST succeeds.
     await companionStore.restoreConversation(userId, role.id)
-    if (userStore.currentUser?.id === userId) restoreDialogVisible.value = false
+    if (stillCurrent(userId, epoch)) restoreDialogVisible.value = false
   } catch {
-    if (userStore.currentUser?.id === userId) ElMessage.error(localT('restoreFailed'))
+    if (stillCurrent(userId, epoch)) ElMessage.error(localT('restoreFailed'))
   } finally {
-    restoringRoleId.value = null
+    if (stillCurrent(userId, epoch)) restoringRoleId.value = null
   }
 }
 
@@ -343,52 +506,44 @@ onMounted(async () => {
 })
 
 async function selectRole(role) {
-  if (role.id === companionStore.activeRoleId) return
-  await companionStore.setActiveRole(userStore.currentUser.id, role.id)
+  const userId = userStore.currentUser?.id
+  if (!userId || role.id === companionStore.activeRoleId) return
+  await companionStore.setActiveRole(userId, role.id)
 }
 
-// Fill the empty seat. Costs one model call when a model is configured; the
-// server falls back to a neutral guest when none is.
-const inviting = ref(false)
-async function invite() {
-  const userId = userStore.currentUser?.id
-  if (!userId || inviting.value) return
-  inviting.value = true
-  try {
-    const role = await companionStore.inviteGuest(userId, readSceneKey(companionStore.activeRoleId))
-    if (role) {
-      await companionStore.fetchRoles(userId)
-      await companionStore.setActiveRole(userId, role.id)
-      return
-    }
-    // A timeout does not mean nothing happened — the server may have created the
-    // guest already. Re-read the list before saying anything failed.
-    await companionStore.fetchRoles(userId)
-    const newest = companionStore.roles
-      .filter((r) => r.kind === 'guest')
-      .slice()
-      .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0]
-    if (newest) {
-      await companionStore.setActiveRole(userId, newest.id)
-      ElMessage.success(t('companion.seats.invitedSlow'))
-    } else {
-      ElMessage.error(t('companion.seats.inviteFailed'))
-    }
-  } finally {
-    inviting.value = false
+// The shared helper is also exercised by deferred-response regression tests.
+const inviting = computed(() => companionStore.isInviting)
+const inviteFlow = useTavernInvite({
+  store: companionStore,
+  getUserId: () => userStore.currentUser?.id,
+  getSceneKey: () => readSceneKey(companionStore.activeRoleId),
+  onSuccess: () => ElMessage.success(localT('inviteSucceeded')),
+  onUnknown: () => ElMessage.warning(localT('inviteUnknown')),
+  onError: error => {
+    const status = Number(error?.response?.status)
+    const code = error?.response?.data?.message
+    if (status === 409) ElMessage.warning(localT('inviteBusy'))
+    else if (['model_url_invalid', 'model_type_unsupported', 'model_not_found', 'model_file_invalid'].includes(code)) {
+      ElMessage.error(localT('modelNoLongerAvailable'))
+    } else ElMessage.error(t('companion.seats.inviteFailed'))
   }
-}
+})
+const { models: inviteModels, visible: pickerVisible, loading: pickerLoading, error: pickerError,
+  selectedUrl: chosenModelUrl, canConfirm: canConfirmInvite,
+  open: openInvitePicker, confirm: confirmInvite } = inviteFlow
+onBeforeUnmount(() => inviteFlow.dispose())
 
 // Keep a guest: they move from 过往相逢 into the household.
 async function adopt(role) {
-  const userId = userStore.currentUser?.id
+  const userId = userStore.currentUser?.id, epoch = companionStore.ownerEpoch
   if (!userId) return
   try {
     await companionStore.adoptRole(userId, role.id)
+    if (!stillCurrent(userId, epoch)) return
     await companionStore.fetchRoles(userId)
-    ElMessage.success(t('companion.seats.adopted'))
+    if (stillCurrent(userId, epoch)) ElMessage.success(t('companion.seats.adopted'))
   } catch {
-    ElMessage.error(t('common.operationFailed'))
+    if (stillCurrent(userId, epoch)) ElMessage.error(t('common.operationFailed'))
   }
 }
 </script>
@@ -432,6 +587,55 @@ async function adopt(role) {
 .role-adopt-btn:hover {
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Invite picker rows: same quiet treatment as the seat rows above, so the
+   dialog reads as part of the same list rather than a separate form. */
+.invite-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.invite-model-row:not(:disabled):hover {
+  border-color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+}
+
+.invite-model-row.is-active {
+  border-color: var(--el-text-color-primary);
+  background: var(--el-fill-color);
+}
+
+.invite-model-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.invite-model-row:focus-visible {
+  outline: 2px solid var(--el-text-color-primary);
+  outline-offset: 2px;
+}
+
+.invite-model-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  color: var(--el-text-color-regular);
 }
 
 .role-scroll::-webkit-scrollbar {

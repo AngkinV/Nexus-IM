@@ -48,6 +48,7 @@ public class CompanionService {
     private final CompanionCryptoService cryptoService;
     private final TavernSessionRepository sessionRepository;
     private final CompanionModelResolver modelResolver;
+    private final CompanionModelAssetCatalog modelAssetCatalog;
 
     public List<CompanionRoleDTO> initDefaultRoles(Long userId) {
         if (roleRepository.countByUserId(userId) > 0) {
@@ -100,17 +101,71 @@ public class CompanionService {
         for (CompanionStatus status : statusRepository.findByUserId(userId)) {
             presence.put(status.getRoleId(), status.getSummary());
         }
+        // The row preview: the newest line per character, one query for the list.
+        Map<Long, String> lastLine = new HashMap<>();
+        java.util.Set<Long> hasMessages = new java.util.HashSet<>();
+        for (CompanionMessage msg : messageRepository.findLatestPerRole(userId)) {
+            hasMessages.add(msg.getRoleId());
+            if (msg.getCreatedAt() != null) lastAt.put(msg.getRoleId(), msg.getCreatedAt());
+            if (msg.getContent() != null && !msg.getContent().isBlank()) {
+                lastLine.put(msg.getRoleId(), msg.getContent());
+            }
+        }
 
         List<CompanionRoleDTO> result = new ArrayList<>(roles.size());
         for (CompanionRole role : roles) {
-            result.add(toRoleDTO(role, lastAt.get(role.getId()), presence.get(role.getId())));
+            result.add(toRoleDTO(role, hasMessages.contains(role.getId()) ? lastAt.get(role.getId()) : null, presence.get(role.getId()),
+                    lastLine.get(role.getId())));
         }
         return result;
     }
 
+    /**
+     * Only the profile fields below are writable. lastMessage, lastMessageAt,
+     * presence, kind and conversationHidden in the request are ignored: they are
+     * derived from history and state, and the response reports the real ones.
+     */
     public CompanionRoleDTO updateRole(Long userId, Long roleId, CompanionRoleDTO update) {
         CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
+
+        String shapeUrl = role.getModelUrl(), shapeType = role.getModelType();
+        boolean shapeChanged = update.getModelUrl() != null || update.getModelType() != null;
+        if (shapeChanged) {
+            String requested = update.getModelUrl() == null ? shapeUrl : update.getModelUrl().trim();
+            if (requested == null || requested.isBlank()) {
+                shapeUrl = null;
+                shapeType = null;
+            } else {
+                String inferred;
+                if (requested.startsWith("http://") || requested.startsWith("https://")) {
+                    try {
+                        java.net.URI uri = java.net.URI.create(requested);
+                        if (uri.getHost() == null || uri.getUserInfo() != null) throw new IllegalArgumentException();
+                        String path = uri.getPath().toLowerCase(java.util.Locale.ROOT);
+                        inferred = path.endsWith(".vrm") ? "vrm" :
+                                path.endsWith(".glb") || path.endsWith(".gltf") ? "gltf" :
+                                path.endsWith(".fbx") ? "fbx" : null;
+                        if (inferred == null) throw new IllegalArgumentException();
+                        shapeUrl = uri.toString();
+                    } catch (IllegalArgumentException e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_URL_INVALID);
+                    }
+                } else {
+                    CompanionModelAssetCatalog.ModelAsset asset = modelAssetCatalog.requireAsset(requested);
+                    if ("vrm".equals(asset.type()) && !asset.stageReady()) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_FILE_INVALID);
+                    }
+                    shapeUrl = asset.fileUrl();
+                    inferred = asset.type();
+                }
+                String declared = update.getModelType();
+                if (declared != null && !declared.isBlank() && !declared.trim().equalsIgnoreCase(inferred)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_TYPE_UNSUPPORTED);
+                }
+                shapeType = inferred;
+            }
+        }
 
         if (update.getName() != null) role.setName(update.getName());
         if (update.getTraits() != null) role.setTraits(JsonUtil.toJson(update.getTraits()));
@@ -120,8 +175,10 @@ public class CompanionService {
         if (update.getBackground() != null) role.setBackground(blankToNull(update.getBackground()));
         if (update.getGreeting() != null) role.setGreeting(blankToNull(update.getGreeting()));
         if (update.getAvatarUrl() != null) role.setAvatarUrl(update.getAvatarUrl());
-        if (update.getModelUrl() != null) role.setModelUrl(update.getModelUrl());
-        if (update.getModelType() != null) role.setModelType(update.getModelType());
+        if (shapeChanged) {
+            role.setModelUrl(shapeUrl);
+            role.setModelType(shapeType);
+        }
         if (update.getActive() != null) role.setActive(update.getActive());
 
         roleRepository.save(role);
@@ -843,6 +900,7 @@ public class CompanionService {
         return statusRepository.findByUserIdAndRoleId(userId, roleId).map(this::toStatusDTO).orElse(null);
     }
 
+    /** One character with its real recency, presence and last line — three single-row reads. */
     public CompanionRoleDTO toRoleDTO(CompanionRole role) {
         LocalDateTime lastMessageAt = conversationRepository
                 .findByUserIdAndRoleId(role.getUserId(), role.getId())
@@ -852,11 +910,21 @@ public class CompanionService {
                 .findByUserIdAndRoleId(role.getUserId(), role.getId())
                 .map(CompanionStatus::getSummary)
                 .orElse(null);
-        return toRoleDTO(role, lastMessageAt, presence);
+        // The same preview getRoles() reports: the newest message by id, and no
+        // preview when that message is blank. A response without it would wipe
+        // the row's last line in the client after a settings change.
+        Optional<CompanionMessage> latest = messageRepository
+                .findFirstByUserIdAndRoleIdOrderByIdDesc(role.getUserId(), role.getId());
+        String lastMessage = latest.map(CompanionMessage::getContent)
+                .filter(content -> !content.isBlank()).orElse(null);
+        if (latest.isEmpty()) lastMessageAt = null;
+        else if (latest.get().getCreatedAt() != null) lastMessageAt = latest.get().getCreatedAt();
+        return toRoleDTO(role, lastMessageAt, presence, lastMessage);
     }
 
-    /** Bulk-aware variant — no per-row queries. */
-    public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence) {
+    /** Bulk-aware variant — no per-row queries; the caller supplies the preview. */
+    public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence,
+                                      String lastMessage) {
         return new CompanionRoleDTO(
                 role.getId(),
                 role.getName(),
@@ -870,6 +938,7 @@ public class CompanionService {
                 role.getKind() == null ? CompanionRole.Kind.regular.name() : role.getKind().name(),
                 lastMessageAt,
                 presence,
+                lastMessage,
                 role.getBackground(),
                 role.getGreeting(),
                 role.isConversationHidden()

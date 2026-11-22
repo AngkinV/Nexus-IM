@@ -64,7 +64,7 @@ class CompanionExchangeTest {
         service = new CompanionService(roleRepository, growthRepository, memoryRepository,
                 conversationRepository, messageRepository, modelBindingRepository, credentialRepository,
                 statusRepository, new CompanionFallbackService(), modelService, cryptoService,
-                sessionRepository, modelResolver);
+                sessionRepository, modelResolver, mock(CompanionModelAssetCatalog.class));
 
         role = new CompanionRole();
         role.setId(ROLE);

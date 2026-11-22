@@ -3,12 +3,14 @@ package com.nexus.chat.controller;
 import com.nexus.chat.dto.CompanionRoleDTO;
 import com.nexus.chat.dto.TavernSessionDTO;
 import com.nexus.chat.security.CurrentUser;
+import com.nexus.chat.service.CompanionModelAssetCatalog;
 import com.nexus.chat.service.CompanionService;
 import com.nexus.chat.service.TavernSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -28,6 +30,7 @@ public class TavernSessionController {
 
     private final TavernSessionService sessionService;
     private final CompanionService companionService;
+    private final CompanionModelAssetCatalog modelAssetCatalog;
 
     /**
      * Enter the tavern: return the evening in progress, opening one if needed.
@@ -87,7 +90,18 @@ public class TavernSessionController {
         }
     }
 
-    /** Fill the empty seat with a new guest. Costs one model call when one is configured. */
+    /**
+     * Fill the empty seat with a new guest. Costs one model call when one is
+     * configured.
+     *
+     * {@code modelUrl} is optional: omit it and the tavern picks a model nobody
+     * else is wearing; send one from {@code GET /roles/models} to choose it
+     * explicitly. A chosen model that cannot be worn is refused, not replaced:
+     * 400 with {@code message} one of model_url_invalid, model_type_unsupported,
+     * model_not_found, model_file_invalid. 409 invite_in_progress while this
+     * account's previous invite is still running; 500 model_catalog_unavailable
+     * when the models directory cannot be read.
+     */
     @PostMapping("/roles/invite")
     public ResponseEntity<CompanionRoleDTO> invite(
             @RequestParam(name = "userId", required = false) Long claimedUserId,
@@ -96,11 +110,40 @@ public class TavernSessionController {
         try {
             String sceneKey = request == null || request.get("sceneKey") == null
                     ? null : request.get("sceneKey").toString();
-            return ResponseEntity.ok(companionService.toRoleDTO(sessionService.inviteRole(userId, sceneKey)));
+            String modelUrl = request == null || request.get("modelUrl") == null
+                    ? null : request.get("modelUrl").toString();
+            return ResponseEntity.ok(companionService.toRoleDTO(
+                    sessionService.inviteRole(userId, sceneKey, modelUrl)));
+        } catch (ResponseStatusException e) {
+            // The status and code are the contract; the catch-all below would
+            // flatten them into an empty 400.
+            throw e;
         } catch (Exception e) {
             log.error("Invite tavern guest failed", e);
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    /**
+     * The models an invited guest can wear: the same catalogue the settings
+     * panel lists, narrowed to what the tavern stage can load (VRM). An empty
+     * array means none is uploaded; a directory that cannot be read is a 500
+     * with {@code message} model_catalog_unavailable, never an empty array.
+     */
+    @GetMapping("/roles/models")
+    public ResponseEntity<List<Map<String, Object>>> inviteModels(
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        CurrentUser.require(claimedUserId);
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (CompanionModelAssetCatalog.ModelAsset asset : modelAssetCatalog.listForStage()) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("fileName", asset.fileName());
+            item.put("fileUrl", asset.fileUrl());
+            item.put("size", asset.size());
+            item.put("type", asset.type());
+            out.add(item);
+        }
+        return ResponseEntity.ok(out);
     }
 
     /** Keep a guest: they move from 过往相逢 into 当前席位. */

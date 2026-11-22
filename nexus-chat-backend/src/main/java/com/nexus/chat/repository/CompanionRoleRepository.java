@@ -11,6 +11,14 @@ public interface CompanionRoleRepository extends JpaRepository<CompanionRole, Lo
     Optional<CompanionRole> findByIdAndUserId(Long id, Long userId);
     long countByUserId(Long userId);
 
+    // Assets are a shared catalogue. A file rename must preserve all existing
+    // references to that same file, including legacy bare filenames.
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("update CompanionRole r set r.modelUrl = :nextUrl where r.modelUrl = :oldUrl or r.modelUrl = :oldName")
+    int rebindModelAsset(@org.springframework.data.repository.query.Param("oldUrl") String oldUrl,
+                         @org.springframework.data.repository.query.Param("oldName") String oldName,
+                         @org.springframework.data.repository.query.Param("nextUrl") String nextUrl);
+
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("update CompanionRole r set r.originSessionId = null, r.conversationHidden = true where r.userId = :userId and r.id = :roleId")
     int hideConversation(Long userId, Long roleId);

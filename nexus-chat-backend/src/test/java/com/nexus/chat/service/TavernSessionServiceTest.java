@@ -30,6 +30,7 @@ import static org.mockito.Mockito.*;
 /** Unit tests with mocked repositories, model and transaction manager; no database rollback is exercised. */
 class TavernSessionServiceTest {
     private static final Long USER = 7L;
+    private static final Long OTHER_USER = 8L;
     private static final Long ROLE = 41L;
     private static final Long SESSION = 900L;
     private static final Long PREVIOUS_SESSION = 800L;
@@ -50,6 +51,7 @@ class TavernSessionServiceTest {
     private final PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
     private final SimpleTransactionStatus transaction = new SimpleTransactionStatus();
     private final CompanionConversationGuard guard = new CompanionConversationGuard();
+    private final CompanionModelAssetCatalog modelAssets = mock(CompanionModelAssetCatalog.class);
     private TavernSessionService service;
     private CompanionRole role;
     private TavernSession session;
@@ -58,7 +60,7 @@ class TavernSessionServiceTest {
     void setUp() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transaction);
         service = new TavernSessionService(sessions, roles, messages, memories, resolver, model,
-                fallback, conversations, statuses, transactionManager, guard);
+                fallback, conversations, statuses, transactionManager, guard, modelAssets);
         role = new CompanionRole();
         role.setId(ROLE);
         role.setUserId(USER);
@@ -358,8 +360,214 @@ class TavernSessionServiceTest {
         assertTrue(presence.getValue().getSummaryAuthored());
     }
 
+    @Test
+    void inviteWithNoModelAvailableStillSeatsATextOnlyGuest() {
+        offlinePersona(USER);
+        savingAssignsAnId();
+        // The mocked catalogue picks nothing: no stage-ready model is uploaded.
+
+        var invited = service.inviteRole(USER, SCENE, null);
+
+        assertNull(invited.getModelUrl());
+        assertNull(invited.getModelType());
+        assertEquals("无名的旅人", invited.getName());
+        verify(modelAssets, never()).requireStageAsset(any());
+        verify(roles).save(invited);
+        verifyNoInteractions(model, statuses);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    void aBlankModelChoiceMeansLetTheTavernPick(String blank) {
+        offlinePersona(USER);
+        savingAssignsAnId();
+        when(modelAssets.pickForGuest(any())).thenReturn(asset("b.vrm"));
+
+        var invited = service.inviteRole(USER, SCENE, blank);
+
+        assertEquals("/models/b.vrm", invited.getModelUrl());
+        assertEquals("vrm", invited.getModelType());
+        verify(modelAssets, never()).requireStageAsset(any());
+    }
+
+    @Test
+    void aChosenModelIsBoundInItsCanonicalFormWithoutAskingForAnotherOne() {
+        offlinePersona(USER);
+        savingAssignsAnId();
+        // The client sent a bare name; what is stored is the catalogue's URL.
+        when(modelAssets.requireStageAsset("a.vrm")).thenReturn(asset("a.vrm"));
+
+        var invited = service.inviteRole(USER, SCENE, "a.vrm");
+
+        assertEquals("/models/a.vrm", invited.getModelUrl());
+        assertEquals("vrm", invited.getModelType());
+        verify(modelAssets, never()).pickForGuest(any());
+        verify(roles, never()).findByUserIdOrderByIdAsc(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            CompanionModelAssetCatalog.MODEL_URL_INVALID,
+            CompanionModelAssetCatalog.MODEL_TYPE_UNSUPPORTED,
+            CompanionModelAssetCatalog.MODEL_NOT_FOUND,
+            CompanionModelAssetCatalog.MODEL_FILE_INVALID})
+    void aChosenModelThatCannotBeWornFailsBeforeTheModelCallAndIsNeverReplaced(String code) {
+        var refusal = new ResponseStatusException(HttpStatus.BAD_REQUEST, code);
+        when(modelAssets.requireStageAsset("/models/chosen.vrm")).thenThrow(refusal);
+
+        assertSame(refusal, assertThrows(ResponseStatusException.class,
+                () -> service.inviteRole(USER, SCENE, "/models/chosen.vrm")));
+
+        // No substitute model, no model call paid for, nothing written.
+        verify(modelAssets, never()).pickForGuest(any());
+        verifyNoInteractions(resolver, model, transactionManager, roles, statuses);
+        assertInviteGuardReleased();
+    }
+
+    @Test
+    void anUnreadableCatalogueFailsAnAutomaticInviteBeforeTheModelCall() {
+        var unavailable = new ResponseStatusException(
+                HttpStatus.INTERNAL_SERVER_ERROR, CompanionModelAssetCatalog.CATALOG_UNAVAILABLE);
+        when(modelAssets.pickForGuest(any())).thenThrow(unavailable);
+
+        assertSame(unavailable, assertThrows(ResponseStatusException.class,
+                () -> service.inviteRole(USER, SCENE, null)));
+
+        verifyNoInteractions(resolver, model, transactionManager, statuses);
+        verify(roles, never()).save(any());
+        assertInviteGuardReleased();
+    }
+
+    @Test
+    void wornModelsAreCountedByCanonicalUrlAndOnlyForVisibleCharacters() {
+        offlinePersona(USER);
+        savingAssignsAnId();
+        // The real path rules decide identity; only the pick itself is stubbed.
+        when(modelAssets.canonicalUrl(any())).thenAnswer(inv ->
+                new CompanionModelAssetCatalog().canonicalUrl(inv.getArgument(0)));
+        when(roles.findByUserIdOrderByIdAsc(USER)).thenReturn(List.of(
+                wearing("a.vrm", false),                     // bare name, as older rows stored it
+                wearing("/models/a.vrm", false),             // the same file again
+                wearing("  /models/a.vrm ", false),
+                wearing("/models/hidden.vrm", true),         // conversation deleted: off the seat list
+                wearing("https://cdn.example/remote.vrm", false),
+                wearing("/models/../outside.vrm", false),
+                wearing("  ", false),
+                wearing(null, false)));
+        when(modelAssets.pickForGuest(any())).thenReturn(asset("b.vrm"));
+
+        service.inviteRole(USER, SCENE, null);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<String>> inUse = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(modelAssets).pickForGuest(inUse.capture());
+        assertEquals(java.util.Set.of("/models/a.vrm"), inUse.getValue());
+    }
+
+    @Test
+    void aSecondInviteForTheSameAccountIsRefusedWhileTheFirstIsStillRunning() throws Exception {
+        var resolved = usableModel();
+        when(resolver.resolveForUser(USER)).thenReturn(resolved);
+        offlinePersona(OTHER_USER);
+        savingAssignsAnId();
+        var generated = new CompanionModelService.GeneratedRole(
+                "旅人", "沉默、谨慎", "简短", "望着雨幕", "从山间而来", "晚上好。");
+        var modelEntered = new CountDownLatch(1);
+        var finishModel = new CountDownLatch(1);
+        when(model.generateRole(resolved.binding(), resolved.credential(), SCENE)).thenAnswer(inv -> {
+            modelEntered.countDown();
+            assertTrue(finishModel.await(5, TimeUnit.SECONDS), "the test must release the mocked model");
+            return generated;
+        });
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var first = executor.submit(() -> service.inviteRole(USER, SCENE, null));
+            assertTrue(modelEntered.await(5, TimeUnit.SECONDS), "the first invite must reach the mocked model");
+
+            var busy = assertThrows(ResponseStatusException.class, () -> service.inviteRole(USER, SCENE, null));
+            assertEquals(HttpStatus.CONFLICT, busy.getStatusCode());
+            assertEquals(TavernSessionService.INVITE_IN_PROGRESS, busy.getReason());
+            // The refused invite did nothing: one catalogue pick, one model call, no write yet.
+            verify(modelAssets, times(1)).pickForGuest(any());
+            verify(model, times(1)).generateRole(any(), any(), any());
+            verify(roles, never()).save(any());
+            // The guard is held across the model call without a transaction open.
+            verifyNoInteractions(transactionManager);
+
+            // Another account is not held up by this one.
+            assertEquals(OTHER_USER, service.inviteRole(OTHER_USER, SCENE, null).getUserId());
+
+            finishModel.countDown();
+            assertEquals(generated.name(), first.get(5, TimeUnit.SECONDS).getName());
+            assertInviteGuardReleased();
+        } finally {
+            finishModel.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"resolver", "model", "write"})
+    void inviteReleasesItsGuardAfterAFailure(String failingStep) {
+        var failure = new IllegalStateException("test failure");
+        var resolved = usableModel();
+        if ("resolver".equals(failingStep)) {
+            when(resolver.resolveForUser(USER)).thenThrow(failure);
+        } else {
+            when(resolver.resolveForUser(USER)).thenReturn(resolved);
+        }
+        if ("model".equals(failingStep)) {
+            when(model.generateRole(resolved.binding(), resolved.credential(), SCENE)).thenThrow(failure);
+        }
+        when(roles.save(any(CompanionRole.class))).thenThrow(failure);
+
+        assertSame(failure, assertThrows(IllegalStateException.class, () -> service.inviteRole(USER, SCENE, null)));
+
+        if ("write".equals(failingStep)) {
+            verify(transactionManager).rollback(transaction);
+            verify(transactionManager, never()).commit(any());
+        } else {
+            verifyNoInteractions(transactionManager);
+        }
+        assertInviteGuardReleased();
+    }
+
     private void ownRole() {
         when(roles.findByIdAndUserId(ROLE, USER)).thenReturn(Optional.of(role));
+    }
+
+    /** No usable channel for this account: the invite uses the built-in persona, no model call. */
+    private void offlinePersona(Long userId) {
+        when(resolver.resolveForUser(userId)).thenReturn(new CompanionModelResolver.Resolved(null, null, true));
+    }
+
+    private void savingAssignsAnId() {
+        when(roles.save(any(CompanionRole.class))).thenAnswer(inv -> {
+            CompanionRole saved = inv.getArgument(0);
+            saved.setId(ROLE);
+            return saved;
+        });
+    }
+
+    private CompanionModelAssetCatalog.ModelAsset asset(String fileName) {
+        return new CompanionModelAssetCatalog.ModelAsset(fileName, "/models/" + fileName, 24L, "vrm", true);
+    }
+
+    private CompanionRole wearing(String modelUrl, boolean conversationHidden) {
+        var worn = new CompanionRole();
+        worn.setUserId(USER);
+        worn.setModelUrl(modelUrl);
+        worn.setConversationHidden(conversationHidden);
+        return worn;
+    }
+
+    /** A fresh invite goes through, so the previous one let go of the account. */
+    private void assertInviteGuardReleased() {
+        reset(resolver, roles, modelAssets);
+        offlinePersona(USER);
+        savingAssignsAnId();
+        assertEquals(USER, service.inviteRole(USER, SCENE, "").getUserId());
     }
 
     private List<CompanionMessage> ownSessionWithHistory() {

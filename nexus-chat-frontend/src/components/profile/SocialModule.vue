@@ -190,6 +190,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { mainLocation } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
@@ -370,7 +371,7 @@ const handleUnblock = async (b) => {
 }
 
 // --- Navigation ---
-const goContacts = () => router.push('/main')
+const goContacts = () => router.push(mainLocation('contacts'))
 const viewProfile = (c) => {
   if (c?.id) router.push(`/user/${c.id}`)
 }

@@ -26,6 +26,23 @@ public interface CompanionMessageRepository extends JpaRepository<CompanionMessa
     java.util.Optional<CompanionMessage> findFirstByUserIdAndRoleIdAndClientMsgIdOrderByIdAsc(
             Long userId, Long roleId, String clientMsgId);
 
+    /**
+     * The newest message of every character this user has, one query for the
+     * whole seat list. The list shows that line as the row's preview, the way
+     * the chat list does — a second query per character would make opening the
+     * tavern cost N round trips again.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "select m from CompanionMessage m where m.id in "
+                    + "(select max(m2.id) from CompanionMessage m2 where m2.userId = :userId group by m2.roleId)")
+    List<CompanionMessage> findLatestPerRole(Long userId);
+
+    /**
+     * The newest message of one character — the single-row counterpart of
+     * {@link #findLatestPerRole}, using the same "highest id" notion of newest.
+     */
+    java.util.Optional<CompanionMessage> findFirstByUserIdAndRoleIdOrderByIdDesc(Long userId, Long roleId);
+
     /** Whatever was written right after a given message — its reply, if it got one. */
     java.util.Optional<CompanionMessage> findFirstByConversationIdAndIdGreaterThanOrderByIdAsc(
             Long conversationId, Long id);

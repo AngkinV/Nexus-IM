@@ -31,6 +31,13 @@ public class CompanionRoleDTO {
 
     /** What she is doing right now, shown as the row's subtitle. */
     private String presence;
+
+    /**
+     * The last thing said in this conversation — hers or the user's — shown as
+     * the row's preview under the name, exactly like a chat list row.
+     * Null when nothing has been said yet.
+     */
+    private String lastMessage;
     /** Backstory, in the card's own words. */
     private String background;
     /** Her opening line for a new evening. */

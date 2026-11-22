@@ -43,10 +43,10 @@
         </div>
 
         <div class="role-actions">
-          <button class="role-btn role-btn--primary" type="button" @click="saveRoleModel">
+          <button class="role-btn role-btn--primary" type="button" :disabled="savingModel" :aria-busy="savingModel" @click="saveRoleModel">
             {{ $t('companion.saveModel') }}
           </button>
-          <button class="role-btn" type="button" @click="modelFileInput?.click()">
+          <button class="role-btn" type="button" :disabled="savingModel" @click="modelFileInput?.click()">
             {{ $t('companion.importModel') }}
           </button>
         </div>
@@ -61,7 +61,8 @@
             class="role-row"
             :class="{ 'is-active': model.fileUrl === roleModelUrl }"
             role="button"
-            tabindex="0"
+            :aria-disabled="savingModel"
+            :tabindex="savingModel ? -1 : 0"
             @click="switchModel(model)"
             @keydown.enter="switchModel(model)"
           >
@@ -144,7 +145,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -152,11 +153,21 @@ import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
 import { companionAPI } from '@/services/api'
 import ModelSettingsPanel from './ModelSettingsPanel.vue'
+import { modelAssetType } from './modelAssetType'
+import { useRoleModelTarget } from '@/composables/useRoleModelTarget'
 
 const { t } = useI18n()
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
-const { roles, activeRoleId, activeRole } = storeToRefs(companionStore)
+const { activeRoleId, activeRole } = storeToRefs(companionStore)
+const savingModel = ref(false)
+let alive = true, modelReadVersion = 0, motionReadVersion = 0
+const modelContext = useRoleModelTarget({ store: companionStore,
+  getUserId: () => userStore.currentUser?.id, getRoleId: () => activeRoleId.value })
+const target = modelContext.capture
+const ownerCurrent = modelContext.isOwner
+const targetCurrent = modelContext.isCurrent
+onBeforeUnmount(() => { alive = false; modelContext.dispose(); modelReadVersion += 1; motionReadVersion += 1 })
 
 const roleModelUrl = ref('')
 const roleModelType = ref('vrm')
@@ -173,117 +184,161 @@ const motionFileInput = ref(null)
 const userId = () => userStore.currentUser?.id
 
 onMounted(async () => {
-  if (!userId()) return
-  await companionStore.ensureInitialized(userId())
+  const user = userId(), epoch = companionStore.ownerEpoch
+  if (!user) return
+  await companionStore.ensureInitialized(user)
+  if (!alive || epoch !== companionStore.ownerEpoch || !companionStore.isUserCurrent(user)) return
   await Promise.all([loadMotions(), loadModels()])
   syncRoleModel()
 })
 
 watch(activeRole, syncRoleModel)
+watch(() => companionStore.ownerEpoch, () => {
+  modelReadVersion += 1
+  motionReadVersion += 1
+  uploadedModels.value = []
+  localMotions.value = []
+  savingModel.value = false
+  modelPanelOpen.value = false
+  renamingModelUrl.value = null
+  renamingMotionKey.value = null
+  renamingValue.value = ''
+}, { flush: 'sync' })
 
 function syncRoleModel() {
   const role = activeRole.value
-  if (!role) return
-  roleModelUrl.value = role.modelUrl || '/models/SpringSnow.vrm'
+  if (!role) {
+    roleModelUrl.value = ''
+    roleModelType.value = 'vrm'
+    return
+  }
+  roleModelUrl.value = role.modelUrl || (role.kind === 'guest' ? '' : '/models/SpringSnow.vrm')
   roleModelType.value = role.modelType || 'vrm'
 }
 
 async function loadMotions() {
+  const request = target(), version = ++motionReadVersion
   try {
     const response = await companionAPI.getMotionAssets()
+    if (!targetCurrent(request) || version !== motionReadVersion) return
     localMotions.value = Array.isArray(response.data?.motions) ? response.data.motions : []
   } catch (error) {
-    console.error('Fetch motion assets failed:', error)
+    if (targetCurrent(request)) console.error('Fetch motion assets failed:', error)
   }
 }
 
 async function loadModels() {
+  const request = target(), version = ++modelReadVersion
   try {
     const response = await companionAPI.getModelAssets()
+    if (!targetCurrent(request) || version !== modelReadVersion) return
     uploadedModels.value = Array.isArray(response.data) ? response.data : []
   } catch (error) {
-    console.error('Fetch model assets failed:', error)
+    if (targetCurrent(request)) ElMessage.error(t('companion.modelSaveFailed'))
   }
 }
 
 // applyRoleModel persists the role's model and keeps the local role list in sync,
 // so the on-screen widget picks the new model up without a reload.
-async function applyRoleModel(payload) {
-  const roleId = activeRoleId.value
-  const updated = await companionStore.updateRole(userId(), roleId, payload)
-  const index = roles.value.findIndex((r) => r.id === roleId)
-  if (index < 0) return
-  roles.value.splice(index, 1, updated || { ...roles.value[index], ...payload })
+async function applyRoleModel(payload, request = target()) {
+  if (!targetCurrent(request)) return false
+  // The store already applies the response with preview/owner guards. Replacing
+  // it a second time here would undo those guards after a concurrent reply.
+  await companionStore.updateRole(request.userId, request.roleId, payload)
+  return targetCurrent(request)
 }
 
 async function saveRoleModel() {
-  const url = roleModelUrl.value.trim()
+  const request = target(), url = roleModelUrl.value.trim(), type = roleModelType.value || 'vrm'
+  if (savingModel.value || !targetCurrent(request)) return
   if (!url) {
     ElMessage.error(t('companion.modelUrlRequired'))
     return
   }
-  await applyRoleModel({ modelUrl: url, modelType: roleModelType.value || 'vrm' })
-  ElMessage.success(t('companion.modelSaved'))
+  savingModel.value = true
+  try {
+    if (await applyRoleModel({ modelUrl: url, modelType: type }, request)) ElMessage.success(t('companion.modelSaved'))
+  } catch {
+    if (targetCurrent(request)) ElMessage.error(t('companion.modelSaveFailed'))
+  } finally {
+    if (request.epoch === companionStore.ownerEpoch) savingModel.value = false
+  }
 }
 
 async function onModelFile(event) {
-  const file = event.target.files?.[0]
+  const file = event.target.files?.[0], request = target()
   event.target.value = ''
-  if (!file) return
+  if (!file || savingModel.value || !targetCurrent(request)) return
   if (!file.name.toLowerCase().endsWith('.vrm')) {
     ElMessage.error(t('companion.modelFileInvalid'))
     return
   }
-  const existing = uploadedModels.value.find((m) => m.fileName === file.name)
-  if (existing) {
-    await switchModel(existing)
-    ElMessage.success(t('companion.modelAlreadyExists'))
-    return
-  }
+  savingModel.value = true
   try {
+    // The server assigns a unique name. A matching filename is not proof that
+    // a different upload contains the same model.
     const upload = await companionAPI.uploadModelAsset(file)
+    if (!targetCurrent(request)) return
     const fileUrl = upload.data?.fileUrl
     if (!fileUrl) throw new Error('Missing fileUrl')
-    await applyRoleModel({ modelUrl: fileUrl, modelType: 'vrm' })
+    if (!await applyRoleModel({ modelUrl: fileUrl, modelType: 'vrm' }, request)) return
     roleModelUrl.value = fileUrl
     roleModelType.value = 'vrm'
     await loadModels()
-    ElMessage.success(t('companion.modelFileApplied'))
-  } catch (error) {
-    console.error('Model upload failed:', error)
-    ElMessage.error(t('companion.modelSaveFailed'))
+    if (targetCurrent(request)) ElMessage.success(t('companion.modelFileApplied'))
+  } catch {
+    if (targetCurrent(request)) ElMessage.error(t('companion.modelSaveFailed'))
+  } finally {
+    if (request.epoch === companionStore.ownerEpoch) savingModel.value = false
   }
 }
 
 async function switchModel(model) {
-  if (!model?.fileUrl || model.fileUrl === roleModelUrl.value) return
-  await applyRoleModel({ modelUrl: model.fileUrl, modelType: 'vrm' })
-  roleModelUrl.value = model.fileUrl
-  roleModelType.value = 'vrm'
-  ElMessage.success(t('companion.modelSwitched'))
+  const request = target(), type = modelAssetType(model)
+  if (savingModel.value || !targetCurrent(request) || !model?.fileUrl || model.fileUrl === roleModelUrl.value) return
+  if (!type) { ElMessage.error(t('companion.modelFileInvalid')); return }
+  savingModel.value = true
+  try {
+    if (!await applyRoleModel({ modelUrl: model.fileUrl, modelType: type }, request)) return
+    roleModelUrl.value = model.fileUrl
+    roleModelType.value = type
+    ElMessage.success(t('companion.modelSwitched'))
+  } catch {
+    if (targetCurrent(request)) ElMessage.error(t('companion.modelSaveFailed'))
+  } finally {
+    if (request.epoch === companionStore.ownerEpoch) savingModel.value = false
+  }
 }
 
 function startRenameModel(model) {
+  if (savingModel.value) return
   renamingModelUrl.value = model.fileUrl
-  renamingValue.value = model.fileName.replace(/\.vrm$/i, '')
+  renamingValue.value = model.fileName.replace(/\.(vrm|glb|gltf|fbx)$/i, '')
 }
 
 async function confirmRenameModel(model) {
-  const raw = renamingValue.value.trim()
+  if (renamingModelUrl.value !== model.fileUrl || savingModel.value) return
+  const request = target(), raw = renamingValue.value.trim()
   renamingModelUrl.value = null
-  if (!raw || raw === model.fileName.replace(/\.vrm$/i, '')) return
-  const nextName = raw.endsWith('.vrm') ? raw : `${raw}.vrm`
+  if (!targetCurrent(request) || !raw || raw === model.fileName.replace(/\.(vrm|glb|gltf|fbx)$/i, '')) return
+  const extension = model.fileName.match(/\.(vrm|glb|gltf|fbx)$/i)?.[0]
+  if (!extension) return
+  const nextName = raw.toLowerCase().endsWith(extension.toLowerCase()) ? raw : `${raw}${extension}`
+  savingModel.value = true
   try {
     const response = await companionAPI.renameModelAsset(model.fileName, nextName)
-    if (model.fileUrl === roleModelUrl.value && response.data?.newFileUrl) {
-      await applyRoleModel({ modelUrl: response.data.newFileUrl, modelType: 'vrm' })
-      roleModelUrl.value = response.data.newFileUrl
-    }
-    await loadModels()
-    ElMessage.success(t('companion.modelRenamed'))
-  } catch (error) {
-    console.error('Rename model failed:', error)
-    ElMessage.error(t('companion.renameFailed'))
+    // The file is shared: even if the form moved to another role (or unmounted),
+    // its acknowledged rename must still update this account's cached URLs.
+    if (!ownerCurrent(request)) return
+    if (!response.data?.newFileUrl) throw new Error('Missing renamed model URL')
+    companionStore.syncRenamedModel(request.userId, model.fileName, response.data.newFileUrl)
+    await companionStore.fetchRoles(request.userId)
+    if (alive && ownerCurrent(request)) await loadModels()
+    if (targetCurrent(request)) ElMessage.success(t('companion.modelRenamed'))
+  } catch {
+    if (targetCurrent(request)) ElMessage.error(t('companion.renameFailed'))
+  } finally {
+    if (request.epoch === companionStore.ownerEpoch) savingModel.value = false
   }
 }
 

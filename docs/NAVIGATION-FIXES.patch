@@ -1,0 +1,1167 @@
+diff --git a/nexus-chat-frontend/src/router/index.js b/nexus-chat-frontend/src/router/index.js
+--- a/nexus-chat-frontend/src/router/index.js
++++ b/nexus-chat-frontend/src/router/index.js
+@@ -1,4 +1,5 @@
+ import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
++import { installNavigation, createAuthNavigationGuard } from './navigation'
+ import Login from '@/views/Login.vue'
+ import Setup from '@/views/Setup.vue'
+ import Main from '@/views/Main.vue'
+@@ -24,7 +25,8 @@
+         {
+             path: '/setup',
+             name: 'Setup',
+-            component: Setup
++            component: Setup,
++            meta: { requiresAuth: true }
+         },
+         {
+             path: '/main',
+@@ -63,17 +65,9 @@
+     })
+ }
+ 
++installNavigation(router)
++
+ // Navigation guard
+-router.beforeEach((to, from, next) => {
+-    const token = localStorage.getItem('token')
+-
+-    if (to.meta.requiresAuth && !token) {
+-        next('/login')
+-    } else if (to.path === '/login' && token) {
+-        next('/main')
+-    } else {
+-        next()
+-    }
+-})
++router.beforeEach(createAuthNavigationGuard(router))
+ 
+ export default router
+diff --git a/nexus-chat-frontend/src/router/navigation.js b/nexus-chat-frontend/src/router/navigation.js
+new file mode 100644
+--- /dev/null
++++ b/nexus-chat-frontend/src/router/navigation.js
+@@ -0,0 +1,174 @@
++const VIEWS = new Set(['chats', 'contacts', 'groups', 'ai', 'companion'])
++const controllers = new WeakMap()
++const scalar = value => typeof value === 'string' ? value : null
++const selectionId = value => {
++  if (typeof value !== 'string' && typeof value !== 'number') return null
++  if (!/^[1-9]\d*$/.test(String(value))) return null
++  const id = Number(value)
++  return Number.isSafeInteger(id) ? id : null
++}
++
++export function createNavigationIntent() {
++  let version = 0
++  return { capture: () => ++version, current: request => request === version, invalidate: () => { version += 1 } }
++}
++
++export function readMainState(query = {}) {
++  const view = scalar(query.view)
++  const previous = scalar(query.returnView)
++  return {
++    view: VIEWS.has(view) ? view : 'chats',
++    returnView: VIEWS.has(previous) && previous !== 'companion' ? previous : null,
++    returnChat: scalar(query.returnChat),
++    contactId: selectionId(query.contactId),
++    groupId: selectionId(query.groupId)
++  }
++}
++
++export function mainLocation(view = 'chats', query = {}, origin = {}) {
++  const next = { ...query, view: VIEWS.has(view) ? view : 'chats' }
++  if (next.view === 'companion') {
++    const previous = origin.view ?? scalar(query.returnView)
++    if (VIEWS.has(previous) && previous !== 'companion') next.returnView = previous
++    else delete next.returnView
++    const chat = origin.chatId ?? scalar(query.returnChat)
++    if (chat != null && String(chat)) next.returnChat = String(chat)
++    else delete next.returnChat
++  } else {
++    delete next.returnView
++    delete next.returnChat
++  }
++  return { name: 'Main', query: next }
++}
++
++export function safeAppPath(router, value, { allowSetup = false } = {}) {
++  let path = scalar(value)
++  if (path?.startsWith('#/')) path = path.slice(1)
++  if (!path?.startsWith('/') || path.startsWith('//') || /[\\\x00-\x1f\x7f]/.test(path)) return null
++  try {
++    const resolved = router.resolve(path)
++    if (!resolved.matched.some(record => record.meta.requiresAuth)) return null
++    if (resolved.name === 'Login' || (!allowSetup && resolved.name === 'Setup')) return null
++    return resolved.fullPath
++  } catch { return null }
++}
++
++const sameScreen = (router, a, b) => {
++  const left = router.resolve(a), right = router.resolve(b)
++  return left.path === right.path && (left.name !== 'Main' ||
++    readMainState(left.query).view === readMainState(right.query).view)
++}
++
++/** Track route entries, not URL folder parents. Works with Web, Hash and memory history. */
++export function installNavigation(router, { authenticated = () =>
++  typeof localStorage !== 'undefined' && !!localStorage.getItem('token') } = {}) {
++  if (controllers.has(router)) return controllers.get(router)
++  const history = router.options.history
++  const entries = new Map()
++  let position = Number.isFinite(history.state?.position) ? history.state.position : 0
++  let pending = null
++  const push = history.push.bind(history), replace = history.replace.bind(history)
++  history.push = (to, state) => {
++    push(to, state)
++    position = Number.isFinite(history.state?.position) ? history.state.position : position + 1
++    for (const key of entries.keys()) if (key >= position) entries.delete(key)
++    entries.set(position, to)
++  }
++  history.replace = (to, state) => {
++    replace(to, state)
++    if (Number.isFinite(history.state?.position)) position = history.state.position
++    entries.set(position, to)
++  }
++  const stopListen = history.listen((to, _from, info) => {
++    position = Number.isFinite(history.state?.position) ? history.state.position : position + info.delta
++    entries.set(position, to)
++  })
++  const stopAfter = router.afterEach((to, _from, failure) => {
++    if (failure) return
++    if (['Login', 'Setup'].includes(to.name)) entries.clear()
++    entries.set(position, to.fullPath)
++  })
++
++  async function performBack(mainView = null, fallbackQuery = {}) {
++    const accepts = path => !mainView || (router.resolve(path).name === 'Main' && readMainState(router.resolve(path).query).view === mainView)
++    const from = router.currentRoute.value.fullPath
++    if (!authenticated()) {
++      if (router.currentRoute.value.name !== 'Login') await router.replace({ name: 'Login' })
++      return true
++    }
++    const candidates = [...entries.entries()].filter(([index, path]) => index < position &&
++      safeAppPath(router, path) && accepts(path) && !sameScreen(router, path, from)).sort((a, b) => b[0] - a[0])
++    let target = candidates[0]?.[1], delta = candidates[0] ? candidates[0][0] - position : null
++    if (!target) {
++      const nativeBack = safeAppPath(router, history.state?.back)
++      if (nativeBack && accepts(nativeBack) && history.state?.position > 0 && !sameScreen(router, nativeBack, from)) {
++        target = nativeBack
++        delta = -1
++      }
++    }
++    if (!target) {
++      const fallback = mainLocation(mainView || 'chats', fallbackQuery)
++      if (router.resolve(fallback).fullPath !== from) await router.replace(fallback)
++      return true
++    }
++    return new Promise(resolve => {
++      let settled = false, timer
++      const finish = value => { if (settled) return; settled = true; clearTimeout(timer); remove(); resolve(value) }
++      const remove = router.afterEach((to, _old, failure) => finish(!failure && to.fullPath === target))
++      // An unavailable history entry must not leave a direct-open page stuck.
++      timer = setTimeout(async () => {
++        if (router.currentRoute.value.fullPath !== from) { finish(false); return }
++        try { await router.replace(target); finish(true) } catch { finish(false) }
++      }, 1200)
++      history.go(delta)
++    })
++  }
++  const back = (view = null, query = {}) => {
++    if (pending) return pending
++    const request = performBack(view, query)
++    pending = request
++    request.finally(() => { if (pending === request) pending = null }).catch(() => {})
++    return request
++  }
++  const dispose = () => { stopListen(); stopAfter(); history.push = push; history.replace = replace; controllers.delete(router) }
++  const controller = { back, dispose }
++  controllers.set(router, controller)
++  return controller
++}
++
++export const goBack = router => installNavigation(router).back()
++export const goBackToMain = (router, view, query = {}) => installNavigation(router).back(VIEWS.has(view) ? view : 'chats', query)
++export const loginDestination = (router, query) => safeAppPath(router, query?.redirect, { allowSetup: true }) || mainLocation('chats')
++
++export function createAuthNavigationGuard(router, storage = typeof localStorage === 'undefined' ? null : localStorage) {
++  return (to, _from, next) => {
++    let token = storage?.getItem('token')
++    if (token?.startsWith('mock-token-')) { storage.removeItem('token'); token = null }
++    if (to.meta.requiresAuth && !token) {
++      next({ name: 'Login', query: { redirect: to.fullPath }, replace: true })
++    } else if (to.name === 'Login' && token) {
++      const destination = loginDestination(router, to.query)
++      next(typeof destination === 'string' ? { path: destination, replace: true } : { ...destination, replace: true })
++    } else next()
++  }
++}
++
++/** Hidden Element Plus DOM is not a visible keyboard owner. */
++export function hasBlockingOverlay(doc = typeof document === 'undefined' ? null : document) {
++  const overlays = doc?.querySelectorAll?.('[role="dialog"],[role="listbox"],.el-overlay,.modal-overlay,.model-panel-scrim,.busy-scrim') || []
++  return [...overlays].some(element => {
++    const box = element.getBoundingClientRect?.()
++    if (!box || box.width <= 0 || box.height <= 0) return false
++    const style = doc.defaultView?.getComputedStyle?.(element) || element.style || {}
++    return style.display !== 'none' && style.visibility !== 'hidden'
++  })
++}
++
++/** Escape closes editing/overlays before it can become page navigation. */
++export function canGoBackOnEscape(event, doc = typeof document === 'undefined' ? null : document) {
++  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return false
++  const editingRoles = ['textbox', 'combobox', 'spinbutton', 'slider']
++  const typing = element => element && (['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) ||
++    element.isContentEditable || editingRoles.includes(element.getAttribute?.('role')))
++  return !typing(event.target) && !typing(doc?.activeElement) && !hasBlockingOverlay(doc)
++}
+diff --git a/nexus-chat-frontend/src/router/navigation.test.mjs b/nexus-chat-frontend/src/router/navigation.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/nexus-chat-frontend/src/router/navigation.test.mjs
+@@ -0,0 +1,352 @@
++import test from 'node:test'
++import assert from 'node:assert/strict'
++import { readFileSync } from 'node:fs'
++import { parse } from '@babel/parser'
++import { createRouter, createMemoryHistory } from 'vue-router'
++import { installNavigation, mainLocation, readMainState, safeAppPath, loginDestination,
++  createAuthNavigationGuard, canGoBackOnEscape, hasBlockingOverlay, createNavigationIntent } from './navigation.js'
++import { useTavernEntrance } from '../composables/useTavernEntrance.js'
++
++function configuredRoutes() {
++  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8')
++  const ast = parse(source, { sourceType: 'module' })
++  let records
++  const visit = node => {
++    if (!node || typeof node !== 'object') return
++    if (node.type === 'CallExpression' && node.callee?.name === 'createRouter') {
++      records = node.arguments[0].properties.find(property => property.key.name === 'routes').value.elements
++    }
++    for (const value of Object.values(node)) {
++      if (Array.isArray(value)) value.forEach(visit)
++      else if (value && typeof value === 'object') visit(value)
++    }
++  }
++  visit(ast)
++  assert.ok(records, 'Read actual production route declarations, not a hand-written mirror')
++  return records.map(record => {
++    const result = { component: {} }
++    for (const property of record.properties) {
++      const key = property.key.name || property.key.value
++      if (['path', 'name', 'redirect'].includes(key)) result[key] = property.value.value
++      if (key === 'meta') result.meta = Object.fromEntries(property.value.properties.map(item => [item.key.name, item.value.value]))
++    }
++    return result
++  })
++}
++
++function settingsKeyHandler(document) {
++  const source = readFileSync(new URL('../views/Settings.vue', import.meta.url), 'utf8')
++  const script = source.match(/<script setup[^>]*>([\s\S]*?)<\/script>/)[1]
++  const ast = parse(script, { sourceType: 'module' })
++  const declaration = ast.program.body.flatMap(node => node.declarations || []).find(node => node.id?.name === 'onKeydown')
++  assert.ok(declaration, 'Execute the actual settings keyboard handler')
++  const calls = { back: 0, blur: 0, focus: 0 }
++  const input = { tagName: 'INPUT', blur: () => { calls.blur += 1; document.activeElement = null },
++    focus: () => { calls.focus += 1; document.activeElement = input } }
++  const searchQuery = { value: '' }, searchInput = { value: input }
++  const handler = new Function('goBack', 'searchInput', 'searchQuery', 'document', 'hasBlockingOverlay', 'canGoBackOnEscape',
++    `return (${script.slice(declaration.init.start, declaration.init.end)})`)(
++      () => { calls.back += 1 }, searchInput, searchQuery, document,
++      () => hasBlockingOverlay(document), event => canGoBackOnEscape(event, document))
++  return { handler, calls, input, searchQuery }
++}
++
++function nativeMetadataHistory() {
++  const history = createMemoryHistory()
++  let position = 0
++  const pages = ['']
++  const push = history.push.bind(history), replace = history.replace.bind(history)
++  history.push = (to, state) => { push(to, state); position += 1; pages.splice(position); pages[position] = to }
++  history.replace = (to, state) => { replace(to, state); pages[position] = to }
++  history.listen((_to, _from, info) => { position += info.delta })
++  Object.defineProperty(history, 'state', { get: () => ({ position, current: pages[position], back: pages[position - 1] || null }) })
++  return history
++}
++
++function fixture(t, { loggedIn = true, native = false, delayedInstall = false } = {}) {
++  const values = new Map(loggedIn ? [['token', 'test-session']] : [])
++  const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
++  const history = native ? nativeMetadataHistory() : createMemoryHistory()
++  const router = createRouter({ history, routes: configuredRoutes() })
++  const options = { authenticated: () => !!storage.getItem('token') && !storage.getItem('token').startsWith('mock-token-') }
++  let navigation = delayedInstall ? null : installNavigation(router, options)
++  router.beforeEach(createAuthNavigationGuard(router, storage))
++  const install = () => navigation = installNavigation(router, options)
++  t.after(() => { navigation?.dispose(); history.destroy() })
++  return { router, storage, install, get navigation() { return navigation } }
++}
++
++async function move(router, delta) {
++  const changed = new Promise(resolve => { const stop = router.afterEach(() => { stop(); resolve() }) })
++  router.go(delta)
++  await changed
++}
++
++for (const view of ['chats', 'contacts', 'groups', 'ai', 'companion']) {
++  test(`${view} survives settings and a remount snapshot`, async t => {
++    const { router, navigation } = fixture(t)
++    await router.push(mainLocation(view, { contactId: '3', groupId: '4' }, { view: 'ai', chatId: 12 }))
++    const original = router.currentRoute.value.fullPath
++    await router.push('/settings')
++    assert.equal(await navigation.back(), true)
++    assert.equal(router.currentRoute.value.fullPath, original)
++    assert.equal(readMainState(router.currentRoute.value.query).view, view)
++    assert.equal(readMainState(router.currentRoute.value.query).contactId, 3)
++  })
++}
++
++for (const path of ['/settings', '/profile', '/user/30']) {
++  test(`direct-open ${path} returns safely without history`, async t => {
++    const { router, navigation } = fixture(t)
++    await router.push(path)
++    await navigation.back()
++    assert.equal(router.currentRoute.value.name, 'Main')
++    assert.equal(readMainState(router.currentRoute.value.query).view, 'chats')
++    const current = router.currentRoute.value.fullPath
++    await navigation.back()
++    assert.equal(router.currentRoute.value.fullPath, current)
++  })
++}
++
++test('nested user profile returns to the original profile tab then source module', async t => {
++  const { router, navigation } = fixture(t)
++  await router.push(mainLocation('contacts', { contactId: '8' }))
++  await router.push('/profile?tab=social')
++  await router.push('/user/30')
++  await navigation.back()
++  assert.equal(router.currentRoute.value.name, 'Profile')
++  assert.equal(router.currentRoute.value.query.tab, 'social')
++  await navigation.back()
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'contacts')
++  assert.equal(readMainState(router.currentRoute.value.query).contactId, 8)
++})
++
++test('duplicate same-page entries are skipped rather than looping through profile tabs', async t => {
++  const { router, navigation } = fixture(t)
++  await router.push(mainLocation('ai'))
++  await router.push('/profile?tab=overview')
++  await router.push('/profile?tab=security')
++  await navigation.back()
++  assert.equal(router.currentRoute.value.name, 'Main')
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'ai')
++})
++
++test('replace preserves profile origin and does not add a return level', async t => {
++  const { router, navigation } = fixture(t)
++  await router.push(mainLocation('groups'))
++  await router.push('/profile?tab=overview')
++  await router.replace('/profile?tab=social')
++  await router.push('/settings')
++  await navigation.back()
++  assert.equal(router.currentRoute.value.query.tab, 'social')
++  await navigation.back()
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'groups')
++})
++
++test('Main production code derives the module from the URL rather than resetting local state', () => {
++  const source = readFileSync(new URL('../views/Main.vue', import.meta.url), 'utf8')
++  assert.match(source, /const activeView\s*=\s*computed\(\(\)\s*=>\s*readMainState\(route\.query\)\.view\)/)
++  assert.doesNotMatch(source, /activeView\.value\s*=[^=]/)
++})
++
++test('Setup production code has no synthetic user or token writes', () => {
++  const source = readFileSync(new URL('../views/Setup.vue', import.meta.url), 'utf8')
++  assert.doesNotMatch(source, /localStorage\.setItem\(\s*['"](?:token|user)['"]/)
++  assert.match(source, /userAPI\.updateProfile\(id,\s*\{\s*nickname:\s*name\s*\}\)/)
++  assert.equal(configuredRoutes().find(route => route.name === 'Setup').meta.requiresAuth, true)
++})
++
++for (const page of ['Settings', 'Profile', 'UserProfile']) {
++  test(`${page} production back button uses the tested safe navigation helper`, () => {
++    const source = readFileSync(new URL(`../views/${page}.vue`, import.meta.url), 'utf8')
++    assert.match(source, /const goBack\s*=\s*\(\)\s*=>\s*returnToSource\(router\)/)
++    assert.doesNotMatch(source, /router\.back\(\)/)
++  })
++}
++
++test('module return consumes a tavern entry instead of adding a back-and-forth loop', async t => {
++  const { router, navigation } = fixture(t)
++  await router.push(mainLocation('chats'))
++  await router.push(mainLocation('ai'))
++  await router.push(mainLocation('companion', {}, { view: 'ai' }))
++  await navigation.back('ai')
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'ai')
++  await move(router, -1)
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'chats')
++})
++
++test('browser history back and forward restore module query state', async t => {
++  const { router } = fixture(t)
++  await router.push(mainLocation('chats'))
++  await router.push(mainLocation('ai'))
++  await router.push(mainLocation('companion', {}, { view: 'ai', chatId: 5 }))
++  await move(router, -1)
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'ai')
++  await move(router, 1)
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'companion')
++  assert.equal(readMainState(router.currentRoute.value.query).returnChat, '5')
++})
++
++test('native history state can restore origin after in-memory provenance is lost', async t => {
++  const f = fixture(t, { native: true, delayedInstall: true })
++  await f.router.push(mainLocation('companion', {}, { view: 'ai' }))
++  await f.router.push('/settings')
++  f.install()
++  await f.navigation.back()
++  assert.equal(readMainState(f.router.currentRoute.value.query).view, 'companion')
++})
++
++test('rapid return clicks share one navigation and do not skip another page', async t => {
++  const { router, navigation } = fixture(t)
++  await router.push(mainLocation('chats'))
++  await router.push('/profile')
++  await router.push('/settings')
++  const first = navigation.back(), second = navigation.back()
++  assert.equal(first, second)
++  await first
++  assert.equal(router.currentRoute.value.name, 'Profile')
++})
++
++test('login replacement does not leave an authenticated login page as a return target', async t => {
++  const { router, storage, navigation } = fixture(t, { loggedIn: false })
++  await router.push('/login')
++  storage.setItem('token', 'test-session')
++  await router.replace(loginDestination(router, {}))
++  await router.push('/profile')
++  await navigation.back()
++  assert.equal(router.currentRoute.value.name, 'Main')
++  await navigation.back()
++  assert.equal(router.currentRoute.value.name, 'Main')
++})
++
++test('unauthenticated deep links retain a safe requested destination', async t => {
++  const { router, storage } = fixture(t, { loggedIn: false })
++  await router.push('/user/30')
++  assert.equal(router.currentRoute.value.name, 'Login')
++  assert.equal(router.currentRoute.value.query.redirect, '/user/30')
++  storage.setItem('token', 'test-session')
++  await router.replace(loginDestination(router, router.currentRoute.value.query))
++  assert.equal(router.currentRoute.value.name, 'UserProfile')
++})
++
++test('setup requires real authentication and does not act as a login bypass', async t => {
++  const { router, storage } = fixture(t, { loggedIn: false })
++  storage.setItem('token', 'mock-token-old-prototype')
++  await router.push('/setup')
++  assert.equal(storage.getItem('token'), null)
++  assert.equal(router.currentRoute.value.name, 'Login')
++  assert.equal(router.currentRoute.value.query.redirect, '/setup')
++  storage.setItem('token', 'test-session')
++  await router.replace(loginDestination(router, router.currentRoute.value.query))
++  assert.equal(router.currentRoute.value.name, 'Setup')
++})
++
++test('logout removes private return targets and back remains on login', async t => {
++  const { router, storage, navigation } = fixture(t)
++  await router.push(mainLocation('companion', {}, { view: 'ai' }))
++  await router.push('/settings')
++  storage.removeItem('token')
++  await router.replace('/login')
++  await navigation.back()
++  assert.equal(router.currentRoute.value.name, 'Login')
++})
++
++for (const target of ['https://example.invalid/main', '//example.invalid/main', 'javascript:alert(1)', '/unknown', '/login', '/setup', ['/main']]) {
++  test(`unsafe or ineligible return target ${JSON.stringify(target)} is refused`, t => {
++    const { router } = fixture(t)
++    assert.equal(safeAppPath(router, target), null)
++    if (target !== '/setup') assert.equal(router.resolve(loginDestination(router, { redirect: target })).name, 'Main')
++  })
++}
++
++test('hash route spelling and malformed module state are handled explicitly', t => {
++  const { router } = fixture(t)
++  assert.equal(safeAppPath(router, '#/main?view=ai'), '/main?view=ai')
++  assert.equal(readMainState({ view: ['ai'], returnView: 'unknown', contactId: ['3'], groupId: '-1' }).view, 'chats')
++  assert.equal(readMainState({ contactId: ['3'], groupId: '-1' }).contactId, null)
++  assert.equal(readMainState({ groupId: '-1' }).groupId, null)
++})
++
++const doc = (elements = [], activeElement = null) => ({ querySelectorAll: () => elements, activeElement,
++  defaultView: { getComputedStyle: element => element.style || {} } })
++const overlay = (visible = true) => ({ getBoundingClientRect: () => ({ width: visible ? 100 : 0, height: visible ? 100 : 0 }),
++  style: { display: visible ? 'block' : 'none', visibility: 'visible' } })
++
++for (const type of ['INPUT', 'TEXTAREA', 'SELECT']) {
++  test(`Escape does not leave a page while editing ${type}`, () => {
++    assert.equal(canGoBackOnEscape({ key: 'Escape', target: { tagName: type } }, doc()), false)
++  })
++}
++
++test('Escape respects composition, prevention and semantic controls', () => {
++  assert.equal(canGoBackOnEscape({ key: 'Escape', isComposing: true }, doc()), false)
++  assert.equal(canGoBackOnEscape({ key: 'Escape', defaultPrevented: true }, doc()), false)
++  assert.equal(canGoBackOnEscape({ key: 'Escape', target: { isContentEditable: true } }, doc()), false)
++  assert.equal(canGoBackOnEscape({ key: 'Escape', target: { getAttribute: () => 'slider' } }, doc()), false)
++})
++
++test('visible overlays own Escape but retained hidden dialog DOM does not block it', () => {
++  assert.equal(hasBlockingOverlay(doc([overlay(true)])), true)
++  assert.equal(canGoBackOnEscape({ key: 'Escape' }, doc([overlay(true)])), false)
++  assert.equal(hasBlockingOverlay(doc([overlay(false)])), false)
++  assert.equal(canGoBackOnEscape({ key: 'Escape' }, doc([overlay(false)])), true)
++})
++
++test('new navigation intent invalidates old callbacks without reviving on A-B-A', () => {
++  const intent = createNavigationIntent()
++  const first = intent.capture()
++  intent.invalidate()
++  const next = intent.capture()
++  assert.equal(intent.current(first), false)
++  assert.equal(intent.current(next), true)
++})
++
++test('a delayed tavern commit cannot override a newer main-module destination', async t => {
++  const { router } = fixture(t)
++  const intent = createNavigationIntent(), ticket = intent.capture()
++  const entrance = useTavernEntrance()
++  entrance.finish()
++  entrance.registerHost()
++  t.after(() => { entrance.finish(); entrance.unregisterHost() })
++  await router.push(mainLocation('ai'))
++  entrance.enter({ onCommit: () => { if (intent.current(ticket)) router.push(mainLocation('companion', {}, { view: 'ai' })) } })
++  intent.invalidate()
++  await router.push(mainLocation('groups'))
++  entrance.commit()
++  assert.equal(readMainState(router.currentRoute.value.query).view, 'groups')
++})
++
++const escapeEvent = () => ({ key: 'Escape', preventDefault() { this.defaultPrevented = true }, stopPropagation() {} })
++
++test('actual settings Escape clears search, then blurs it, before navigating back', () => {
++  const document = doc(), { handler, calls, input, searchQuery } = settingsKeyHandler(document)
++  document.activeElement = input
++  searchQuery.value = 'something'
++  handler(escapeEvent())
++  assert.equal(searchQuery.value, '')
++  assert.equal(calls.back, 0)
++  handler(escapeEvent())
++  assert.equal(calls.blur, 1)
++  assert.equal(calls.back, 0)
++  handler(escapeEvent())
++  assert.equal(calls.back, 1)
++})
++
++test('actual settings handler neither returns nor clears search through a visible modal', () => {
++  const document = doc([overlay(true)]), { handler, calls, input, searchQuery } = settingsKeyHandler(document)
++  document.activeElement = input
++  searchQuery.value = 'keep'
++  handler(escapeEvent())
++  assert.equal(searchQuery.value, 'keep')
++  assert.equal(calls.back, 0)
++})
++
++test('actual settings handler does not leave other inputs or trigger back on ordinary keys', () => {
++  const document = doc(), { handler, calls } = settingsKeyHandler(document)
++  document.activeElement = { tagName: 'TEXTAREA' }
++  handler(escapeEvent())
++  assert.equal(calls.back, 0)
++  document.activeElement = null
++  handler({ key: 'x' })
++  assert.equal(calls.back, 0)
++})
+diff --git a/nexus-chat-frontend/src/views/Main.vue b/nexus-chat-frontend/src/views/Main.vue
+--- a/nexus-chat-frontend/src/views/Main.vue
++++ b/nexus-chat-frontend/src/views/Main.vue
+@@ -66,6 +66,8 @@
+ 
+ <script setup>
+ import { ref, provide, onMounted, onUnmounted, computed, watch } from 'vue'
++import { useRoute, useRouter } from 'vue-router'
++import { mainLocation, readMainState, goBackToMain, hasBlockingOverlay, createNavigationIntent } from '@/router/navigation'
+ import NavRail from '@/components/layout/NavRail.vue'
+ import TopBar from '@/components/layout/TopBar.vue'
+ import LeftPanel from '@/components/layout/LeftPanel.vue'
+@@ -103,7 +105,13 @@
+ const agentStore = useAgentStore()
+ const tavernEntrance = useTavernEntrance()
+ const { t } = useI18n()
+-const activeView = ref('chats')
++const route = useRoute()
++const router = useRouter()
++let mainAlive = true
++const navigationIntent = createNavigationIntent()
++onUnmounted(() => { mainAlive = false; navigationIntent.invalidate() })
++// The existing /main route carries its module; a remount must not reset it.
++const activeView = computed(() => readMainState(route.query).view)
+ const width = ref(window.innerWidth)
+ const isMobile = computed(() => width.value <= 768)
+ const handleResize = () => { width.value = window.innerWidth }
+@@ -156,20 +164,24 @@
+ // door. Where you were before you walked in is remembered and restored; falling
+ // back to the chat list only when there is nothing to return to (a cold start
+ // straight into the tavern, e.g. from a deep link).
+-const viewBeforeTavern = ref(null)
++const viewBeforeTavern = ref(readMainState(route.query).returnView)
+ // The conversation that was open when the user walked into the tavern. Entering
+ // clears the active chat (the tavern draws its own canvas), so without this the
+ // chat list comes back with nothing selected.
+ const chatBeforeTavern = ref(null)
+ 
+-const closeRoleChat = () => {
+-  const previous = viewBeforeTavern.value
+-  const previousChat = chatBeforeTavern.value
++const closeRoleChat = async () => {
++  const state = readMainState(route.query)
++  const previous = state.returnView || viewBeforeTavern.value
++  const chatId = state.returnChat || chatBeforeTavern.value?.id
++  const userId = userStore.currentUser?.id
++  const target = previous && previous !== 'companion' ? previous : 'chats'
++  // Back consumes this context instead of pushing a tavern/chat return loop.
++  await goBackToMain(router, target, route.query)
+   viewBeforeTavern.value = null
+   chatBeforeTavern.value = null
+-  const target = previous && previous !== 'companion' ? previous : 'chats'
+-  setActiveView(target)
+-  // Restore the conversation the user was reading, once the shell is back.
++  if (!mainAlive || route.name !== 'Main' || activeView.value !== target || userStore.currentUser?.id !== userId) return
++  const previousChat = chatStore.sortedChats.find(chat => String(chat.id) === String(chatId))
+   if (previousChat && target === 'chats') chatStore.setActiveChat(previousChat)
+ }
+ const paletteOpen = ref(false)
+@@ -182,16 +194,30 @@
+ const activateAssistantChat = () => {
+   chatStore.setActiveChat(chatStore.sortedChats.find(c => c.id === AI_ASSISTANT_CHAT_ID))
+ }
+-const applyActiveView = (view) => {
+-  activeView.value = view
++const applyViewEffects = (view) => {
+   if (view === 'companion' || (view === 'ai' && isMobile.value)) {
+-    // On phones the AI list must be reachable even when coming from an open chat.
+     chatStore.clearActiveChat()
+   } else if (view === 'ai') activateAssistantChat()
+ }
++const applyActiveView = (view, replace = false) => {
++  if (!mainAlive || route.name !== 'Main') return Promise.resolve()
++  const location = mainLocation(view, route.query, {
++    view: viewBeforeTavern.value, chatId: chatBeforeTavern.value?.id
++  })
++  if (router.resolve(location).fullPath === route.fullPath) {
++    applyViewEffects(view)
++    return Promise.resolve()
++  }
++  return router[replace ? 'replace' : 'push'](location)
++}
++watch(activeView, view => { if (route.name === 'Main') applyViewEffects(view) }, { flush: 'sync' })
++onMounted(() => applyViewEffects(activeView.value))
+ 
+ const setActiveView = (view) => {
++  if (!mainAlive || route.name !== 'Main') return
+   if (view === 'companion') {
++    if (activeView.value !== 'companion' && tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) return
++    const intent = navigationIntent.capture()
+     // Remember where we came from, so the back arrow can return there. Only the
+     // first step in counts: navigating around inside the tavern must not
+     // overwrite the place we are eventually returning to.
+@@ -199,10 +225,15 @@
+       viewBeforeTavern.value = activeView.value
+       chatBeforeTavern.value = chatStore.activeChat || null
+     }
+-    enterTavern(() => applyActiveView('companion'))
++    const userId = userStore.currentUser?.id
++    enterTavern(() => {
++      if (mainAlive && navigationIntent.current(intent) && route.name === 'Main' && userStore.currentUser?.id === userId) applyActiveView('companion')
++    })
+     return
+   }
+-  applyActiveView(view)
++  navigationIntent.invalidate()
++  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) tavernEntrance.cancel()
++  return applyActiveView(view)
+ }
+ 
+ // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
+@@ -253,10 +284,7 @@
+   paletteOpen.value = true
+ }
+ 
+-const openAiAssistant = () => {
+-  activeView.value = 'ai'
+-  activateAssistantChat()
+-}
++const openAiAssistant = () => setActiveView('ai')
+ 
+ const agentHistoryFocusSignal = ref(0)
+ const focusAgentHistory = () => {
+@@ -351,7 +379,7 @@
+ // Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
+ const handleGlobalKeydown = (event) => {
+   // Bubble on window: document capture (e.g. artifact tabs 1–3) gets first refusal.
+-  if (event.defaultPrevented || event.isComposing) return
++  if (event.defaultPrevented || event.isComposing || hasBlockingOverlay()) return
+   handleCollapseKey(event)
+   const mod = event.metaKey || event.ctrlKey
+   if (!mod) return
+@@ -411,25 +439,45 @@
+ // its create-group dialog (the dialog instance lives inside LeftPanel).
+ const createGroupSignal = ref(0)
+ provide('createGroupSignal', createGroupSignal)
+-const requestCreateGroup = () => {
+-  setActiveView('groups')
+-  createGroupSignal.value += 1
++const requestCreateGroup = async () => {
++  await setActiveView('groups')
++  if (mainAlive && route.name === 'Main' && activeView.value === 'groups') createGroupSignal.value += 1
+ }
+ provide('requestCreateGroup', requestCreateGroup)
+ 
+ // Which contact / group the directory panes have selected. The middle pane
+ // shows that record's detail card (Prism c2 / c3); null keeps the old view.
+-const selectedContactId = ref(null)
+-const selectedGroupId = ref(null)
++const selectedContactId = ref(readMainState(route.query).contactId)
++const selectedGroupId = ref(readMainState(route.query).groupId)
+ provide('selectedContactId', selectedContactId)
+ provide('selectedGroupId', selectedGroupId)
++watch(() => route.fullPath, () => {
++  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE && (route.name !== 'Main' || activeView.value !== 'companion')) {
++    navigationIntent.invalidate()
++    tavernEntrance.cancel()
++  }
++  if (route.name !== 'Main') return
++  const state = readMainState(route.query)
++  selectedContactId.value = state.contactId
++  selectedGroupId.value = state.groupId
++}, { flush: 'sync' })
++watch([selectedContactId, selectedGroupId], ([contactId, groupId]) => {
++  if (!mainAlive || route.name !== 'Main') return
++  const query = { ...route.query }
++  if (contactId) query.contactId = String(contactId)
++  else delete query.contactId
++  if (groupId) query.groupId = String(groupId)
++  else delete query.groupId
++  const location = { name: 'Main', query }
++  if (router.resolve(location).fullPath !== route.fullPath) router.replace(location)
++})
+ 
+ // "Add contact" (nav-rail button on the contacts pane) uses the same counter.
+ const addContactSignal = ref(0)
+ provide('addContactSignal', addContactSignal)
+-provide('requestAddContact', () => {
+-  setActiveView('contacts')
+-  addContactSignal.value += 1
++provide('requestAddContact', async () => {
++  await setActiveView('contacts')
++  if (mainAlive && route.name === 'Main' && activeView.value === 'contacts') addContactSignal.value += 1
+ })
+ 
+ // Same pattern for the chat header's search button: the search dialog lives
+diff --git a/nexus-chat-frontend/src/views/Settings.vue b/nexus-chat-frontend/src/views/Settings.vue
+--- a/nexus-chat-frontend/src/views/Settings.vue
++++ b/nexus-chat-frontend/src/views/Settings.vue
+@@ -11,9 +11,9 @@
+         <!-- macOS draws its own traffic lights over the frameless window; this
+              spacer keeps the back pill clear of them. Mirrors NavRail's 78px. -->
+         <div v-if="isMac" class="traffic-spacer" :style="{ width: `${72 * 100 / settings.zoomPercent}px` }" aria-hidden="true"></div>
+-        <button type="button" class="back-pill" :title="t('settings.backToChat')" @click="goBack">
++        <button type="button" class="back-pill" :title="t('common.back')" @click="goBack">
+           <span class="material-symbols-outlined">arrow_back</span>
+-          <span>{{ t('settings.backToChat') }}</span>
++          <span>{{ t('common.back') }}</span>
+           <kbd>ESC</kbd>
+         </button>
+       </div>
+@@ -789,6 +789,7 @@
+ <script setup>
+ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+ import { useRouter } from 'vue-router'
++import { goBack as returnToSource, canGoBackOnEscape, hasBlockingOverlay } from '@/router/navigation'
+ import { useI18n } from 'vue-i18n'
+ import { ElMessage, ElMessageBox } from 'element-plus'
+ import { useUserStore } from '@/stores/user'
+@@ -1288,33 +1289,32 @@
+ 
+ const handleLogout = async () => {
+   await userStore.logout()
+-  router.push('/login')
+-}
+-
+-// "Back" must always lead somewhere: when settings was opened directly (a
+-// reload, a deep link) there is no in-app history entry to go back to.
+-const goBack = () => {
+-  if (window.history.state?.back) router.back()
+-  else router.replace('/')
+-}
++  router.replace('/login')
++}
++
++const goBack = () => returnToSource(router)
+ 
+ /* ── Keyboard: ESC back, ⌘K focus search ────────────────── */
+ const onKeydown = (event) => {
++  if (event.defaultPrevented || event.isComposing || hasBlockingOverlay()) return
+   const mod = event.metaKey || event.ctrlKey
+   if (mod && event.key.toLowerCase() === 'k') {
+     event.preventDefault()
+     searchInput.value?.focus()
+     return
+   }
+-  if (event.key !== 'Escape' || event.defaultPrevented) return
+-  // ESC belongs to whatever is open on top (a confirm dialog, the model panel).
+-  if (document.querySelector('.el-overlay:not([style*="display: none"])')) return
+-  if (document.activeElement === searchInput.value) {
++  if (event.key === 'Escape' && document.activeElement === searchInput.value) {
++    event.preventDefault()
++    event.stopPropagation()
+     if (searchQuery.value) searchQuery.value = ''
+-    else searchInput.value.blur()
++    else searchInput.value?.blur()
+     return
+   }
+-  goBack()
++  if (canGoBackOnEscape(event)) {
++    event.preventDefault()
++    event.stopPropagation()
++    goBack()
++  }
+ }
+ 
+ watch(() => userStore.currentUser?.id, () => { if (!disposed) void loadPrivacy() })
+diff --git a/nexus-chat-frontend/src/views/Profile.vue b/nexus-chat-frontend/src/views/Profile.vue
+--- a/nexus-chat-frontend/src/views/Profile.vue
++++ b/nexus-chat-frontend/src/views/Profile.vue
+@@ -236,6 +236,7 @@
+ <script setup>
+ import { ref, computed, onMounted, watch } from 'vue'
+ import { useRouter, useRoute } from 'vue-router'
++import { goBack as returnToSource } from '@/router/navigation'
+ import { useI18n } from 'vue-i18n'
+ import { useUserStore } from '@/stores/user'
+ import { useContactStore } from '@/stores/contact'
+@@ -369,7 +370,7 @@
+   return key ? t(`profile.${key}`) : t('profile.activityRecorded')
+ }
+ 
+-const goBack = () => router.back()
++const goBack = () => returnToSource(router)
+ 
+ const handleProfileUpdated = () => loadProfileData()
+ 
+diff --git a/nexus-chat-frontend/src/views/UserProfile.vue b/nexus-chat-frontend/src/views/UserProfile.vue
+--- a/nexus-chat-frontend/src/views/UserProfile.vue
++++ b/nexus-chat-frontend/src/views/UserProfile.vue
+@@ -148,8 +148,9 @@
+ </template>
+ 
+ <script setup>
+-import { ref, computed, onMounted, watch } from 'vue'
++import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+ import { useRouter, useRoute } from 'vue-router'
++import { goBack as returnToSource, mainLocation } from '@/router/navigation'
+ import { useI18n } from 'vue-i18n'
+ import { useUserStore } from '@/stores/user'
+ import { useContactStore } from '@/stores/contact'
+@@ -193,7 +194,7 @@
+ 
+ // Computed properties
+ const userId = computed(() => Number(props.id) || Number(route.params.id))
+-const isSelf = computed(() => userId.value === userStore.currentUser?.id)
++const isSelf = computed(() => userStore.currentUser?.id != null && userId.value === Number(userStore.currentUser.id))
+ const isOnline = computed(() => userProfile.value?.isOnline)
+ const showOnlineStatus = computed(() => userProfile.value?.showOnlineStatus !== false)
+ 
+@@ -208,73 +209,50 @@
+   return {}
+ })
+ 
+-// Load user profile
++// A reused /user/:id component must not return or fill data for an older ID.
++let profileVersion = 0, profileAlive = true
++onBeforeUnmount(() => { profileAlive = false; profileVersion += 1 })
+ const loadProfile = async () => {
++  const version = ++profileVersion, path = route.path
++  const targetId = userId.value, viewerId = userStore.currentUser?.id
++  const current = () => profileAlive && profileVersion === version && route.path === path &&
++    userId.value === targetId && userStore.currentUser?.id === viewerId
+   loading.value = true
++  userProfile.value = null
+   try {
+-    const viewerId = userStore.currentUser?.id
+-
+-    // If viewing self, redirect to /profile
+-    if (isSelf.value) {
+-      router.replace('/profile')
+-      return
+-    }
+-
+-    // Get user profile (with privacy filtering)
+-    const response = await userAPI.getUserProfileForViewer(userId.value, viewerId)
++    if (isSelf.value) { await router.replace('/profile'); return }
++    const response = await userAPI.getUserProfileForViewer(targetId, viewerId)
++    if (!current()) return
++    const quiet = promise => promise.then(result => result.data).catch(() => null)
++    const [contact, blocked, mutual, links, stats] = await Promise.all([
++      quiet(contactAPI.checkIsContact(viewerId, targetId)),
++      quiet(contactAPI.checkBlocked(viewerId, targetId)),
++      quiet(contactAPI.getMutualContacts(viewerId, targetId)),
++      quiet(userAPI.getSocialLinks(targetId)), quiet(userAPI.getUserStats(targetId))
++    ])
++    if (!current()) return
+     userProfile.value = response.data
+-
+-    // Check if already a contact
+-    try {
+-      const contactCheck = await contactAPI.checkIsContact(viewerId, userId.value)
+-      isContact.value = contactCheck.data
+-    } catch (e) {
+-      isContact.value = false
+-    }
+-
+-    // Check if blocked
+-    try {
+-      const blockCheck = await contactAPI.checkBlocked(viewerId, userId.value)
+-      isBlocked.value = blockCheck.data?.isBlocked || false
+-    } catch (e) {
+-      isBlocked.value = false
+-    }
+-
+-    // Get mutual contacts
+-    try {
+-      const mutualResponse = await contactAPI.getMutualContacts(viewerId, userId.value)
+-      mutualContacts.value = mutualResponse.data || []
+-    } catch (e) {
+-      mutualContacts.value = []
+-    }
+-
+-    // Get social links
+-    try {
+-      const linksResponse = await userAPI.getSocialLinks(userId.value)
+-      socialLinks.value = linksResponse.data || {}
+-    } catch (e) {
+-      socialLinks.value = {}
+-    }
+-
+-    // Get user stats (contacts count, groups count)
+-    try {
+-      const statsResponse = await userAPI.getUserStats(userId.value)
+-      userStats.value = statsResponse.data
+-    } catch (e) {
+-      userStats.value = null
+-    }
+-
++    isContact.value = contact === true
++    isBlocked.value = blocked?.isBlocked === true
++    mutualContacts.value = mutual || []
++    socialLinks.value = links || {}
++    userStats.value = stats
+   } catch (error) {
++    if (!current()) return
+     console.error('Failed to load user profile:', error)
+-    ElMessage.error('Failed to load user profile')
+-    router.back()
++    ElMessage.error(t('common.failed'))
++    await returnToSource(router)
+   } finally {
+-    loading.value = false
++    if (current()) loading.value = false
+   }
+ }
+ 
+ // Go back
+-const goBack = () => router.back()
++const goBack = () => returnToSource(router)
++watch(() => userStore.currentUser?.id, () => {
++  profileVersion += 1
++  if (profileAlive && route.name === 'UserProfile' && userStore.currentUser?.id) loadProfile()
++}, { flush: 'sync' })
+ 
+ // Add contact
+ const addContact = async () => {
+@@ -336,17 +314,18 @@
+ 
+ // Start chat
+ const startChat = async () => {
++  const version = profileVersion, path = route.path, viewerId = userStore.currentUser?.id, targetId = userId.value
++  const current = () => profileAlive && profileVersion === version && route.path === path &&
++    userStore.currentUser?.id === viewerId && userId.value === targetId
+   try {
+-    // Create or get direct chat
+-    const response = await chatAPI.createDirectChat(userStore.currentUser.id, userId.value)
+-    const chat = response.data
+-
+-    // Set active chat and navigate
+-    chatStore.setActiveChat(chat)
+-    router.push('/main')
++    const response = await chatAPI.createDirectChat(viewerId, targetId)
++    if (!current()) return
++    chatStore.setActiveChat(response.data)
++    await router.push(mainLocation('chats'))
+   } catch (error) {
++    if (!current()) return
+     console.error('Failed to start chat:', error)
+-    ElMessage.error('Failed to start chat')
++    ElMessage.error(t('common.failed'))
+   }
+ }
+ 
+diff --git a/nexus-chat-frontend/src/views/Login.vue b/nexus-chat-frontend/src/views/Login.vue
+--- a/nexus-chat-frontend/src/views/Login.vue
++++ b/nexus-chat-frontend/src/views/Login.vue
+@@ -186,7 +186,8 @@
+ 
+ <script setup>
+ import { ref, computed, reactive, onUnmounted } from 'vue'
+-import { useRouter } from 'vue-router'
++import { useRouter, useRoute } from 'vue-router'
++import { loginDestination } from '@/router/navigation'
+ import { useI18n } from 'vue-i18n'
+ import { useUserStore } from '@/stores/user'
+ import { authAPI } from '@/services/api'
+@@ -196,6 +197,7 @@
+ 
+ const { t } = useI18n()
+ const router = useRouter()
++const route = useRoute()
+ const userStore = useUserStore()
+ 
+ const isLoginMode = ref(true)
+@@ -313,7 +315,7 @@
+   loading.value = true
+   try {
+     await userStore.login(loginForm.usernameOrEmail, loginForm.password)
+-    router.push('/main')
++    if (route.name === 'Login') await router.replace(loginDestination(router, route.query))
+   } catch (error) {
+     ElMessage.error(error || t('auth.loginFailed'))
+   } finally {
+@@ -365,7 +367,7 @@
+       avatarUrl: uploadedAvatarUrl,  // 使用上传后的 URL 而不是 base64
+       verificationCode: registerForm.verificationCode
+     })
+-    router.push('/main')
++    if (route.name === 'Login') await router.replace(loginDestination(router, route.query))
+     ElMessage.success(t('auth.registerSuccess') || 'Registration successful')
+   } catch (error) {
+     ElMessage.error(error || t('auth.registerFailed'))
+diff --git a/nexus-chat-frontend/src/views/Setup.vue b/nexus-chat-frontend/src/views/Setup.vue
+--- a/nexus-chat-frontend/src/views/Setup.vue
++++ b/nexus-chat-frontend/src/views/Setup.vue
+@@ -39,7 +39,8 @@
+ 
+         <button 
+           class="submit-btn" 
+-          :disabled="!nickname"
++          :disabled="!nickname.trim() || saving"
++          :aria-busy="saving"
+           @click="completeSetup"
+         >
+           {{ $t('auth.startMessaging') }}
+@@ -50,12 +51,28 @@
+ </template>
+ 
+ <script setup>
+-import { ref, computed } from 'vue'
+-import { useRouter } from 'vue-router'
++import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
++import { useRouter, useRoute } from 'vue-router'
++import { useI18n } from 'vue-i18n'
++import { ElMessage } from 'element-plus'
++import { useUserStore } from '@/stores/user'
++import { userAPI } from '@/services/api'
++import { mainLocation } from '@/router/navigation'
+ 
+ const router = useRouter()
++const route = useRoute()
++const userStore = useUserStore()
++const { t } = useI18n()
+ const nickname = ref('')
+ const avatarUrl = ref(null)
++const saving = ref(false)
++let alive = true
++onBeforeUnmount(() => { alive = false })
++onMounted(() => {
++  if (!userStore.currentUser) userStore.loadUserFromStorage()
++  nickname.value = userStore.currentUser?.nickname || ''
++  avatarUrl.value = userStore.currentUser?.avatar || null
++})
+ const fileInput = ref(null)
+ 
+ const avatarStyle = computed(() => {
+@@ -84,29 +101,30 @@
+   }
+ }
+ 
+-const completeSetup = () => {
+-  if (!nickname.value) return
+-
+-  // Save user info
+-  const user = {
+-    id: Date.now().toString(),
+-    name: nickname.value,
+-    avatar: avatarUrl.value,
+-    createdAt: new Date().toISOString()
+-  }
+-  
+-  localStorage.setItem('user', JSON.stringify(user))
+-  
+-  // If we came from login (which sets token), we can go to main
+-  // If no token, we might need to handle that, but assuming flow is Login -> Setup -> Main
+-  // Or just Setup -> Main if it's a local-first app as per some requirements
+-  
+-  // For now, ensure we have a token or mock one if this is a standalone setup
+-  if (!localStorage.getItem('token')) {
+-    localStorage.setItem('token', 'mock-token-' + Date.now())
+-  }
+-
+-  router.push('/main')
++const completeSetup = async () => {
++  const name = nickname.value.trim(), id = userStore.currentUser?.id
++  const token = localStorage.getItem('token'), avatar = avatarUrl.value
++  if (saving.value || !name) return
++  if (!id || !token || token.startsWith('mock-token-')) {
++    await router.replace({ name: 'Login', query: { redirect: '/setup' } })
++    return
++  }
++  const current = () => alive && route.name === 'Setup' && userStore.currentUser?.id === id && localStorage.getItem('token') === token
++  saving.value = true
++  try {
++    if (avatar?.startsWith('data:image/')) {
++      await userAPI.uploadAvatar(id, avatar)
++      if (!current()) return
++    }
++    await userAPI.updateProfile(id, { nickname: name })
++    if (!current()) return
++    await userStore.loadUserProfile()
++    if (current()) await router.replace(mainLocation('chats'))
++  } catch {
++    if (current()) ElMessage.error(t('common.failed'))
++  } finally {
++    if (current()) saving.value = false
++  }
+ }
+ </script>
+ 
+diff --git a/nexus-chat-frontend/src/components/profile/SocialModule.vue b/nexus-chat-frontend/src/components/profile/SocialModule.vue
+--- a/nexus-chat-frontend/src/components/profile/SocialModule.vue
++++ b/nexus-chat-frontend/src/components/profile/SocialModule.vue
+@@ -190,6 +190,7 @@
+ <script setup>
+ import { ref, computed, onMounted } from 'vue'
+ import { useRouter } from 'vue-router'
++import { mainLocation } from '@/router/navigation'
+ import { useI18n } from 'vue-i18n'
+ import { useUserStore } from '@/stores/user'
+ import { useContactStore } from '@/stores/contact'
+@@ -370,7 +371,7 @@
+ }
+ 
+ // --- Navigation ---
+-const goContacts = () => router.push('/main')
++const goContacts = () => router.push(mainLocation('contacts'))
+ const viewProfile = (c) => {
+   if (c?.id) router.push(`/user/${c.id}`)
+ }

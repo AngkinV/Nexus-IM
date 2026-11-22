@@ -11,9 +11,9 @@
         <!-- macOS draws its own traffic lights over the frameless window; this
              spacer keeps the back pill clear of them. Mirrors NavRail's 78px. -->
         <div v-if="isMac" class="traffic-spacer" aria-hidden="true"></div>
-        <button type="button" class="back-pill" :title="t('settings.backToChat')" @click="goBack">
+        <button type="button" class="back-pill" :title="t('common.back')" @click="goBack">
           <span class="material-symbols-outlined">arrow_back</span>
-          <span>{{ t('settings.backToChat') }}</span>
+          <span>{{ t('common.back') }}</span>
           <kbd>ESC</kbd>
         </button>
       </div>
@@ -693,6 +693,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { goBack as returnToSource, canGoBackOnEscape, hasBlockingOverlay } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
@@ -1060,20 +1061,30 @@ const resetDefaults = async () => {
 
 const handleLogout = async () => {
   await userStore.logout()
-  router.push('/login')
+  router.replace('/login')
 }
 
-const goBack = () => router.back()
+const goBack = () => returnToSource(router)
 
 /* ── Keyboard: ESC back, ⌘K focus search ────────────────── */
 const onKeydown = (event) => {
+  if (event.defaultPrevented || event.isComposing || hasBlockingOverlay()) return
   const mod = event.metaKey || event.ctrlKey
   if (mod && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     searchInput.value?.focus()
     return
   }
-  if (event.key === 'Escape' && document.activeElement !== searchInput.value) {
+  if (event.key === 'Escape' && document.activeElement === searchInput.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (searchQuery.value) searchQuery.value = ''
+    else searchInput.value?.blur()
+    return
+  }
+  if (canGoBackOnEscape(event)) {
+    event.preventDefault()
+    event.stopPropagation()
     goBack()
   }
 }
