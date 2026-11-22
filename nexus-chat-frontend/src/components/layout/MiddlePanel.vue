@@ -1150,7 +1150,7 @@ const handleReactMessage = async (msg, emoji) => {
 
 .welcome-subtitle {
   max-width: 448px;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.625;
   letter-spacing: -0.005em;
   font-weight: 400;

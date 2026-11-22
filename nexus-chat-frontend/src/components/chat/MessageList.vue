@@ -535,7 +535,7 @@ const handleAvatarClick = (senderId) => {
 }
 
 .message-text {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.625;
   letter-spacing: -0.005em;
   word-wrap: break-word;

@@ -160,10 +160,13 @@ export default {
       "fontWeight": "400"
     }
   ],
+  // Conversation body text. DESIGN.md exports 1rem / 1.625rem; stepped down to
+  // 15px (same 1.625 ratio) so the type scale reads 13 -> 14 -> 15 across the
+  // nav rail, the list pane and the conversation instead of jumping to 16.
   "body-lg": [
-    "1rem",
+    "0.9375rem",
     {
-      "lineHeight": "1.625rem",
+      "lineHeight": "1.625",
       "letterSpacing": "-0.005em",
       "fontWeight": "400"
     }
