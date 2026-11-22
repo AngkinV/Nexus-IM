@@ -35,6 +35,7 @@
 - [6. Flutter App](#app)
 - [7. 职责分工对比](#comparison)
 - [8. 建议的阅读顺序](#reading-order)
+- [9. 项目边界与红线](docs/BOUNDARIES.md)
 
 本文保留四模块原有说明，并整合以下历史来源的独有信息：`nexus-chat-backend/README.md`、`nexus-chat-backend/PROJECT_OVERVIEW.md`、`nexus-chat-frontend/README.md`、`nexus-chat-frontend/PROJECT_OVERVIEW.md`。这些路径仅记录合并来源，不再作为文档入口。Agent、Flutter、IM 计划、平台资源与技能文档仍各自保留。
 
@@ -1625,6 +1626,8 @@ Store 文件均在 `src/stores/`，六个 Store 的基本职责见 5.5。补充�
 
 <a id="reading-order"></a>
 ## 8. 建议的阅读顺序
+
+> **先看边界**：开发、评审或交接前，先读 [项目边界与红线](docs/BOUNDARIES.md)（`docs/BOUNDARIES.md`），它是所有文档的最高裁决来源；再按下面顺序熟悉代码。
 
 建议按下面顺序熟悉:
 

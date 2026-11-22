@@ -1,29 +1,41 @@
 # Nexus 结构与提交流程清单
 
-更新：2026-11-19，基准 `feature-branch` = `4f35824`（PR #8 合并点）。
-本清单与 `DEVELOPMENT.md` 冲突时以本清单为准（后者"main = 正本"的说法已过时）。
+更新：2026-11-20，基准 `feature-branch` = `3d5248e`（PR #12 合并点）。
+本清单与 `DEVELOPMENT.md` 冲突时以本清单为准。
+
+> 分支结构、凭据布局、提交流程是**唯一事实来源**，其他文档引用本文，不复制。
+> 每次合并 PR 后必须同步更新：本行基线与 §1 分支/worktree 状态。
 
 ## 1. 分支结构
 
 | 分支 | 角色 | 状态 |
 |---|---|---|
 | `feature-branch` | **主线**（GitHub 默认分支） | 所有 PR 合并到这里 |
-| `main` | 陈旧分支 | 停在 `4b30a99`，不是主线，不要往它合并 |
+| `main` | **稳定兜底分支** | feature-branch 稳定后才同步过来；是兜底，不是开发目标，不直接往它提交/合并 |
 | `m0/foundation` | 历史里程碑分支 | 已合并，可清理 |
 | `feat/companion-roles` | 功能分支（PR #8） | 已合并，本地+远端仍在，可清理 |
 | `feat/ui-reshape` | 功能分支（PR #6、#7） | 已删除（本地+远端） |
 | `partial-giraffe` | worktree 分支 | 内有 8 处未提交修改，属并行会话，**不要动** |
+| `bad-condor` | worktree 分支 | 干净，并行会话工作区 |
+| `slimy-silkworm` | worktree 分支 | 内有 4 处未提交修改，属并行会话，**不要动** |
+| `central-wombat` | worktree 分支 | 当前会话工作区，文档维护 |
+
+**双分支策略**：日常开发全在 `feature-branch` 及其短分支上进行；只有当 `feature-branch` 上攒够一批功能、验证稳定后，才把它同步到 `main`。`main` 永远保持「可回退的稳定快照」，不直接从 `main` 开分支或提交。
 
 worktree（同一仓库的多份检出）：
 
 | 路径 | 分支 | 说明 |
 |---|---|---|
 | `/Users/anglv/Nexus` | `feature-branch` | 主工作区 |
-| `/Users/anglv/alma/worktrees/nexus/partial-giraffe` | `partial-giraffe` | 并行会话工作区 |
+| `/Users/anglv/alma/worktrees/nexus/bad-condor` | `bad-condor` | 并行会话工作区（当前干净） |
+| `/Users/anglv/alma/worktrees/nexus/central-wombat` | `central-wombat` | 当前会话工作区 |
+| `/Users/anglv/alma/worktrees/nexus/partial-giraffe` | `partial-giraffe` | 并行会话工作区（8 处未提交） |
+| `/Users/anglv/alma/worktrees/nexus/slimy-silkworm` | `slimy-silkworm` | 并行会话工作区（4 处未提交） |
 
-**并行会话警告**：另一个会话会同时往主工作区写代码（当前 `MindOrbit.vue`、
-`RoleChatView.vue` 有它的未提交小改动）。提交前先 `git status` + `ls -lT <文件>`
-看时间戳，确认改动已收尾、且属于本轮要提交的内容。
+**并行会话警告**：多个会话会同时往各自 worktree 写代码。当前各工作区未提交修改：
+`/Users/anglv/Nexus` 4 处（`AgentSessionList.vue`、`en.json`、`zh.json`、`agent.js`）、
+`partial-giraffe` 8 处、`slimy-silkworm` 4 处。提交前先 `git status` + `ls -lT <文件>`
+看时间戳，确认改动已收尾、且属于本轮要提交的内容；不要动别人的 worktree 及其未提交修改。
 
 ## 2. 目录结构
 
@@ -76,6 +88,9 @@ worktree（同一仓库的多份检出）：
 9. **同步**：`git fetch origin feature-branch:feature-branch && git switch feature-branch`。
 10. **清理（可选）**：`git branch -d feat/简短名 && git push origin --delete feat/简短名`。
     只用 `-d`（git 会校验已合并），**禁止 `-D` 强删**。
+11. **同步 `main`（稳定后才做）**：`feature-branch` 上攒够一批功能且验证稳定后，
+    再把 `feature-branch` 快进同步到 `main`（`main` 是稳定兜底，不直接从它开发）。
+    并同步更新本文基线与 §1 状态。
 
 ### API 模板（本机无 gh CLI，用 git 已存凭据）
 
@@ -101,14 +116,14 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 - 本地 pytest 7 个失败：shell 的 `NO_PROXY` 含 `::1` + py3.9 venv 旧版 httpx 的解析
   bug，`env -u NO_PROXY -u no_proxy` 即全绿；CI 无此变量，不受影响。
 - GitHub 分支页的 ahead/behind 有缓存延迟，以 `git rev-list --left-right --count` 为准。
-- 不往 `main` 合并；不强推（force push）；不动别的 worktree 及其未提交修改。
+- 不直接从 `main` 开发/合并（`main` 是稳定兜底，见 §1）；不强推（force push）；不动别的 worktree 及其未提交修改。
 - `.env.example` 只是占位模板，别把真实值写回去。
 - 合并后主工作区仍可能出现并行会话的新改动，属正常活跃工作，留下一轮处理。
 
 ## 6. 当前待办
 
-- 主工作区 2 处未提交小改动（`MindOrbit.vue`、`RoleChatView.vue`，并行会话所写）。
-- `partial-giraffe` worktree 8 处未提交（并行会话），去留待定。
+- 并行 worktree 未提交修改（截至 2026-11-20）：`/Users/anglv/Nexus` 4 处、
+  `partial-giraffe` 8 处、`slimy-silkworm` 4 处；均属并行会话，去留待定，**不要动**。
 - 可清理分支：`feat/companion-roles`、`m0/foundation`（本地+远端）。
 - 旧凭据轮换：QQ 邮箱旧授权码、服务器旧 MySQL/JWT（见第 3 节）。
 - 本清单文件尚未提交，随下一轮提交入库。

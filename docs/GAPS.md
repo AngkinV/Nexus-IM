@@ -1,7 +1,7 @@
 # Nexus 项目缺口清单（供 Agent 使用）
 
 > 生成日期：2026-11-20
-> 代码基线：取证时为 `feat/tavern-actor-vrm @ efefe2c`；写盘后复核时已合入 `feature-branch @ d99f76d`（merge commit，树内容与 `efefe2c` 相同，见 `git diff --stat efefe2c d99f76d` 为空）。行号以该树为准。
+> 代码基线：`feature-branch @ 3d5248e`（PR #12 合并点，含 VRM 手势、语音唇同步、会话清空）。PR #11 之后的 `ad74131`（feat/companion VRM gestures, lip-sync, conversation clear）未纳入本清单的逐条核对，涉及该提交的新增/改动缺口需另行排查。
 > 调查方式：只读静态代码审查。没有启动任何服务，没有运行构建、测试或 Docker，没有打开浏览器。
 > 凭据约定：本文只写「哪个文件哪一行的哪个配置项是写死的」，不记录任何密钥、口令、令牌的值。
 
@@ -845,6 +845,8 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 - **手机端**：git 已无源码；本机残留 `nexus-chat-app/` 被忽略；相关后端接口未删（BE-17）。
 
 ## 8. 需要用户决定的问题
+
+> 与 `docs/BOUNDARIES.md` 第 10 节是同一份清单。本文是**逐缺口展开的原始出处**，BOUNDARIES 是**收拢版**；两处内容等价，任一拍板后请两处同步更新（或在此标注结论），避免漂移。
 
 以下问题无法从代码判断，必须由产品或用户拍板，否则实现方向会摇摆：
 
