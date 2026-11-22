@@ -30,6 +30,17 @@
             <span class="material-symbols-outlined">arrow_back</span>
           </button>
 
+          <!-- The message blade is folded into its ribbon: offer a restore. -->
+          <button
+            v-if="!isMobile && listCollapsed"
+            class="action-btn blade-restore-btn"
+            :title="$t('leftPanel.expandList')"
+            :aria-label="$t('leftPanel.expandList')"
+            @click.stop="toggleList"
+          >
+            <span class="material-symbols-outlined">dock_to_left</span>
+          </button>
+
           <div class="avatar-wrapper">
             <div class="avatar-frame">
               <img
@@ -238,6 +249,8 @@ const { t } = useI18n()
 const toggleRightPanel = inject('toggleRightPanel')
 const requestSearch = inject('requestSearch', () => {})
 const isMobile = inject('isMobile', { value: false })
+const listCollapsed = inject('listCollapsed', ref(false))
+const toggleList = inject('toggleList', () => {})
 const replyToMessage = ref(null)
 
 // Detect virtual AI assistant chat — its messages flow through HTTP/SSE, not WebSocket.
@@ -998,6 +1011,12 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.blade-restore-btn {
+  flex-shrink: 0;
+  margin-right: 4px;
+  background: transparent;
 }
 
 .header-actions {

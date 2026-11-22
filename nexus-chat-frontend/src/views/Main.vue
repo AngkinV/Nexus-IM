@@ -81,6 +81,33 @@ const companionStore = useCompanionStore()
 const agentStore = useAgentStore()
 const creatorWarp = useCreatorWarp()
 
+// ── Dual collapse (design: 200px<->64px dock, 320px<->44px blade) ───────────
+// [ toggles the global rail, ] toggles the message-list blade. Both live here so
+// the top bar / chat header can render their restore affordances.
+const NAV_COLLAPSE_KEY = 'prism.navCollapsed'
+const LIST_COLLAPSE_KEY = 'prism.listCollapsed'
+
+const navCollapsed = ref(localStorage.getItem(NAV_COLLAPSE_KEY) === '1')
+const listCollapsed = ref(localStorage.getItem(LIST_COLLAPSE_KEY) === '1')
+
+const toggleNav = () => {
+  navCollapsed.value = !navCollapsed.value
+  localStorage.setItem(NAV_COLLAPSE_KEY, navCollapsed.value ? '1' : '0')
+}
+const toggleList = () => {
+  listCollapsed.value = !listCollapsed.value
+  localStorage.setItem(LIST_COLLAPSE_KEY, listCollapsed.value ? '1' : '0')
+}
+
+// One keystroke into a clean canvas: collapse both, or restore both.
+const toggleCinematic = () => {
+  const collapsing = !(navCollapsed.value && listCollapsed.value)
+  navCollapsed.value = collapsing
+  listCollapsed.value = collapsing
+  localStorage.setItem(NAV_COLLAPSE_KEY, collapsing ? '1' : '0')
+  localStorage.setItem(LIST_COLLAPSE_KEY, collapsing ? '1' : '0')
+}
+
 const showRightPanel = ref(false)
 const showCompanion = ref(false)
 const paletteOpen = ref(false)
@@ -204,8 +231,26 @@ const handlePaletteAction = (command) => {
   }
 }
 
+// Bare [ / ] collapse the rail and the message blade, as in the design.
+const isTypingTarget = (el) =>
+  !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+
+const handleCollapseKey = (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  if (isTypingTarget(event.target)) return
+  if (paletteOpen.value) return
+  if (event.key === '[') {
+    event.preventDefault()
+    toggleNav()
+  } else if (event.key === ']') {
+    event.preventDefault()
+    toggleList()
+  }
+}
+
 // Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
 const handleGlobalKeydown = (event) => {
+  handleCollapseKey(event)
   const mod = event.metaKey || event.ctrlKey
   if (!mod) return
   const key = event.key.toLowerCase()
@@ -248,6 +293,11 @@ provide('activeView', activeView)
 provide('setActiveView', setActiveView)
 provide('enterAi', enterAi)
 provide('openPalette', openPalette)
+provide('navCollapsed', navCollapsed)
+provide('toggleNav', toggleNav)
+provide('listCollapsed', listCollapsed)
+provide('toggleList', toggleList)
+provide('toggleCinematic', toggleCinematic)
 
 // A tiny event counter used by the standby screen to ask the left pane to open
 // its create-group dialog (the dialog instance lives inside LeftPanel).
@@ -395,15 +445,10 @@ onUnmounted(() => {
   z-index: 11;
 }
 
+/* The blade owns its own 320px <-> 44px width (see LeftPanel). */
 .panel-left {
-  width: 320px;
-  min-width: 280px;
-  max-width: 380px;
-  border-right: 1px solid rgba(68, 71, 72, 0.2);
+  flex-shrink: 0;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #0e0e11;
   z-index: 10;
   position: relative;
 }
@@ -438,11 +483,6 @@ onUnmounted(() => {
 /* Dark Mode */
 /* Tablet breakpoint */
 @media (max-width: 1024px) {
-  .panel-left {
-    width: 300px;
-    min-width: 260px;
-  }
-
   .panel-right {
     width: 280px;
     min-width: 260px;
@@ -458,12 +498,9 @@ onUnmounted(() => {
   .panel-left {
     position: relative;
     flex: 1;
-    width: auto;
-    max-width: none;
-    min-width: 0;
     height: 100%;
     z-index: 10;
-    border-right: none;
+    min-width: 0;
   }
 
   .panel-middle {

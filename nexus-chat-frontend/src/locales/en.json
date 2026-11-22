@@ -862,7 +862,12 @@
     "close": "Close",
     "groupRole": "Group",
     "defaultRole": "Design Lead",
-    "conversation": "Conversation"
+    "conversation": "Conversation",
+    "cinematic": "Focus view",
+    "modeCinematic": "CINEMATIC · FULLSCREEN",
+    "modeDockChat": "DOCK · EXPANDED CHAT",
+    "modeWideCanvas": "SIDEBAR · WIDE CANVAS",
+    "modeWorkspace": "DUAL-PANE · WORKSPACE"
   },
   "leftPanel": {
     "contacts": "Contacts",
@@ -889,6 +894,19 @@
     "directoryTotal": "Directory: {n}",
     "directoryOnline": "{n} online",
     "moreOptions": "More options",
-    "refreshDirectory": "Refresh directory"
+    "refreshDirectory": "Refresh directory",
+    "collapseList": "Fold into the wall (])",
+    "expandList": "Expand message list (])",
+    "expandShort": "open",
+    "unreadPreview": "Unread at a glance",
+    "markAllRead": "Mark all read",
+    "noUnread": "No unread messages",
+    "unreadCount": "{n} unread",
+    "shortcutExpand": "] expands the blade",
+    "expandAll": "Expand all {n} conversations →"
+  },
+  "rail": {
+    "expand": "Expand sidebar ([)",
+    "collapse": "Collapse sidebar ([)"
   }
 }

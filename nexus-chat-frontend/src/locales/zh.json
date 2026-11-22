@@ -862,7 +862,12 @@
     "close": "关闭",
     "groupRole": "群组",
     "defaultRole": "设计负责人",
-    "conversation": "会话"
+    "conversation": "会话",
+    "cinematic": "沉浸视野",
+    "modeCinematic": "沉浸 · 全屏",
+    "modeDockChat": "DOCK · 展开对话",
+    "modeWideCanvas": "侧栏 · 宽画布",
+    "modeWorkspace": "双栏 · 工作区"
   },
   "leftPanel": {
     "contacts": "通讯录",
@@ -889,6 +894,19 @@
     "directoryTotal": "全部: {n} 人",
     "directoryOnline": "{n} 人在线",
     "moreOptions": "更多选项",
-    "refreshDirectory": "刷新通讯录"
+    "refreshDirectory": "刷新通讯录",
+    "collapseList": "侧向收纳入壁 (])",
+    "expandList": "展开消息列表 (])",
+    "expandShort": "展开",
+    "unreadPreview": "未读消息快速预览",
+    "markAllRead": "全部已读",
+    "noUnread": "暂无未读消息",
+    "unreadCount": "{n} 条未读消息",
+    "shortcutExpand": "快捷键 ] 展开切片",
+    "expandAll": "展开全部 {n} 个会话 →"
+  },
+  "rail": {
+    "expand": "展开侧边栏 ([)",
+    "collapse": "折叠侧边栏 ([)"
   }
 }
