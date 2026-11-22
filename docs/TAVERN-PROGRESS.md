@@ -2,9 +2,9 @@
 
 > 关联线程：`mwq0dyxio5rcxrllod5`。
 > 本轮开始于 2026-11-21；后续跨日修补仍属于同轮任务。
-> 工作区：`/Users/anglv/alma/worktrees/nexus/illegal-marlin`，分支 `illegal-marlin`，基线 `76dc7bf`，修改尚未提交。
-> 原项目 `/Users/anglv/Nexus` 是另一份工作目录，基线 `3ac2c9e`，还有其他线程的设置硬化暂存修改。**不能混同代码版本，不能整文件覆盖。**
-> 状态：本工作区原范围修补和返回导航修补已落盘，最终隔离回归及构建通过；原项目未应用，真实服务/浏览器仍待用户验收。不承诺零缺陷。
+> 工作区：`/Users/anglv/alma/worktrees/nexus/illegal-marlin`，`illegal-marlin @ 24b434d`；源码已在该本地并行提交内，本轮文档后续更新尚未提交。此前验证基线是 `76dc7bf` 加当时 diff。
+> 原项目 `/Users/anglv/Nexus` 当前仍为开发分支 `feat/settings-redesign @ 42a4bbd`，有未提交转场/音乐与已应用导航。**不能混同代码版本，不能整文件覆盖。**
+> 状态：导航已由用户确认，并核实 PR #16 已进入默认主线 `feature-branch`（`main` 同为 `8f28a5a`）。酒馆其余修补没有通过这次导航合并带入主线，也未覆盖开发项目。详见 `NAVIGATION-PROGRESS.md` 6.5；不承诺零缺陷。
 
 ## 1. 授权与范围
 
