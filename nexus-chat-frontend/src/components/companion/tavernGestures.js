@@ -36,25 +36,76 @@ export function seatedPose(seed = 0) {
 
 const smooth = (x) => x * x * (3 - 2 * x)
 
-export function createTavernGestures() {
-  let active = 'rest'
-  let age = 0
+const TIMING = {
+  chin: [0.55, 1.85, 0.75], sip: [0.9, 0.8, 0.85], wipe: [0.5, 1.75, 0.75],
+  wave: [0.4, 1.25, 0.65], shrug: [0.4, 1, 0.65], cover: [0.42, 1, 0.7],
+  cross: [0.55, 1.85, 0.75], tuck: [0.5, 0.9, 0.7]
+}
+const PRIORITY = { doing: 0, narration: 1, state: 2 }
+
+export function createTavernGestures({ now = () => performance.now() } = {}) {
+  let active = 'rest', age = 0, weight = 0, phase = 'rest', source = null, turnId = null
+  let returning = false, releaseAt = 0, releaseWeight = 0, reason = null
+  const seen = new Set()
+  const stats = { accepted: 0, deduplicated: 0, rejected: 0, expired: 0, cancelled: 0 }
   const pose = Object.fromEntries(Object.entries(REST).map(([name, value]) => [name, [...value]]))
+  const reset = (why = 'reset') => {
+    if (active !== 'rest') stats.cancelled++
+    active = 'rest'; age = 0; weight = 0; phase = 'rest'; returning = false; source = null; reason = why
+    for (const [name, rest] of Object.entries(REST)) pose[name] = [...rest]
+  }
+  const beginTurn = id => {
+    if (id == null || String(id) === turnId) return
+    reset('turn-change')
+    turnId = String(id)
+  }
+  const cancel = (why = 'cancelled', { immediate = false } = {}) => {
+    if (active === 'rest') return
+    if (immediate || weight < 1e-5) { reset(why); return }
+    if (returning) return
+    stats.cancelled++; reason = why; returning = true; phase = 'returning'; releaseAt = age; releaseWeight = weight
+  }
   return {
-    play(name) {
-      if (!GESTURE_NAMES.includes(name) || (name !== 'rest' && name === active && age < 0.9)) return
-      active = name
-      age = 0
+    beginTurn, cancel, reset,
+    play(name, cue = {}) {
+      if (!GESTURE_NAMES.includes(name)) { stats.rejected++; return false }
+      if (name === 'rest') { cancel('rest', { immediate: cue.turnId == null && turnId == null }); return true }
+      if (Number.isFinite(cue.receivedAt) && now() - cue.receivedAt > 3000) { stats.expired++; return false }
+      if (cue.turnId != null) beginTurn(cue.turnId)
+      const scoped = cue.turnId ?? turnId ?? cue.cueId
+      const key = scoped != null ? String(scoped) + '|' + name : null
+      if ((key && seen.has(key)) || (!key && active === name && age < 0.9)) { stats.deduplicated++; return false }
+      const nextSource = cue.source || 'state'
+      if (active !== 'rest' && phase !== 'returning' && (PRIORITY[nextSource] ?? 0) < (PRIORITY[source] ?? 0)) {
+        stats.rejected++; return false
+      }
+      if (key) {
+        seen.add(key)
+        if (seen.size > 64) seen.delete(seen.values().next().value)
+      }
+      active = name; age = 0; weight = 0; phase = 'preparing'; source = nextSource
+      returning = false; reason = null; stats.accepted++
+      return true
     },
-    update(delta, motion = 'idle', reducedMotion = false) {
-      if (reducedMotion) active = 'rest'
-      age += delta
-      const duration = ['chin', 'cross', 'wipe'].includes(active) ? 4 : 2.6
-      const weight = active === 'rest' ? 0 : smooth(Math.min(1, age / 0.55)) * smooth(Math.max(0, Math.min(1, (duration - age) / 0.7)))
-      if (age >= duration) active = 'rest'
-      const base = MOTION_POSES[motion] || MOTION_POSES.idle
-      const gesture = POSES[active]
-      const ease = reducedMotion ? 1 : 1 - Math.exp(-delta * 10)
+    update(delta = 0, motion = 'idle', reducedMotion = false, { speaking = false } = {}) {
+      delta = Number.isFinite(delta) ? Math.max(0, Math.min(0.5, delta)) : 0
+      if (reducedMotion) reset('reduced-motion')
+      age += reducedMotion ? 0 : delta
+      if (active !== 'rest') {
+        const [prepare, hold, release] = TIMING[active]
+        if (returning) {
+          phase = 'returning'
+          weight = releaseWeight * (1 - smooth(Math.min(1, (age - releaseAt) / release)))
+          if (age - releaseAt >= release) { active = 'rest'; weight = 0; phase = 'rest'; returning = false }
+        } else if (age < prepare) { phase = 'preparing'; weight = smooth(age / prepare) }
+        else if (age < prepare + hold) { phase = 'holding'; weight = 1 }
+        else if (age < prepare + hold + release) { phase = 'returning'; weight = 1 - smooth((age - prepare - hold) / release) }
+        else { active = 'rest'; weight = 0; phase = 'rest' }
+        if (active === 'sip' && speaking && phase === 'holding' && age >= prepare + 0.15) cancel('speaking')
+      }
+      const base = reducedMotion ? {} : MOTION_POSES[motion] || MOTION_POSES.idle
+      const gesture = POSES[active] || {}
+      const ease = reducedMotion ? 1 : 1 - Math.exp(-delta / 0.1)
       for (const [bone, rest] of Object.entries(REST)) {
         const from = base[bone] || rest
         const to = gesture[bone] || from
@@ -65,8 +116,13 @@ export function createTavernGestures() {
           pose[bone][axis] += (target - pose[bone][axis]) * ease
         }
       }
-      return { pose, active, weight, age }
+      const owners = active === 'rest' ? [] : ['shrug', 'cross', 'wipe'].includes(active) ? ['leftHand', 'rightHand'] : ['rightHand']
+      return { pose, active, weight, age, phase, source, turnId, owners,
+        blocksMouth: active === 'sip' && weight > 0.18 }
     },
-    snapshot() { return { active, age, pose: structuredClone(pose) } }
+    snapshot() {
+      return { active, age, weight, phase, source, turnId, reason, pose: structuredClone(pose),
+        stats: { ...stats }, cachedCues: seen.size }
+    }
   }
 }

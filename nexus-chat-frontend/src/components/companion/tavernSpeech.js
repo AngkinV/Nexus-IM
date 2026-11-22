@@ -13,7 +13,11 @@ const GESTURES = [
 ]
 
 export function narrationGesture(text) {
-  if (/没有|并未|不要|不曾|didn't|doesn't|without/i.test(text)) return null
+  if (/没有|并未|不要|不曾|没再|不会|didn't|doesn't|did not|does not|without|not going/i.test(text)) return null
+  if (/曾经|昨天|刚才|回忆|当时|以前|打算|想要|也许|如果|准备喝|yesterday|earlier|used to|would|might|will\s/i.test(text)) return null
+  // This parser sees only current-role narration. Explicit other subjects or
+  // quoted recollections are not instructions for this character's body.
+  if (/他(?:们)?|对方|客人|用户|那个人|那个女孩|[“”「」]|\b(?:he|they|you|someone|guest)\b/i.test(text)) return null
   return GESTURES.find(([, pattern]) => pattern.test(text))?.[0] || null
 }
 
@@ -22,6 +26,7 @@ export function createTavernSpeech() {
   let current = null
   let elapsed = 0
   let closers = []
+  let discardClosers = []
   let narration = ''
   let index = 0
   let finishing = false
@@ -33,6 +38,7 @@ export function createTavernSpeech() {
     current = null
     elapsed = 0
     closers = []
+    discardClosers = []
     narration = ''
     index = 0
     finishing = false
@@ -47,14 +53,30 @@ export function createTavernSpeech() {
 
   return {
     reset,
+    cancel: reset,
     pause() {
-      queue = []
-      current = null
-      elapsed = 0
+      const boundary = discardClosers.length ? [...discardClosers] : [...closers]
+      reset()
+      discardClosers = boundary
     },
     push(text, silent = false) {
+      if (silent) {
+        const boundary = discardClosers.length ? [...discardClosers] : [...closers]
+        reset()
+        discardClosers = boundary
+        for (const char of text) {
+          if (char === discardClosers.at(-1)) discardClosers.pop()
+          else if (NARRATION_CLOSE[char] && discardClosers.length < 12) discardClosers.push(NARRATION_CLOSE[char])
+        }
+        return
+      }
       if (finishing) return
       for (const char of text) {
+        if (discardClosers.length) {
+          if (char === discardClosers.at(-1)) discardClosers.pop()
+          else if (NARRATION_CLOSE[char] && discardClosers.length < 12) discardClosers.push(NARRATION_CLOSE[char])
+          continue
+        }
         if (closers.length) {
           if (char === closers.at(-1)) {
             closers.pop()
@@ -117,7 +139,7 @@ export function createTavernSpeech() {
       }
     },
     snapshot() {
-      return { queued: queue.length, mouth: current?.mouth || null, narrating: closers.length > 0, finishing }
+      return { queued: queue.length, mouth: current?.mouth || null, narrating: closers.length > 0, discarding: discardClosers.length > 0, finishing }
     }
   }
 }

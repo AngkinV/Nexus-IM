@@ -1,28 +1,22 @@
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm'
-import { createVrmExpressions } from './vrmExpressions.js'
-import { MOUTHS } from './tavernSpeech.js'
+import { createTavernExpression } from './tavernExpression.js'
+import { createTavernGaze } from './tavernGaze.js'
+import { sipPath, calibrateCupGrip, createCupAttachment } from './tavernCup.js'
 import { createTavernLife } from './tavernLife.js'
 import { createTavernGestures, seatedPose } from './tavernGestures.js'
 import { styleTavernMaterial } from './tavernMaterial.js'
 import { createLimbSolver, calibrateHand } from './tavernRig.js'
 
-const FACES = {
-  calm: { relaxed: 0.15 }, warm: { relaxed: 0.25, happy: 0.35 }, happy: { happy: 0.7 },
-  shy: { happy: 0.22, relaxed: 0.2 }, sad: { sad: 0.65 }, worried: { sad: 0.3, surprised: 0.12 },
-  angry: { angry: 0.65 }, surprised: { surprised: 0.7 }, tired: { relaxed: 0.2, sad: 0.18 },
-  thoughtful: { relaxed: 0.1 }
-}
-const FACE_NAMES = ['happy', 'relaxed', 'sad', 'angry', 'surprised']
 const HAND_DIRECTIONS = {
   table: [0.1, 0, 1], lap: [0.2, -0.25, 1], chin: [0, 1, 0], sip: [0, 1, 0],
-  wipe: [0.8, 0, 0.3], wave: [0, 1, 0], shrug: [0, 0.1, 1], cover: [1, 0.15, 0],
+  wipe: [0, 1, 0], wave: [0, 1, 0], shrug: [0, 0.1, 1], cover: [1, 0.15, 0],
   cross: [1, 0.1, 0], tuck: [0, 1, 0]
 }
 const PALM_NORMALS = {
   table: [0, -1, 0], lap: [0, -1, 0], chin: [0, 0, -1], sip: [1, 0, 0],
-  wipe: [0, -1, 0], wave: [0, 0, 1], shrug: [0, 1, 0], cover: [0, 0, -1],
+  wipe: [1, 0, 0], wave: [0, 0, 1], shrug: [0, 1, 0], cover: [0, 0, -1],
   cross: [0, 0, -1], tuck: [1, 0, 0]
 }
 const CURL = { chin: 1.2, sip: 0.95, wipe: 0.45, wave: 0.06, shrug: 0.16, cover: 0.12, cross: 0.32, tuck: 0.2 }
@@ -84,11 +78,12 @@ function createActor(vrm, json, seed) {
   const shoulderWidth = bones.has('leftUpperArm') && bones.has('rightUpperArm')
     ? bones.get('leftUpperArm').position.distanceTo(bones.get('rightUpperArm').position) : torso * 0.45
   const seat = seatedPose(seed)
-  const life = createTavernLife()
+  let entropy = seed >>> 0
+  const random = () => { entropy = (Math.imul(entropy, 1664525) + 1013904223) >>> 0; return entropy / 4294967296 }
+  const life = createTavernLife(random)
   const gestures = createTavernGestures()
-  const expressions = createVrmExpressions(vrm, json)
-  const face = Object.fromEntries(FACE_NAMES.map(name => [name, 0]))
-  const mouth = Object.fromEntries(MOUTHS.map(name => [name, 0]))
+  const expressions = createTavernExpression(vrm, json)
+  const gaze = createTavernGaze(vrm)
   const light = { value: 1 }
   const materials = new Set()
   vrm.scene.traverse(node => {
@@ -126,6 +121,19 @@ function createActor(vrm, json, seed) {
     chin: new THREE.Vector3(0, eyeHeight * 0.04, faceDepth),
     mouth: new THREE.Vector3(0, eyeHeight * 0.3, faceDepth),
     temple: new THREE.Vector3(-shoulderWidth * 0.52, eyeHeight * 1.1, faceDepth * 0.35)
+  }
+  // Prefer the model's real oral mesh over a guessed head/eye proportion.
+  let mouthMesh = null
+  vrm.scene.traverse(node => {
+    const list = Array.isArray(node.material) ? node.material : [node.material]
+    if (!mouthMesh && node.isMesh && list.some(material => /FaceMouth/i.test(material?.name || ''))) mouthMesh = node
+  })
+  if (mouthMesh) {
+    const mouthBounds = new THREE.Box3().setFromObject(mouthMesh)
+    if (!mouthBounds.isEmpty()) {
+      facialPoints.mouth.set((mouthBounds.min.x + mouthBounds.max.x) / 2, (mouthBounds.min.y + mouthBounds.max.y) / 2, mouthBounds.max.z + torso * 0.01).sub(head.position)
+      facialPoints.chin.copy(facialPoints.mouth).add(new THREE.Vector3(0, -torso * 0.045, 0))
+    }
   }
   for (const value of Object.values(facialPoints)) value.applyQuaternion(head.inverseFrame)
   const anchor = (name, x, y, z, out) => {
@@ -170,29 +178,67 @@ function createActor(vrm, json, seed) {
   }
 
   const furniture = new THREE.Group()
-  const wood = new THREE.MeshStandardMaterial({ color: 0x483128, roughness: 0.9 })
-  const fabric = new THREE.MeshStandardMaterial({ color: 0x304440, roughness: 1 })
+  const wood = new THREE.MeshStandardMaterial({ color: 0x383838, roughness: 0.9 })
+  const fabric = new THREE.MeshStandardMaterial({ color: 0x303030, roughness: 1 })
   const stool = new THREE.Mesh(new THREE.CylinderGeometry(torso * 0.55, torso * 0.55, torso * 0.12, 24), fabric)
   stool.position.copy(hips.position).add(new THREE.Vector3(0, -torso * 0.2, 0))
   const back = new THREE.Mesh(new THREE.BoxGeometry(torso * 0.95, torso * 0.9, torso * 0.1), wood)
   back.position.copy(hips.position).add(new THREE.Vector3(0, torso * 0.28, -torso * 0.3))
   furniture.add(stool, back)
   root.add(furniture)
-  const cupMaterial = new THREE.MeshStandardMaterial({ color: 0x73988d, roughness: 0.35 })
-  const cup = new THREE.Mesh(new THREE.CylinderGeometry(torso * 0.09, torso * 0.075, torso * 0.18, 24), cupMaterial)
+  const cupMaterial = new THREE.MeshStandardMaterial({ color: 0xb7b9b9, roughness: 0.52 })
+  const cupInside = new THREE.MeshStandardMaterial({ color: 0x252727, roughness: 0.8 })
+  const cup = new THREE.Group()
+  const cupHeight = torso * 0.13
+  const vessel = new THREE.Mesh(new THREE.CylinderGeometry(torso * 0.065, torso * 0.055, cupHeight, 24, 1, true), cupMaterial)
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(torso * 0.065, torso * 0.006, 6, 24), cupMaterial)
+  rim.rotation.x = Math.PI / 2; rim.position.y = cupHeight / 2
+  const contents = new THREE.Mesh(new THREE.CircleGeometry(torso * 0.059, 24), cupInside)
+  contents.rotation.x = -Math.PI / 2; contents.position.y = cupHeight * 0.4
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(torso * 0.04, torso * 0.008, 6, 18, Math.PI * 1.55), cupMaterial)
+  handle.position.x = torso * 0.078; handle.rotation.z = -Math.PI * 0.275
+  cup.add(vessel, rim, contents, handle)
   root.add(cup)
-  cup.visible = false
+  // One primary cup: a stable table anchor, or the final rendered right hand.
+  const cupTable = new THREE.Vector3(seat.x - 0.48, TABLE_Y + cupHeight * scale / 2 + 0.01, 0.96)
+  const cupWorld = cupTable.clone()
+  const rawRightHand = vrm.humanoid.getRawBoneNode('rightHand') || hands.right?.hand
+  const cupGrip = hands.right?.frame ? calibrateCupGrip(hands.right.hand, rawRightHand, hands.right.frame, torso * 0.065) : null
+  const cupOwner = createCupAttachment(cupTable, torso * scale * 0.016)
+  const cupRotation = new THREE.Quaternion(), gripOrientation = new THREE.Quaternion()
+  const gripScale = new THREE.Vector3(), actualGrip = new THREE.Vector3()
+  const cupFinger = new THREE.Vector3(), cupPalm = new THREE.Vector3(), cupForward = new THREE.Vector3()
+  let cupLift = 0
+  const shadowPixels = new Uint8Array(32 * 32 * 4)
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const alpha = Math.max(0, 1 - Math.hypot((x - 15.5) / 15.5, (y - 15.5) / 15.5)) ** 2
+    shadowPixels[(y * 32 + x) * 4 + 3] = Math.round(alpha * 180)
+  }
+  const shadowTexture = new THREE.DataTexture(shadowPixels, 32, 32, THREE.RGBAFormat)
+  shadowTexture.needsUpdate = true
+  const shadowMaterial = new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, opacity: 0.28,
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 })
+  const contactShadow = new THREE.Mesh(new THREE.PlaneGeometry(torso * 0.35, torso * 0.27), shadowMaterial)
+  contactShadow.rotation.x = -Math.PI / 2
+  root.add(contactShadow)
 
   root.scale.setScalar(scale)
   root.rotation.y = seat.yaw
   point.copy(head.position).multiplyScalar(scale).applyEuler(root.rotation)
   root.position.set(seat.x - point.x, seat.hipY + torso * scale - point.y, -point.z)
   root.updateMatrixWorld(true)
-  const gazeTarget = new THREE.Object3D()
-  if (vrm.lookAt) vrm.lookAt.target = gazeTarget
+  cup.position.copy(root.worldToLocal(cupTable.clone()))
+  contactShadow.position.copy(root.worldToLocal(new THREE.Vector3(cupTable.x, TABLE_Y + 0.005, cupTable.z)))
+  const partnerPoint = new THREE.Vector3(0, 0.1, 6.4)
+  const gazeHead = new THREE.Vector3()
   const lastHead = { pitch: 0, yaw: 0 }
+  let headFollow = { pitch: 0, yaw: 0 }
+  let lastGesture = null
   let physiology = null
   let springsReady = false
+  let springsFrozen = false
+  let springResets = 0
+  let destroyed = false
 
   function restTarget(side, out) {
     const sign = side === 'left' ? 1 : -1
@@ -205,9 +251,23 @@ function createActor(vrm, json, seed) {
     return out
   }
 
-  function placeGesture(side, name, out, age) {
+  function cupGripOffset(out, progress = 0.5) {
+    const path = sipPath(progress)
+    cupRotation.copy(rootRotation).multiply(localRotation.setFromEuler(euler.set(-0.18 * path.lift, 0, 0)))
+    gripOrientation.copy(cupRotation).multiply(hands.right.orientations.sip)
+    return out.copy(cupGrip.normalizedLocal).multiply(hands.right.hand.getWorldScale(gripScale)).applyQuaternion(gripOrientation)
+  }
+
+  function placeGesture(side, name, out, age, progress = 1) {
     const sign = side === 'left' ? 1 : -1
     const palm = hands[side].frame?.palmLength || torso * 0.12
+    if (name === 'sip' && cupGrip) {
+      const offset = cupGripOffset(desired, progress)
+      facialAnchor('mouth', out)
+      out.sub(point.set(0, cupHeight / 2, -torso * 0.065).multiplyScalar(scale).applyQuaternion(cupRotation))
+      out.sub(offset)
+      return
+    }
     if (name === 'chin' || name === 'cover' || name === 'sip' || name === 'tuck') {
       facialAnchor(name === 'tuck' ? 'temple' : name === 'chin' ? 'chin' : 'mouth', out)
       if (name === 'chin') point.set(-palm * 0.2, -palm * 1.15, torso * 0.1)
@@ -216,23 +276,28 @@ function createActor(vrm, json, seed) {
       if (name === 'tuck') point.set(-palm * 0.25, -palm * 0.6, torso * 0.04)
       out.add(point.multiplyScalar(scale).applyQuaternion(rootRotation))
     } else if (name === 'cross') {
-      armAnchor(side === 'right' ? 'left' : 'right', sign * palm * 0.7, -torso * 0.28, torso * 0.22 + (side === 'left' ? torso * 0.1 : 0), out)
+      armAnchor(side === 'right' ? 'left' : 'right', sign * palm * 0.7, -torso * 0.28, torso * 0.4 + (side === 'left' ? torso * 0.1 : 0), out)
     } else if (name === 'wave') {
       armAnchor(side, sign * torso * 0.45, torso * 0.48, torso * 0.24, out)
       out.x += Math.sin(age * 7) * torso * scale * 0.035
     } else if (name === 'shrug') {
       armAnchor(side, sign * torso * 0.45, -torso * 0.18, torso * 0.52, out)
     } else if (name === 'wipe') {
-      anchor('hips', sign * torso * 0.12, torso * 0.2, torso * 0.5, out)
-      out.y = TABLE_Y + 0.1
-      if (side === 'right') out.x += Math.sin(age * 5) * torso * scale * 0.025
+      out.copy(cupTable)
+      if (side === 'right' && cupGrip) out.sub(cupGripOffset(desired))
+      else out.add(point.set(torso * 0.09, -torso * 0.045 + Math.sin(age * 5) * torso * 0.02, -torso * 0.02).multiplyScalar(scale).applyQuaternion(rootRotation))
     }
   }
 
-  function orientHand(side, name, weight, ease) {
+  function orientHand(side, name, weight, ease, wrist = null, tilt = 0) {
     const { hand, frame, orientations } = hands[side]
     if (!frame) return
-    rotation.copy(orientations[seat[side]]).slerp(orientations[name], weight).premultiply(rootRotation)
+    rotation.copy(orientations[seat[side]]).slerp(orientations[name] || orientations[seat[side]], weight)
+    // Wrist recipes are already phased by the gesture track. Applying them here
+    // (after IK) makes wave's oscillation reach the actual hand bone.
+    if (wrist && weight > 0) rotation.multiply(localRotation.setFromEuler(euler.set(...wrist, 'YXZ')))
+    if (tilt) rotation.premultiply(localRotation.setFromEuler(euler.set(tilt, 0, 0)))
+    rotation.premultiply(rootRotation)
     hand.parent.getWorldQuaternion(parentRotation).invert()
     hand.quaternion.slerp(parentRotation.multiply(rotation), ease)
     hand.updateWorldMatrix(false, true)
@@ -240,28 +305,37 @@ function createActor(vrm, json, seed) {
 
   return {
     root,
-    playGesture(name) { gestures.play(name) },
-    setLight(value) { light.value = Math.max(0.72, Math.min(1.05, value)) },
-    update({ delta, pose, mood, motion, nod, gazeX, gazeY, reducedMotion, articulation, settled }) {
+    beginTurn(id) { gestures.beginTurn(id) },
+    finishTurn() { gestures.cancel('completed') },
+    playGesture(name, cue = {}) {
+      if (destroyed) return false
+      if (name !== 'rest' && !hands.right) return false
+      if (['sip', 'wipe'].includes(name) && !cupGrip) return false
+      if (['cross', 'shrug', 'wipe'].includes(name) && !hands.left) return false
+      return gestures.play(name, cue)
+    },
+    cancelTransient(reason = 'cancelled', immediate = true) {
+      if (immediate) gestures.reset?.(reason)
+      else gestures.cancel?.(reason)
+      if (!gestures.reset && immediate) gestures.play('rest')
+      gaze.reset()
+      expressions.stopMouth()
+      if (immediate) {
+        springsFrozen = true
+        cupLift = 0; cupOwner.reset(); cupWorld.copy(cupTable)
+        for (const hand of Object.values(hands)) hand.initialized = false
+      }
+    },
+    setLight(value) { light.value = Math.max(0.82, Math.min(1.04, value)) },
+    update({ delta, pose, mood, motion, nod, gazeX, gazeY, reducedMotion, articulation = {}, settled, partner }) {
+      if (destroyed) return
+      delta = Number.isFinite(delta) ? Math.max(0, Math.min(0.1, delta)) : 0
       const ease = reducedMotion || settled ? 1 : 1 - Math.exp(-delta * 5)
       physiology = life.update(delta, reducedMotion, pose.breath)
       const { breath, blink, sway, drift, eyeX, eyeY } = physiology
-      const faceTarget = FACES[mood] || FACES.calm
-      for (const name of FACE_NAMES) {
-        face[name] += ((faceTarget[name] || 0) - face[name]) * ease
-        const weight = ['happy', 'relaxed', 'surprised'].includes(name) ? 1 - articulation.open * 0.7 : 1
-        expressions.setValue(name, face[name] * weight)
-      }
-      for (const name of MOUTHS) {
-        const goal = !reducedMotion && articulation.mouth === name ? articulation.open : 0
-        mouth[name] += (goal - mouth[name]) * (reducedMotion || settled ? 1 : 1 - Math.exp(-delta * 35))
-        expressions.setValue(name, mouth[name])
-      }
-      expressions.setValue('blink', blink)
-      expressions.update()
-      const emphasis = reducedMotion ? 0 : articulation.open * 0.018 + articulation.emphasis * 0.04
-      const yaw = pose.yaw * 0.55 + gazeX * 0.12 * pose.follow + drift - seat.yaw * 0.6
-      const pitch = pose.pitch * 0.6 + nod * 0.65 + gazeY * 0.06 * pose.follow + emphasis
+      const emphasis = reducedMotion ? 0 : (articulation.open || 0) * 0.018 + (articulation.emphasis || 0) * 0.04
+      const yaw = pose.yaw * 0.55 + headFollow.yaw + drift - seat.yaw * 0.6
+      const pitch = pose.pitch * 0.6 + nod * 0.65 + headFollow.pitch + emphasis
       const headEase = reducedMotion || settled ? 1 : 1 - Math.exp(-delta * 3.5)
       lastHead.pitch += (pitch - lastHead.pitch) * headEase
       lastHead.yaw += (yaw - lastHead.yaw) * headEase
@@ -271,57 +345,102 @@ function createActor(vrm, json, seed) {
       rotate('upperChest', breath * 0.5, 0, 0)
       rotate('neck', lastHead.pitch * 0.35, lastHead.yaw * 0.35, pose.roll * 0.25)
       rotate('head', lastHead.pitch * 0.65, lastHead.yaw * 0.65, pose.roll * 0.4 + drift)
-      const gesture = gestures.update(delta, motion, reducedMotion)
+      const gesture = gestures.update(delta, motion, reducedMotion, { speaking: !!articulation.open })
+      lastGesture = gesture
+      const touchingMouth = cupOwner.snapshot().attachment === 'rightHand'
+        && cup.localToWorld(point.set(0, cupHeight / 2, -torso * 0.065)).distanceTo(facialAnchor('mouth', desired)) < torso * scale * 0.05
+      const blockMouth = !!gesture.blocksMouth || touchingMouth
+      expressions.update({ mood, delta, articulation, blink, reducedMotion, settled, blockMouth })
       for (const side of ['left', 'right']) {
         const sign = side === 'left' ? 1 : -1
         rotate(`${side}UpperLeg`, seat.thigh, sign * 0.04, sign * 0.045)
         rotate(`${side}LowerLeg`, -seat.thigh + 0.08, 0, 0)
         rotate(`${side}Foot`, -0.1, 0, 0)
-        rotate(`${side}Shoulder`, 0, 0, sign * (gesture.active === 'shrug' ? 0.12 * gesture.weight : 0.015))
+        const shoulderPose = gesture.pose?.[`${side}Shoulder`] || [0, 0, sign * 0.015]
+        rotate(`${side}Shoulder`, shoulderPose[0] * 0.3, shoulderPose[1] * 0.3, Math.max(-0.16, Math.min(0.16, shoulderPose[2])))
         rotate(`${side}UpperArm`, 0, 0, sign * -0.85)
         rotate(`${side}LowerArm`, 0, 0, 0)
       }
       root.updateMatrixWorld(true)
       root.getWorldQuaternion(rootRotation)
+      const returningCup = cupOwner.snapshot().attachment === 'rightHand' && gesture.active !== 'sip'
       for (const [side, hand] of Object.entries(hands)) {
+        const forcedReturn = side === 'right' && returningCup
         const posed = side === 'right' || ['shrug', 'cross', 'wipe'].includes(gesture.active)
-        const thinking = motion === 'think' && side === 'right' && gesture.active === 'rest'
-        const name = thinking ? 'chin' : posed && gesture.active !== 'rest' ? gesture.active : seat[side]
-        const weight = thinking ? 1 : posed ? gesture.weight : 0
+        const thinking = !reducedMotion && motion === 'think' && side === 'right' && gesture.active === 'rest'
+        const name = forcedReturn ? 'sip' : thinking ? 'chin' : posed && gesture.active !== 'rest' ? gesture.active : seat[side]
+        const weight = forcedReturn ? 0.5 : thinking ? 1 : posed ? gesture.weight : 0
+        const sip = name === 'sip' ? sipPath(weight) : null
         restTarget(side, target)
         if (weight > 0) {
-          placeGesture(side, name, gestureTarget, gesture.age)
-          target.lerp(gestureTarget, weight)
+          placeGesture(side, name, gestureTarget, gesture.age, weight)
+          if (side === 'right' && name === 'sip' && cupGrip) {
+            point.copy(cupTable).sub(cupGripOffset(desired, weight))
+            if (!sip.lift) target.lerp(point, sip.reach)
+            else target.copy(point).lerp(gestureTarget, sip.lift)
+          } else target.lerp(gestureTarget, weight)
         }
-        const handEase = reducedMotion || settled || !hand.initialized ? 1 : 1 - Math.exp(-delta * 10)
+        const handEase = reducedMotion || settled || !hand.initialized ? 1 : 1 - Math.exp(-delta / (name === 'sip' ? 0.055 : 0.1))
         hand.target.lerp(target, handEase)
         hand.initialized = true
-        pole.set(side === 'left' ? 0.45 : -0.45, -1, -0.2).applyQuaternion(rootRotation)
+        pole.set(side === 'left' ? 0.45 : -0.45, name === 'cross' ? -0.6 : -1, name === 'cross' ? 0.65 : -0.2).applyQuaternion(rootRotation)
         hand.solver.solve(hand.target, pole)
-        orientHand(side, name, weight, handEase)
-        const curl = 0.14 + ((CURL[name] ?? 0.14) - 0.14) * weight
+        const orientationWeight = sip ? sip.reach : weight
+        const wristRecipe = ['sip', 'wipe'].includes(name) ? null : gesture.pose?.[`${side}Hand`]
+        orientHand(side, side === 'right' && name === 'wipe' ? 'sip' : name, orientationWeight, handEase, wristRecipe, sip ? -0.18 * sip.lift : 0)
+        const fingerCurl = side === 'right' && name === 'wipe' ? 0.85 : CURL[name] ?? 0.14
+        const curl = 0.14 + (fingerCurl - 0.14) * orientationWeight
         for (const finger of hand.fingers) {
           rotation.setFromAxisAngle(finger.axis, curl * finger.factor)
           finger.bone.quaternion.copy(finger.rest).multiply(rotation)
         }
       }
-      cup.visible = ['sip', 'wipe'].includes(gesture.active) && gesture.weight > 0.1 && !!hands.right
-      if (cup.visible) {
-        hands.right.hand.getWorldPosition(point)
-        desired.set(torso * 0.1, torso * 0.04, -torso * 0.01).multiplyScalar(scale).applyQuaternion(rootRotation)
-        cup.position.copy(root.worldToLocal(point.add(desired)))
-        cup.rotation.x = gesture.active === 'sip' ? -0.2 * gesture.weight : 0
+      root.updateMatrixWorld(true)
+      head.bone.getWorldPosition(gazeHead)
+      if (partner) partnerPoint.copy(partner)
+      let actionTarget = null
+      if (['sip', 'wipe'].includes(gesture.active)) actionTarget = cupWorld
+      else if (['chin', 'cover', 'tuck'].includes(gesture.active) && hands.right) {
+        actionTarget = hands.right.hand.getWorldPosition(desired)
+      }
+      headFollow = gaze.update({ delta, head: gazeHead, partner: partnerPoint, actionTarget,
+        action: gesture.active, actionWeight: gesture.weight, motion,
+        pointerX: gazeX * pose.follow, pointerY: gazeY * pose.follow, eyeX, eyeY, reducedMotion, settled })
+      if (reducedMotion) {
+        // Freeze simulation, not its remembered tail. Rebase when it resumes.
+        vrm.update(0)
+        springsFrozen = true
+      } else {
+        if (!springsReady || springsFrozen) {
+          vrm.update(0)
+          if (vrm.springBoneManager) { vrm.springBoneManager.reset(); springResets++ }
+          springsReady = true
+          springsFrozen = false
+        }
+        vrm.update(delta)
       }
       root.updateMatrixWorld(true)
-      head.bone.getWorldPosition(gazeTarget.position)
-      gazeTarget.position.add(point.set(gazeX * 0.55 * pose.follow + pose.yaw + eyeX, -gazeY * 0.3 - pose.pitch * 0.4 + eyeY, 5))
-      gazeTarget.updateMatrixWorld(true)
-      if (!springsReady) {
-        vrm.update(0)
-        vrm.springBoneManager?.reset()
-        springsReady = true
-      }
-      vrm.update(reducedMotion ? 0 : delta)
+      // Props follow the final raw skeleton AFTER humanoid/lookAt/spring update.
+      if (cupGrip && rawRightHand && !reducedMotion) {
+        rawRightHand.localToWorld(actualGrip.copy(cupGrip.rawLocal))
+        cupWorld.copy(cupOwner.update({ handGrip: actualGrip, progress: gesture.weight,
+          active: gesture.active === 'sip', releasing: gesture.phase === 'returning' }))
+      } else { cupOwner.reset(); cupWorld.copy(cupTable) }
+      cup.position.copy(root.worldToLocal(point.copy(cupWorld)))
+      if (cupOwner.snapshot().attachment === 'rightHand') {
+        cupFinger.copy(cupGrip.rawFinger).transformDirection(rawRightHand.matrixWorld)
+        cupPalm.copy(cupGrip.rawPalm).transformDirection(rawRightHand.matrixWorld)
+        cupPalm.addScaledVector(cupFinger, -cupPalm.dot(cupFinger)).normalize()
+        cupForward.crossVectors(cupPalm, cupFinger).normalize()
+        basis.makeBasis(cupPalm, cupFinger, cupForward)
+        cupRotation.setFromRotationMatrix(basis)
+        cup.quaternion.copy(parentRotation.copy(rootRotation).invert().multiply(cupRotation))
+      } else cup.quaternion.identity()
+      const heightAboveTable = Math.max(0, cupWorld.y - cupTable.y)
+      cupLift = Math.min(1, heightAboveTable / (torso * scale * 0.45))
+      contactShadow.position.copy(root.worldToLocal(point.set(cupTable.x, TABLE_Y + 0.005, cupTable.z)))
+      shadowMaterial.opacity = 0.28 * Math.max(0, 1 - heightAboveTable / (cupHeight * scale * 2))
+      root.updateMatrixWorld(true)
     },
     snapshot() {
       const joints = {}
@@ -330,18 +449,33 @@ function createActor(vrm, json, seed) {
         if (entry) joints[name] = entry.bone.getWorldPosition(new THREE.Vector3()).toArray()
       }
       return {
-        expressions: expressions.snapshot(), head: { ...lastHead }, eyeTracking: !!vrm.lookAt, physiology,
-        gesture: gestures.snapshot(), seating: { ...seat, torso, shoulderWidth }, joints,
+        expressions: expressions.snapshot(), head: { ...lastHead },
+        headQuaternion: vrm.humanoid.getRawBoneNode('head')?.quaternion.toArray() ?? null,
+        eyeRotations: { left: vrm.humanoid.getRawBoneNode('leftEye')?.quaternion.toArray() ?? null, right: vrm.humanoid.getRawBoneNode('rightEye')?.quaternion.toArray() ?? null },
+        eyeTracking: !!vrm.lookAt, gaze: gaze.snapshot(), physiology,
+        gesture: gestures.snapshot(), springs: { ready: springsReady, frozen: springsFrozen, resets: springResets }, seating: { ...seat, torso, shoulderWidth }, joints,
+        cup: { count: 1, ...cupOwner.snapshot(), lift: cupLift,
+          position: cupWorld.toArray(), table: cupTable.toArray(), contactShadow: 'stylized', shadowOpacity: shadowMaterial.opacity,
+          rimToMouthAnchor: cup.localToWorld(new THREE.Vector3(0, cupHeight / 2, -torso * 0.065)).distanceTo(facialAnchor('mouth', new THREE.Vector3())) },
+        wrist: { right: vrm.humanoid.getRawBoneNode('rightHand')?.quaternion.toArray() ?? null },
         arms: Object.fromEntries(Object.entries(hands).map(([side, hand]) => [side, hand.solver.snapshot()]))
       }
     },
     destroy() {
+      if (destroyed) return
+      destroyed = true
+      gaze.reset()
+      expressions.reset()
       root.removeFromParent()
       furniture.traverse(node => node.geometry?.dispose())
       wood.dispose()
       fabric.dispose()
-      cup.geometry.dispose()
+      cup.traverse(node => node.geometry?.dispose())
       cupMaterial.dispose()
+      cupInside.dispose()
+      contactShadow.geometry.dispose()
+      shadowMaterial.dispose()
+      shadowTexture.dispose()
       VRMUtils.deepDispose(vrm.scene)
     }
   }

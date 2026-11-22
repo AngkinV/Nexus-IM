@@ -388,6 +388,7 @@ import MindOrbit from '@/components/companion/MindOrbit.vue'
 import ModelSettingsPanel from '@/components/companion/ModelSettingsPanel.vue'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
 import { mountTavernStage, mountTavernMini } from '@/components/companion/tavernStage'
+import { stageReplyMeta, interruptedStageReply } from '@/components/companion/tavernEvents'
 import { TAVERN_SCENES, findScene, readSceneKey, writeSceneKey } from '@/components/companion/tavernScenes'
 
 const emit = defineEmits(['back', 'goAi', 'mood'])
@@ -551,6 +552,7 @@ const stageState = computed(() => {
   const stored = status.value
   return stored?.mood || stored?.motion ? { mood: stored.mood, motion: stored.motion } : null
 })
+const stageMeta = computed(() => stageReplyMeta(activeRoleId.value, messages.value.at(-1), liveState.value, activeSession.value?.id))
 const moodLabel = computed(() => (stageState.value?.mood ? t(`companion.mood.${stageState.value.mood}`) : ''))
 
 // What she is doing: her own report first, then the presence line the server
@@ -778,7 +780,10 @@ const onViewport = () => {
 }
 window.addEventListener('resize', onViewport)
 
+let stageAlive = true
+let stageMountTicket = 0
 function mountStages() {
+  if (!stageAlive || !stageVisible.value) return
   if (stageHost.value && !stage) {
     stage = mountTavernStage(stageHost.value, {
       shouldRender: () => !stageCollapsed.value,
@@ -788,7 +793,8 @@ function mountStages() {
     })
     stage.setCharacter(activeRole.value)
     stage.setScene(sceneKey.value)
-    stage.setState(stageState.value)
+    // Reopening the stage restores persistent mood, never an old one-shot cue.
+    stage.setState(stageState.value, { ...stageMeta.value, replay: true })
     stage.setSpeaking(speaking.value)
     // Lets the stage be checked by reading it instead of looking at it.
     if (import.meta.env.DEV) window.__tavernStage = stage
@@ -801,6 +807,7 @@ function mountStages() {
 }
 
 function teardownStages() {
+  stageMountTicket++
   stage?.destroy()
   stage = null
   mini?.destroy()
@@ -817,11 +824,15 @@ watch(() => [activeRole.value?.id, activeRole.value?.name, activeRole.value?.mod
 })
 watch(sceneKey, (key) => stage?.setScene(key))
 watch(stageState, (state) => {
-  if (state) stage?.setState(state)
+  if (state) stage?.setState(state, stageMeta.value)
   else stage?.clearState()
 })
 watch(speaking, (value) => stage?.setSpeaking(value))
-watch(activeRoleId, () => stage?.hush(), { flush: 'sync' })
+watch(activeRoleId, () => stage?.hush('role-change'), { flush: 'sync' })
+watch(() => activeSession.value?.id, () => stage?.hush('session-change'), { flush: 'sync' })
+watch(() => interruptedStageReply(messages.value.at(-1)), (interrupted) => {
+  if (interrupted) stage?.hush('reply-interrupted')
+}, { flush: 'sync' })
 watch(() => messages.value.length, (length) => { if (!length) stage?.hush() })
 
 watch(() => {
@@ -831,12 +842,14 @@ watch(() => {
   if (!reply.id || reply.roleId !== previous?.roleId) return
   if (reply.id !== previous?.id) stage?.hush()
   const offset = reply.id === previous?.id ? previous.text.length : 0
-  if (reply.text.length > offset) stage?.speak(reply.text.slice(offset))
+  if (reply.text.length > offset) stage?.speak(reply.text.slice(offset), { turnId: reply.id, roleId: reply.roleId })
 }, { flush: 'sync' })
 
 watch(stageVisible, async (visible) => {
+  const ticket = ++stageMountTicket
   if (visible) {
     await nextTick()
+    if (!stageAlive || ticket !== stageMountTicket) return
     mountStages()
   } else {
     teardownStages()
@@ -846,7 +859,9 @@ watch(stageVisible, async (visible) => {
 onMounted(async () => {
   if (!userId()) return
   await companionStore.ensureInitialized(userId())
+  if (!stageAlive) return
   await nextTick()
+  if (!stageAlive) return
   scrollToBottom()
   if (stageVisible.value) mountStages()
   // Which model is behind this character — shown in the header capsule.
@@ -854,6 +869,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stageAlive = false
   window.removeEventListener('resize', onViewport)
   motionQuery.removeEventListener('change', onMotionPreference)
   cancelAnimationFrame(scrollFrame)

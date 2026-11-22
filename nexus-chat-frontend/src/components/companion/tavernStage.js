@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { createTavernSpeech } from './tavernSpeech.js'
+import { createTavernAtmosphere } from './tavernAtmosphere.js'
 import {
   getFrameCap,
   scaledPixelRatio,
@@ -134,8 +135,14 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   const pointMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.045, transparent: true, opacity: 0.8 })
   const dustMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.028, transparent: true, opacity: 0.5 })
   const emberMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05, transparent: true, opacity: 0.85 })
-  const counterMaterial = new THREE.MeshStandardMaterial({ color: 0x4d3529, roughness: 0.78 })
-  const sharedMaterials = [brightMaterial, dimMaterial, roomMaterial, rainMaterial, pointMaterial, dustMaterial, emberMaterial, counterMaterial]
+  const counterMaterial = new THREE.MeshStandardMaterial({ color: 0x353535, roughness: 0.78 })
+  const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x7e7e7e, transparent: true, opacity: 0.2, depthWrite: false })
+  const sharedMaterials = [brightMaterial, dimMaterial, roomMaterial, rainMaterial, pointMaterial, dustMaterial, emberMaterial, counterMaterial, windowMaterial]
+  const atmosphere = createTavernAtmosphere()
+  const vignette = document.createElement('div')
+  vignette.style.cssText = 'position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 52% 45%,transparent 38%,rgba(0,0,0,.7) 100%);opacity:.1'
+  vignette.setAttribute('aria-hidden', 'true')
+  container.appendChild(vignette)
 
   const wire = (geometry, material) => {
     const lines = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), material)
@@ -173,12 +180,14 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let actorRequest = 0
   let destroyed = false
 
-  const ambient = new THREE.HemisphereLight(0xf5e9db, 0x423c48, 0.8)
-  const keyLight = new THREE.DirectionalLight(0xffe2be, 0.9)
+  const ambient = new THREE.HemisphereLight(0xffffff, 0x484848, 0.7)
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.86)
   keyLight.position.set(-3, 4, 5)
-  const rimLight = new THREE.DirectionalLight(0xb1c8e5, 0.45)
+  const rimLight = new THREE.DirectionalLight(0xffffff, 0.36)
   rimLight.position.set(2, 3, -3)
-  scene.add(ambient, keyLight, rimLight)
+  const roomLight = new THREE.PointLight(0xffffff, 0, 8, 2)
+  roomLight.position.set(3, -0.35, -1.35)
+  scene.add(ambient, keyLight, rimLight, roomLight)
 
   const reportActorStatus = (status) => {
     actorStatus = status
@@ -217,7 +226,10 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
         return
       }
       actor = loaded
-      if (pendingGesture && !reducedMotion) actor.playGesture(pendingGesture)
+      if (currentTurn) actor.beginTurn(currentTurn)
+      if (pendingGesture && !reducedMotion && performance.now() - pendingGesture.receivedAt < 3000 && shouldRender() && !document.hidden && !isRenderSuspended()) {
+        actor.playGesture(pendingGesture.name, pendingGesture.cue)
+      }
       pendingGesture = null
       scene.add(actor.root)
       figure.visible = false
@@ -286,6 +298,8 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let dust = null
   let lamp = null
   let windowBox = null
+  let fallbackCup = null
+  let roomBuilds = 0
 
   function buildRoom(key) {
     disposeGroup(room)
@@ -294,7 +308,11 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     dust = null
     lamp = null
     windowBox = null
+    fallbackCup = null
     sceneKey = key
+    roomBuilds++
+    atmosphere.setScene(key)
+    rainMaterial.clippingPlanes = []
     sceneConfig = SCENES[key] || BARE_SCENE
     const rand = mulberry32(hashString(`room|${key}`))
 
@@ -304,9 +322,10 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     counterFront.position.set(0, -2.03, 1.72)
     room.add(counter, counterFront)
     room.add(polyline([[-4.2, -1.22, 1.825], [4.2, -1.22, 1.825]], roomMaterial))
-    room.add(polyline([
+    fallbackCup = polyline([
       [1.28, -1.22, 1.2], [1.24, -0.87, 1.2], [1.52, -0.87, 1.2], [1.48, -1.22, 1.2]
-    ], roomMaterial))
+    ], roomMaterial)
+    room.add(fallbackCup)
 
     if (sceneConfig.window) {
       const wide = sceneConfig.window === 'wide'
@@ -314,6 +333,14 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
         ? { left: -4.0, right: -1.5, bottom: -0.7, top: 1.75, z: -2.2 }
         : { left: -3.7, right: -2.3, bottom: -0.2, top: 1.5, z: -2.2 }
       const { left, right, bottom, top, z } = windowBox
+      const outside = new THREE.Mesh(new THREE.PlaneGeometry(right - left, top - bottom), windowMaterial)
+      outside.position.set((left + right) / 2, (bottom + top) / 2, z - 0.12)
+      outside.renderOrder = -2
+      room.add(outside)
+      rainMaterial.clippingPlanes = [
+        new THREE.Plane(new THREE.Vector3(0, 1, 0), -bottom), new THREE.Plane(new THREE.Vector3(0, -1, 0), top),
+        new THREE.Plane(new THREE.Vector3(1, 0, 0), -left), new THREE.Plane(new THREE.Vector3(-1, 0, 0), right)
+      ]
       room.add(polyline([[left, bottom, z], [left, top, z], [right, top, z], [right, bottom, z], [left, bottom, z]], roomMaterial))
       const mid = (left + right) / 2
       room.add(polyline([[mid, bottom, z], [mid, top, z]], roomMaterial))
@@ -394,6 +421,19 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let speaking = false
   const speech = createTavernSpeech()
   let pendingGesture = null
+  let currentTurn = null
+  let finishIssued = false
+  let turnCompleted = false
+  let stageTime = 0
+  const beginTurn = (id) => {
+    if (!id || currentTurn === id) return
+    if (currentTurn) speech.reset()
+    currentTurn = id
+    finishIssued = false
+    turnCompleted = false
+    pendingGesture = null
+    actor?.beginTurn(id)
+  }
   let nodStartedAt = -1
   const pose = { pitch: 0, yaw: 0, roll: 0, forward: 0, light: 1, breath: 1, amp: 1, jitter: 0, follow: 1, speak: 0 }
   let gazeX = 0
@@ -411,9 +451,12 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     targetX = Math.max(-1.5, Math.min(1.5, ((event.clientX - rect.left) / rect.width) * 2 - 1))
     targetY = Math.max(-1.5, Math.min(1.5, ((event.clientY - rect.top) / rect.height) * 2 - 1))
   }
-  window.addEventListener('mousemove', onMouseMove)
+  const onPointerLeave = () => { targetX = 0; targetY = 0 }
+  container.addEventListener('pointermove', onMouseMove, { passive: true })
+  container.addEventListener('pointerleave', onPointerLeave)
 
   const resize = () => {
+    if (destroyed) return
     const width = container.clientWidth
     const height = container.clientHeight
     if (!width || !height) return
@@ -470,8 +513,13 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     headPivot.rotation.y = pose.yaw * 0.65 + gazeX * 0.3 * pose.follow
     headPivot.rotation.z = pose.roll
     const articulation = speech.update(reducedMotion ? 0 : delta)
-    if (articulation.gesture) actor?.playGesture(articulation.gesture)
-    actor?.update({ time, delta, pose, mood: moodKey, motion: motionKey, nod, gazeX, gazeY, reducedMotion, articulation, settled: ease === 1 })
+    if (articulation.gesture) actor?.playGesture(articulation.gesture, { turnId: currentTurn, cueId: currentTurn, source: 'narration' })
+    if (turnCompleted && !finishIssued && !articulation.mouth && speech.snapshot().queued === 0) {
+      actor?.finishTurn?.()
+      finishIssued = true
+    }
+    actor?.update({ time, delta, pose, mood: moodKey, motion: motionKey, nod, gazeX, gazeY, reducedMotion, articulation, settled: ease === 1, partner: camera.position })
+    if (fallbackCup) fallbackCup.visible = !actor
     const speakPulse = articulation.open * 2
     if (headPoints) headPoints.scale.setScalar(0.96 + speakPulse * 0.035)
     pointMaterial.opacity = Math.min(1, 0.55 + speakPulse * 0.45)
@@ -479,18 +527,21 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       ring.rotation.z += delta * (index % 2 ? -0.1 : 0.16) * pose.breath
     })
 
-    // The room's light: the scene's level, her mood, and a hearth's flicker.
-    const flicker = sceneConfig.flicker
-      ? (Math.sin(time * 7.3) * 0.5 + Math.sin(time * 12.1) * 0.3 + Math.sin(time * 2.9) * 0.2) * sceneConfig.flicker
-      : 0
-    const lampSwing = lamp ? Math.sin(time * 0.7) : 0
-    const lampDim = lamp ? 0.82 + 0.18 * Math.sin(time * 0.35) : 1
-    const light = Math.max(0.2, sceneConfig.light * pose.light * lampDim + flicker)
-    actor?.setLight(light)
-    brightMaterial.opacity = Math.min(1, 0.8 * light)
-    dimMaterial.opacity = Math.min(1, 0.42 * light)
-    roomMaterial.opacity = Math.min(1, 0.36 * sceneConfig.light * lampDim + flicker * 0.5)
-    if (lamp) lamp.rotation.z = lampSwing * 0.07
+    const air = atmosphere.update(delta, { reducedMotion, settled: ease === 1 })
+    const flicker = air.flicker
+    ambient.intensity = air.ambient
+    keyLight.intensity = air.key
+    rimLight.intensity = air.rim
+    roomLight.intensity = sceneConfig.hearth ? air.hearthLight : sceneConfig.lamp ? air.key * 0.7 : 0
+    roomLight.position.set(sceneConfig.lamp ? 2.2 : 3, sceneConfig.lamp ? 1.15 : -0.35, sceneConfig.lamp ? -0.4 : -1.35)
+    actor?.setLight(1 + Math.max(-0.03, Math.min(0.03, pose.light - 1)))
+    brightMaterial.opacity = Math.min(0.88, 0.73 + flicker)
+    dimMaterial.opacity = Math.min(0.44, air.line * 0.85)
+    roomMaterial.opacity = air.line
+    dustMaterial.opacity = air.dust
+    windowMaterial.opacity = air.window
+    vignette.style.opacity = String(air.vignette)
+    if (lamp) lamp.rotation.z = air.lampRotation
 
     if (rain && windowBox) {
       const { positions, speeds, count } = rain
@@ -533,24 +584,32 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     }
   }
 
-  const drawable = () => !!shape && !!container.clientWidth && !!container.clientHeight
+  const drawable = () => !destroyed && !!shape && !!container.clientWidth && !!container.clientHeight
 
   function renderFrame(time, delta, ease) {
-    step(time, delta, ease)
+    if (destroyed) return
+    stageTime += reducedMotion ? 0 : delta
+    step(stageTime, delta, ease)
     renderer.render(scene, camera)
     frames++
   }
 
-  const hush = () => {
+  const hush = (reason = 'cancelled') => {
     speech.reset()
     pendingGesture = null
-    actor?.playGesture('rest')
+    currentTurn = null
+    finishIssued = false
+    turnCompleted = false
+    nodStartedAt = -1
+    actor?.cancelTransient(reason, reason === 'character-change')
     dirty = true
   }
   const pause = () => {
     speech.pause()
     pendingGesture = null
-    actor?.playGesture('rest')
+    nodStartedAt = -1
+    actor?.cancelTransient('paused')
+    targetX = 0; targetY = 0
     dirty = true
   }
   const onVisibility = () => {
@@ -563,12 +622,15 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let paused = false
   let frame = 0
   const animate = (now) => {
+    if (destroyed) return
     frame = requestFrame(animate)
     // Settings → 后台失焦智能挂起 is treated exactly like a hidden tab here.
     if (!shouldRender() || document.hidden || isRenderSuspended() || !drawable()) {
       if (!paused) pause()
       paused = true
       lastTime = clock.getElapsedTime()
+      cancelFrame(frame)
+      frame = { timer: setTimeout(() => animate(performance.now()), 500) }
       return
     }
     paused = false
@@ -592,9 +654,14 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   return {
     /** Whose silhouette is on stage. Rebuilds only when the character changes. */
     setCharacter(character) {
-      speech.reset()
-      pendingGesture = null
-      speaking = false
+      if (destroyed) return
+      const key = String(character?.id ?? '') + '|' + String(characterModelSource(character) ?? '')
+      if (key !== actorKey) {
+        hush('character-change')
+        moodKey = null; motionKey = null; speaking = false
+        atmosphere.clearMood()
+        gazeX = 0; gazeY = 0; targetX = 0; targetY = 0
+      }
       selectActor(character)
       const next = characterShape(character)
       if (shape && shape.seed === next.seed) return
@@ -603,23 +670,30 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     },
     /** Which room. Rebuilds only when the scene changes. */
     setScene(key) {
+      if (destroyed) return
       const next = key || null
       if (sceneKey === next && room.children.length) return
+      actor?.cancelTransient('scene-change')
+      pendingGesture = null
       buildRoom(next)
       dirty = true
     },
     /** Mood and motion as she reported them. Unknown or missing keeps the pose. */
-    setState(state) {
+    setState(state, meta = {}) {
+      if (destroyed || (meta.roleId != null && !actorKey?.startsWith(String(meta.roleId) + '|'))) return
+      const newTurn = !!meta.turnId && meta.turnId !== currentTurn
+      if (meta.turnId) beginTurn(meta.turnId)
       const mood = state?.mood && MOODS[state.mood] ? state.mood : null
       const motion = state?.motion && MOTIONS[state.motion] ? state.motion : null
-      if (state?.gesture && !reducedMotion && shouldRender() && !document.hidden) {
-        if (actor) actor.playGesture(state.gesture)
-        else pendingGesture = state.gesture
+      if (state?.gesture && meta.source !== 'stored' && !meta.replay && !reducedMotion && shouldRender() && !document.hidden && !isRenderSuspended()) {
+        const cue = { turnId: currentTurn, cueId: currentTurn, source: meta.source || 'state' }
+        if (actor) actor.playGesture(state.gesture, cue)
+        else pendingGesture = { name: state.gesture, cue, receivedAt: performance.now() }
       }
-      if (mood) moodKey = mood
+      if (mood) { moodKey = mood; atmosphere.setMood(mood) }
       if (motion) {
+        if (MOTIONS[motion].nod && !meta.replay && meta.source !== 'stored' && !reducedMotion && (motion !== motionKey || newTurn)) nodStartedAt = stageTime
         motionKey = motion
-        if (MOTIONS[motion].nod && !reducedMotion) nodStartedAt = clock.getElapsedTime()
       }
       dirty = true
     },
@@ -628,16 +702,24 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       moodKey = null
       motionKey = null
       nodStartedAt = -1
+      atmosphere.clearMood()
       dirty = true
     },
     setSpeaking(value) {
+      const wasSpeaking = speaking
       speaking = !!value
-      if (!speaking) speech.finish()
+      finishIssued = false
+      if (speaking) turnCompleted = false
+      else if (wasSpeaking) { turnCompleted = true; speech.finish() }
       dirty = true
     },
-    speak(text) {
-      speech.push(text, reducedMotion || !shouldRender() || document.hidden)
+    speak(text, meta = {}) {
+      if (destroyed || (meta.roleId != null && !actorKey?.startsWith(String(meta.roleId) + '|'))) return
+      if (meta.turnId) beginTurn(meta.turnId)
+      speech.push(text, reducedMotion || !shouldRender() || document.hidden || isRenderSuspended())
+      dirty = true
     },
+    beginTurn,
     hush,
     pause,
     setReducedMotion(value) {
@@ -645,6 +727,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       pause()
       nodStartedAt = -1
       lastTime = clock.getElapsedTime()
+      dirty = true
     },
     /** What the stage is showing, as data. */
     snapshot() {
@@ -664,7 +747,12 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
         width: container.clientWidth,
         height: container.clientHeight,
         pose: { ...pose },
-        room: { rain: rain?.count ?? 0, embers: embers?.count ?? 0, dust: dust?.count ?? 0, lamp: !!lamp, window: !!windowBox }
+        turnId: currentTurn,
+        reducedMotion,
+        atmosphere: atmosphere.snapshot(),
+        room: { rain: rain?.count ?? 0, embers: embers?.count ?? 0, dust: dust?.count ?? 0, lamp: !!lamp, window: !!windowBox, builds: roomBuilds,
+          cups: actor || fallbackCup?.visible ? 1 : 0, localLight: { source: sceneConfig.hearth ? 'hearth' : sceneConfig.lamp ? 'lamp' : null, intensity: roomLight.intensity },
+          keyIntensity: keyLight.intensity, windowOpacity: windowMaterial.opacity }
       }
     },
     /**
@@ -709,6 +797,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       }
     },
     destroy() {
+      if (destroyed) return
       destroyed = true
       actorRequest++
       actorAbort?.abort()
@@ -716,7 +805,8 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       actor = null
       cancelFrame(frame)
       stopQualityWatch()
-      window.removeEventListener('mousemove', onMouseMove)
+      container.removeEventListener('pointermove', onMouseMove)
+      container.removeEventListener('pointerleave', onPointerLeave)
       document.removeEventListener('visibilitychange', onVisibility)
       resizeObserver.disconnect()
       scene.traverse((node) => node.geometry?.dispose())
@@ -724,6 +814,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       renderer.dispose()
       renderer.forceContextLoss()
       renderer.domElement.remove()
+      vignette.remove()
     }
   }
 }
