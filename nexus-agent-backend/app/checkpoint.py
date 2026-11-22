@@ -193,6 +193,10 @@ async def open_run_store() -> AsyncIterator[RunStore]:
     path = Path(settings.checkpoint_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     async with AsyncSqliteSaver.from_conn_string(str(path)) as saver:
+        # Per-run connections share this file; without WAL + busy timeout a
+        # cancel/resume overlapping another run's write hits "database is locked".
+        await saver.conn.execute("PRAGMA journal_mode=WAL")
+        await saver.conn.execute("PRAGMA busy_timeout=5000")
         store = RunStore(saver)
         await store._setup()
         if time.monotonic() - _last_purge > _PURGE_INTERVAL_SEC:
