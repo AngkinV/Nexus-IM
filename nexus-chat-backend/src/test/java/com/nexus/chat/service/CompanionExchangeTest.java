@@ -1,12 +1,13 @@
 package com.nexus.chat.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.nexus.chat.dto.CompanionChatResponse;
 import com.nexus.chat.dto.CompanionMessageDTO;
 import com.nexus.chat.dto.CompanionStatusDTO;
 import com.nexus.chat.model.*;
 import com.nexus.chat.repository.*;
 import com.nexus.chat.util.CompanionStateTag;
-import com.nexus.chat.util.ModelEndpointGuard;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,7 +52,6 @@ class CompanionExchangeTest {
     @Mock CompanionModelService modelService;
     @Mock CompanionCryptoService cryptoService;
     @Mock TavernSessionRepository sessionRepository;
-    @Mock ModelEndpointGuard endpointGuard;
     @Mock CompanionModelResolver modelResolver;
 
     private CompanionService service;
@@ -64,7 +64,7 @@ class CompanionExchangeTest {
         service = new CompanionService(roleRepository, growthRepository, memoryRepository,
                 conversationRepository, messageRepository, modelBindingRepository, credentialRepository,
                 statusRepository, new CompanionFallbackService(), modelService, cryptoService,
-                sessionRepository, endpointGuard, modelResolver);
+                sessionRepository, modelResolver);
 
         role = new CompanionRole();
         role.setId(ROLE);
@@ -102,10 +102,18 @@ class CompanionExchangeTest {
 
     private void modelConfigured() {
         CompanionModelBinding binding = new CompanionModelBinding();
+        binding.setRoleId(ROLE);
+        binding.setUserId(USER);
+        binding.setProvider("role-channel");
         binding.setEndpoint("https://example.invalid/v1");
         binding.setModelName("test-model");
         ModelCredential credential = new ModelCredential();
-        credential.setApiKeyEncrypted("x");
+        credential.setId(17L);
+        credential.setUserId(USER);
+        credential.setProvider("role-channel");
+        credential.setBaseUrl("https://example.invalid/v1");
+        credential.setDefaultModel("channel-model");
+        credential.setApiKeyEncrypted("fixture-ciphertext");
         when(modelResolver.resolve(USER, ROLE))
                 .thenReturn(new CompanionModelResolver.Resolved(binding, credential, true));
     }
@@ -229,6 +237,174 @@ class CompanionExchangeTest {
         verify(modelService, never()).generateReply(any(), any(), any(), any());
     }
 
+    @Test
+    void aConfiguredStateOnlyReplyLeavesTheUserLineUnanswered() {
+        modelConfigured();
+        when(modelService.generateReply(any(), any(), any(), any())).thenReturn(
+                CompanionModelService.ModelReply.success("<state>{\"mood\":\"warm\"}</state>\n"));
+
+        var result = service.sendMessage(USER, ROLE, "你好", null, "retry-this");
+
+        assertNull(result.getRoleMessage());
+        assertFalse(result.getFallback());
+        assertEquals("retry-this", result.getUserMessage().getClientMsgId());
+        assertEquals(1, saved.size());
+        verify(growthRepository, never()).save(any());
+        verify(statusRepository, never()).save(any());
+        verify(credentialRepository, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void configuredRateLimitKeepsTheUnansweredLineAndTypedRetryInformation(boolean streaming) {
+        modelConfigured();
+        var error = rateLimit();
+        var failure = new CompanionModelService.ModelReply(null, false, error);
+        if (streaming) {
+            when(modelService.streamReply(any(), any(), any(), any(), any())).thenReturn(failure);
+        } else {
+            when(modelService.generateReply(any(), any(), any(), any())).thenReturn(failure);
+        }
+        var result = streaming
+                ? service.sendMessageStreaming(USER, ROLE, "你好", null, "retry-rate", piece -> fail("invented delta"), null)
+                : service.sendMessage(USER, ROLE, "你好", null, "retry-rate");
+        assertEquals(error, result.getModelError());
+        assertFalse(result.getFallback());
+        assertFalse(result.getPartial());
+        assertNull(result.getRoleMessage());
+        assertEquals("retry-rate", result.getUserMessage().getClientMsgId());
+        assertEquals(1, saved.size());
+        verify(credentialRepository, never()).save(any());
+        verify(statusRepository, never()).save(any());
+        verify(growthRepository, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void configuredFailureWithVisibleOutputIsPartialNotASuccessfulExchange(boolean streaming) {
+        modelConfigured();
+        String raw = "<state>{\"mood\":\"shy\"}</state>\n半句";
+        var error = rateLimit();
+        var failure = new CompanionModelService.ModelReply(raw, true, error);
+        if (streaming) {
+            when(modelService.streamReply(any(), any(), any(), any(), any())).thenAnswer(inv -> {
+                inv.<Consumer<String>>getArgument(4).accept(raw);
+                return failure;
+            });
+        } else {
+            when(modelService.generateReply(any(), any(), any(), any())).thenReturn(failure);
+        }
+        var seen = new StringBuilder();
+        var result = streaming
+                ? service.sendMessageStreaming(USER, ROLE, "你好", null, "retry-partial", seen::append, null)
+                : service.sendMessage(USER, ROLE, "你好", null, "retry-partial");
+        if (streaming) assertEquals("半句", seen.toString());
+        assertEquals("半句", result.getRoleMessage().getContent());
+        assertEquals(error, result.getModelError());
+        assertTrue(result.getPartial());
+        assertFalse(result.getFallback());
+        assertEquals("retry-partial", result.getUserMessage().getClientMsgId());
+        assertEquals(2, saved.size());
+        verify(growthRepository, never()).save(any());
+        verify(statusRepository, never()).save(any());
+        verify(credentialRepository, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void aRetryOfACutShortReplyAsksTheModelAgainAndReplacesTheFragment(boolean streaming) {
+        modelConfigured();
+        // The repository answers from what was actually filed, so the retry sees the first attempt.
+        when(messageRepository.findFirstByUserIdAndRoleIdAndClientMsgIdOrderByIdAsc(USER, ROLE, "c-9"))
+                .thenAnswer(inv -> saved.stream().filter(m -> "c-9".equals(m.getClientMsgId())).findFirst());
+        when(messageRepository.findFirstByConversationIdAndIdGreaterThanOrderByIdAsc(eq(50L), anyLong()))
+                .thenAnswer(inv -> saved.stream().filter(m -> m.getId() > inv.<Long>getArgument(1)).findFirst());
+        when(messageRepository.findBySessionIdOrderByIdDesc(eq(900L), any())).thenAnswer(inv -> {
+            List<CompanionMessage> newestFirst = new ArrayList<>(saved);
+            java.util.Collections.reverse(newestFirst);
+            return newestFirst;
+        });
+        doAnswer(inv -> saved.remove(inv.<CompanionMessage>getArgument(0)))
+                .when(messageRepository).delete(any(CompanionMessage.class));
+
+        String fragment = "<state>{\"mood\":\"shy\"}</state>\n半句";
+        var failure = new CompanionModelService.ModelReply(fragment, true, rateLimit());
+        var success = CompanionModelService.ModelReply.success("完整的一句。");
+        List<List<String>> shownToModel = new ArrayList<>();
+        org.mockito.stubbing.Answer<CompanionModelService.ModelReply> model = inv -> {
+            shownToModel.add(inv.<List<CompanionMessage>>getArgument(1).stream().map(CompanionMessage::getContent).toList());
+            boolean first = shownToModel.size() == 1;
+            if (streaming) inv.<Consumer<String>>getArgument(4).accept(first ? fragment : success.content());
+            return first ? failure : success;
+        };
+        when(modelService.streamReply(any(), any(), any(), any(), any())).thenAnswer(model);
+        when(modelService.generateReply(any(), any(), any(), any())).thenAnswer(model);
+
+        CompanionChatResponse cutShort = streaming
+                ? service.sendMessageStreaming(USER, ROLE, "你好", null, "c-9", piece -> {}, null)
+                : service.sendMessage(USER, ROLE, "你好", null, "c-9");
+
+        assertTrue(cutShort.getPartial());
+        assertEquals("半句", cutShort.getRoleMessage().getContent());
+        assertEquals(Boolean.TRUE, cutShort.getRoleMessage().getPartial(), "a reload must still see the reply as cut short");
+        assertEquals(Map.of("mood", "shy"), cutShort.getRoleMessage().getState(), "the marker is not a state field");
+        assertNull(cutShort.getUserMessage().getPartial());
+        Long fragmentId = cutShort.getRoleMessage().getId();
+        verify(growthRepository, never()).save(any());
+
+        TavernSession active = new TavernSession();
+        active.setId(900L);
+        active.setRoleId(ROLE);
+        active.setStatus(TavernSession.Status.active);
+        when(sessionRepository.findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(
+                USER, ROLE, TavernSession.Status.active)).thenReturn(Optional.of(active));
+        StringBuilder seen = new StringBuilder();
+
+        CompanionChatResponse retry = streaming
+                ? service.sendMessageStreaming(USER, ROLE, "你好", null, "c-9", seen::append, null)
+                : service.sendMessage(USER, ROLE, "你好", null, "c-9");
+
+        assertEquals(2, shownToModel.size(), "the retry must reach the model, not replay the fragment");
+        assertEquals(List.of("你好"), shownToModel.get(1), "the fragment is gone before the model is asked again");
+        if (streaming) assertEquals("完整的一句。", seen.toString());
+        assertEquals("完整的一句。", retry.getRoleMessage().getContent());
+        assertNotEquals(fragmentId, retry.getRoleMessage().getId());
+        assertNull(retry.getRoleMessage().getPartial());
+        assertFalse(retry.getPartial());
+        assertNull(retry.getModelError());
+        assertEquals(cutShort.getUserMessage().getId(), retry.getUserMessage().getId());
+        assertEquals(List.of("你好", "完整的一句。"), saved.stream().map(CompanionMessage::getContent).toList(),
+                "one user line, one reply: no duplicate and no leftover fragment");
+        verify(growthRepository, times(1)).save(any());
+
+        // A third send under the same id is now an ordinary replay of the finished reply.
+        CompanionChatResponse replay = service.sendMessage(USER, ROLE, "你好", null, "c-9");
+        assertEquals(retry.getRoleMessage().getId(), replay.getRoleMessage().getId());
+        assertEquals(2, shownToModel.size());
+        assertEquals(2, saved.size());
+    }
+
+    private static JsonNode rateLimit() {
+        return JsonNodeFactory.instance.objectNode().put("code", "RATE_LIMIT").put("httpStatus", 429)
+                .put("summary", "wait").put("upstreamCode", "slow_down").put("retryAfterSeconds", 20);
+    }
+
+    @Test
+    void missingExplicitCredentialDoesNotGenerateAnOfflineLine() {
+        var binding = new CompanionModelBinding();
+        binding.setUserId(USER);
+        binding.setRoleId(ROLE);
+        binding.setModelName("role-model");
+        when(modelResolver.resolve(USER, ROLE)).thenReturn(new CompanionModelResolver.Resolved(binding, null, false));
+        var result = service.sendMessage(USER, ROLE, "你好", null, "keep-id");
+        assertNull(result.getRoleMessage());
+        assertFalse(result.getFallback());
+        assertEquals("keep-id", result.getUserMessage().getClientMsgId());
+        verifyNoInteractions(modelService);
+        verify(growthRepository, never()).save(any());
+        verify(statusRepository, never()).save(any());
+    }
+
     static Stream<Arguments> reportedStates() {
         return Stream.of(
                 Arguments.of("{\"gesture\":\"wave\"}", "calm", "listen", "wave"),
@@ -315,7 +491,7 @@ class CompanionExchangeTest {
         when(modelService.streamReply(any(), any(), any(), any(), any())).thenAnswer(inv -> {
             Consumer<String> onDelta = inv.getArgument(4);
             for (int i = 0; i < raw.length(); i += 3) onDelta.accept(raw.substring(i, Math.min(raw.length(), i + 3)));
-            return raw;
+            return CompanionModelService.ModelReply.success(raw);
         });
 
         StringBuilder text = new StringBuilder();
@@ -351,14 +527,9 @@ class CompanionExchangeTest {
         modelConfigured();
         when(modelService.streamReply(any(), any(), any(), any(), any())).thenAnswer(inv -> {
             Consumer<String> onDelta = inv.getArgument(4);
-            try {
-                onDelta.accept("第一句。");
-                onDelta.accept("第二句。");
-                fail("the second piece must abort the stream");
-            } catch (CompanionModelService.ReaderGone expected) {
-                // what the real client does: drop the provider connection
-            }
-            return "第一句。第二句。";
+            onDelta.accept("第一句。");
+            onDelta.accept("第二句。");
+            return fail("the second piece must abort the stream");
         });
 
         int[] calls = {0};
@@ -371,5 +542,28 @@ class CompanionExchangeTest {
         assertTrue(response.getPartial());
         assertEquals("第一句。", response.getRoleMessage().getContent());
         assertFalse(response.getFallback(), "a stopped reply is hers, not a canned line");
+        assertNull(response.getModelError(), "a reader leaving is not a provider failure");
+        verify(growthRepository, never()).save(any());
+        verify(statusRepository, never()).save(any());
+    }
+
+    @Test
+    void abortBeforeVisibleTextLeavesTheOriginalLineUnanswered() {
+        modelConfigured();
+        when(modelService.streamReply(any(), any(), any(), any(), any())).thenAnswer(inv -> {
+            inv.<Consumer<String>>getArgument(4).accept("<state>{\"mood\":\"warm\"}</state>你好");
+            return fail("reader should have aborted");
+        });
+        var result = service.sendMessageStreaming(USER, ROLE, "hello", null, "abort-id", piece -> {
+            throw new IllegalStateException("client gone");
+        }, null);
+        assertTrue(result.getPartial());
+        assertNull(result.getModelError());
+        assertNull(result.getRoleMessage());
+        assertFalse(result.getFallback());
+        assertEquals("abort-id", result.getUserMessage().getClientMsgId());
+        assertEquals(1, saved.size());
+        verify(statusRepository, never()).save(any());
+        verify(growthRepository, never()).save(any());
     }
 }

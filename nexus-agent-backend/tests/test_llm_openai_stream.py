@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT))
 os.environ.pop("OPENAI_API_KEY", None)
 os.environ["USE_REAL_MODEL"] = "false"
 
+import httpx  # noqa: E402
 import openai  # noqa: E402
 
 from app.llm import LLMChunk, ProviderConfig  # noqa: E402
@@ -109,7 +110,12 @@ def patch_openai(monkeypatch):
 
         class _FakeAsyncOpenAI:
             def __init__(self, **kwargs):
+                holder["client_kwargs"] = kwargs
+                holder["client_closed"] = False
                 self.chat = SimpleNamespace(completions=_FakeCompletions())
+
+            async def close(self):
+                holder["client_closed"] = True
 
         monkeypatch.setattr(openai, "AsyncOpenAI", _FakeAsyncOpenAI)
         return holder
@@ -201,10 +207,14 @@ async def test_create_idle_timeout_yields_timeout(monkeypatch):
         def __init__(self, **kwargs):
             self.chat = SimpleNamespace(completions=_SlowCompletions())
 
+        async def close(self):
+            pass
+
     monkeypatch.setattr(openai, "AsyncOpenAI", _SlowOpenAI)
     chunks = await _collect(OpenAILikeClient(_cfg()), timeout_sec=0.2)
     assert [c.kind for c in chunks] == ["error", "finish"]
     assert chunks[-1].finish_reason == "timeout"
+    assert chunks[0].error.code == "TIMEOUT"
 
 
 async def test_usage_chunk_forwarded(patch_openai):
@@ -229,3 +239,76 @@ async def test_reasoning_deltas_forwarded_separately(patch_openai):
     chunks = await _collect(OpenAILikeClient(_cfg()))
     assert chunks[0].kind == "reasoning" and chunks[0].text == "想一想"
     assert chunks[1].kind == "text" and chunks[1].text == "答"
+
+async def test_sdk_retries_are_disabled_and_client_is_closed(patch_openai):
+    holder = patch_openai([_text_chunk("ok", finish="stop")])
+    await _collect(OpenAILikeClient(_cfg()))
+    assert holder["client_kwargs"]["max_retries"] == 0
+    assert holder["client_closed"] is True
+    assert holder["stream"].closed is True
+
+
+async def test_client_is_closed_when_consumer_stops_early(patch_openai):
+    holder = patch_openai([_text_chunk("a"), _text_chunk("b"), _text_chunk("", finish="stop")])
+    stream = OpenAILikeClient(_cfg()).complete([], tools=None, timeout_sec=5)
+    first = await stream.__anext__()
+    assert first.text == "a"
+    await stream.aclose()
+    assert holder["stream"].closed is True
+    assert holder["client_closed"] is True
+
+
+async def test_malformed_tool_arguments_fail_instead_of_running_with_empty_args(patch_openai):
+    patch_openai([
+        _tool_delta_chunk(id="call_1", name="get_recent_messages", args='{"chat_id": 20001'),
+        _tool_delta_chunk(finish="tool_calls"),
+    ])
+    chunks = await _collect(OpenAILikeClient(_cfg()))
+    assert all(c.kind != "tool_call" for c in chunks)
+    assert chunks[-1].finish_reason == "error"
+    error = next(c for c in chunks if c.kind == "error").error
+    assert error.code == "BAD_TOOL_CALL"
+
+
+async def test_tool_call_without_arguments_is_an_empty_object(patch_openai):
+    patch_openai([_tool_delta_chunk(id="call_1", name="list_my_chats", finish="tool_calls")])
+    chunks = await _collect(OpenAILikeClient(_cfg()))
+    [call] = [c.tool_call for c in chunks if c.kind == "tool_call"]
+    assert call.arguments == {}
+
+
+async def test_stream_ending_without_finish_reason_is_not_a_clean_stop(patch_openai):
+    patch_openai([_text_chunk("部分回答")])
+    chunks = await _collect(OpenAILikeClient(_cfg()))
+    assert [c.kind for c in chunks] == ["text", "error", "finish"]
+    assert chunks[1].error.code == "INCOMPLETE"
+    assert chunks[-1].finish_reason == "error"
+
+
+async def test_length_finish_drops_tool_calls(patch_openai):
+    patch_openai([_tool_delta_chunk(id="call_1", name="t", args='{"a": 1}', finish="length")])
+    chunks = await _collect(OpenAILikeClient(_cfg()))
+    assert all(c.kind != "tool_call" for c in chunks)
+    assert chunks[-1].finish_reason == "length"
+
+
+async def test_rate_limit_is_classified_with_retry_after(patch_openai):
+    response = httpx.Response(
+        429, headers={"retry-after": "7"},
+        request=httpx.Request("POST", "https://api.example.test/v1/chat/completions"))
+    exc = openai.RateLimitError(
+        "Error code: 429", response=response,
+        body={"error": {"code": "RateLimitExceeded.EndpointTPMExceeded", "message": "TPM exceeded"}})
+    patch_openai([], create_exc=exc)
+    chunks = await _collect(OpenAILikeClient(_cfg()))
+    assert [c.kind for c in chunks] == ["error", "finish"]
+    error = chunks[0].error
+    assert (error.code, error.http_status, error.retry_after_seconds) == ("RATE_LIMIT", 429, 7)
+    assert error.upstream_code == "RateLimitExceeded.EndpointTPMExceeded"
+
+
+async def test_api_key_never_appears_in_error_summary(patch_openai):
+    patch_openai([], create_exc=RuntimeError("401 Incorrect API key provided: sk-test"))
+    chunks = await _collect(OpenAILikeClient(_cfg()))
+    assert "sk-test" not in chunks[0].text
+    assert "sk-test" not in chunks[0].error.summary

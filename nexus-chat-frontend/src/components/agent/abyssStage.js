@@ -92,6 +92,10 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   shaderCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:0.5;pointer-events:none'
   container.appendChild(shaderCanvas)
   const gl = shaderCanvas.getContext('webgl')
+  if (!gl) {
+    shaderCanvas.remove()
+    throw new Error('WebGL is unavailable')
+  }
   const compile = (type, source) => {
     const shader = gl.createShader(type)
     gl.shaderSource(shader, source)
@@ -193,8 +197,8 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
     const rect = container.getBoundingClientRect()
     // Hidden on short windows: a zero-size rect would turn the gaze into Infinity.
     if (!rect.width) return
-    const nx = (event.clientX - rect.left) / rect.width
-    const ny = (event.clientY - rect.top) / rect.height
+    const nx = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+    const ny = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
     targetX = (nx * 2 - 1) * 0.5
     targetY = -(ny * 2 - 1) * 0.4
     shaderMouse.x = nx * shaderCanvas.width
@@ -202,26 +206,27 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   }
   window.addEventListener('mousemove', onMouseMove)
 
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
   const clock = new THREE.Clock()
   let frame = 0
   const animate = () => {
     frame = requestAnimationFrame(animate)
     if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
-    const time = clock.getElapsedTime()
+    const time = reducedMotion.matches ? 0 : clock.getElapsedTime()
 
     gl.uniform1f(uTime, time)
     gl.uniform2f(uResolution, shaderCanvas.width, shaderCanvas.height)
     gl.uniform2f(uMouse, shaderMouse.x, shaderMouse.y)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
-    gazeX += (targetX - gazeX) * 0.06
-    gazeY += (targetY - gazeY) * 0.06
+    gazeX = reducedMotion.matches ? 0 : gazeX + (targetX - gazeX) * 0.06
+    gazeY = reducedMotion.matches ? 0 : gazeY + (targetY - gazeY) * 0.06
     figure.position.y = Math.sin(time * 1.6) * 0.065 - 0.1
     figure.rotation.y = gazeX * 0.85 + Math.sin(time * 0.7) * 0.05
     figure.rotation.x = -gazeY * 0.55 + Math.cos(time * 0.9) * 0.035
     halo.rotation.z = time * 0.2
     outerHalo.rotation.z = -time * 0.12
-    for (let i = 0; i < DUST; i++) {
+    for (let i = 0; !reducedMotion.matches && i < DUST; i++) {
       dustPositions[i * 3 + 1] += dustSpeeds[i]
       if (dustPositions[i * 3 + 1] > 2.2) dustPositions[i * 3 + 1] = -2.2
     }

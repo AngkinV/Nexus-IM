@@ -1,4 +1,5 @@
 .venv
+.venv311
 data
 tests
 __pycache__

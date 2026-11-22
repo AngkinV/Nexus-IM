@@ -5,26 +5,11 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDateTime;
-import java.util.List;
+import com.fasterxml.jackson.databind.JsonNode;
 
 public final class AgentProviderDtos {
 
     private AgentProviderDtos() {}
-
-    /** Catalog hint shown in the UI; the canonical list is also kept in code on the frontend side. */
-    public enum ProviderKind {
-        OPENAI,
-        DEEPSEEK,
-        MOONSHOT,
-        ZHIPU,
-        TONGYI,
-        TOGETHER,
-        GROQ,
-        OLLAMA,
-        ANTHROPIC,
-        GEMINI,
-        CUSTOM
-    }
 
     @Data
     public static class UpsertProviderRequest {
@@ -76,6 +61,7 @@ public final class AgentProviderDtos {
         private boolean hasApiKey;
         private boolean isDefault;
         private String status;              // ok / invalid / unknown
+        private String revision;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
     }
@@ -86,7 +72,7 @@ public final class AgentProviderDtos {
         private String message;
         private Long latencyMs;
         private String model;
-        private List<String> availableModels;
+        private JsonNode error;
         /** Vector dimension returned by the embedding probe (only set for purpose=embedding). */
         private Integer embeddingDimension;
     }

@@ -1,7 +1,6 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.*;
-import com.nexus.chat.model.CompanionModelBinding;
 import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.CompanionService;
 import lombok.RequiredArgsConstructor;
@@ -163,24 +162,6 @@ public class CompanionController {
         }
     }
 
-    private static Double asDouble(Object value) {
-        if (value == null) return null;
-        try {
-            return Double.valueOf(value.toString());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static Integer asInt(Object value) {
-        if (value == null) return null;
-        try {
-            return Integer.valueOf(value.toString());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
     /** Minimal JSON string escaping for a single SSE payload. */
     private static String escapeJson(String value) {
         StringBuilder out = new StringBuilder(value.length() + 16);
@@ -297,12 +278,7 @@ public class CompanionController {
             @PathVariable Long roleId,
             @RequestParam(name = "userId", required = false) Long claimedUserId) {
         Long userId = CurrentUser.require(claimedUserId);
-        try {
-            return ResponseEntity.ok(companionService.describeModel(userId, roleId));
-        } catch (Exception e) {
-            log.error("Describe model failed", e);
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(companionService.describeModel(userId, roleId));
     }
 
     /**
@@ -314,12 +290,7 @@ public class CompanionController {
             @PathVariable Long roleId,
             @RequestParam(name = "userId", required = false) Long claimedUserId) {
         Long userId = CurrentUser.require(claimedUserId);
-        try {
-            return ResponseEntity.ok(companionService.testModelChannel(userId, roleId));
-        } catch (Exception e) {
-            log.error("Model test failed", e);
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(companionService.testModelChannel(userId, roleId));
     }
 
     @GetMapping("/growth/{roleId}")
@@ -396,23 +367,10 @@ public class CompanionController {
     }
 
     @PutMapping("/model-binding/{roleId}")
-    public ResponseEntity<CompanionModelBinding> bindModel(
+    public ResponseEntity<Map<String, Object>> bindModel(
             @PathVariable Long roleId,
             @RequestParam(name = "userId", required = false) Long claimedUserId,
-            @RequestBody Map<String, Object> request) {
-        Long userId = CurrentUser.require(claimedUserId);
-        try {
-            String provider = request.get("provider") != null ? request.get("provider").toString() : "openai-compatible";
-            String modelName = request.get("modelName") != null ? request.get("modelName").toString() : null;
-            String endpoint = request.get("endpoint") != null ? request.get("endpoint").toString() : null;
-            return ResponseEntity.ok(companionService.bindModel(
-                    userId, roleId, provider, modelName, endpoint,
-                    asDouble(request.get("temperature")),
-                    asInt(request.get("personaLock")),
-                    asInt(request.get("contextHorizon"))));
-        } catch (Exception e) {
-            log.error("Bind model failed", e);
-            return ResponseEntity.badRequest().build();
-        }
+            @jakarta.validation.Valid @RequestBody CompanionModelBindingRequest request) {
+        return ResponseEntity.ok(companionService.bindModel(CurrentUser.require(claimedUserId), roleId, request));
     }
 }

@@ -45,7 +45,7 @@ BUSINESS_PROMPT: dict[str, str] = {
     "TODO_EXTRACT": (
         "当前任务：从最近消息中提炼待办。\n"
         "1. 必须先调用 get_recent_messages。\n"
-        "2. 输出 JSON 数组，每项 {owner, task, dueAt, confidence}。\n"
+        "2. 输出 JSON 对象 {\"todos\": [...]}，每项 {owner, task, dueAt, confidence}。\n"
         "3. 没有明确截止时间填 null；置信度低于 0.5 不要输出。\n"
         "4. 用 JSON 结构 fenced code block 输出。"
     ),
@@ -80,6 +80,7 @@ def build_messages(
     *,
     relevant_history: list[str] | None = None,
     kb_context: str = "",
+    attachments: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     op = request.session.operationType
@@ -115,6 +116,22 @@ def build_messages(
                 "并指明文件名；如与问题无关请忽略）：\n"
                 + kb_context
             ),
+        })
+
+    if attachments:
+        # Uploaded files the user attached to this turn. Cited as A1, A2… so an answer can
+        # point back at the exact file it used.
+        budget = 32_000
+        blocks = []
+        for index, item in enumerate(attachments, start=1):
+            body = item.get("content") or ""
+            cut = body[:budget]
+            budget -= len(cut)
+            note = "" if len(cut) == len(body) else "（已截断）"
+            blocks.append(f"[A{index}] {item.get('fileName') or 'attachment'}{note}\n{cut}")
+        messages.append({
+            "role": "system",
+            "content": "【附件内容】（用户本轮上传的文件；引用时请用 [A1] 这类标注指出来源）：\n" + "\n\n".join(blocks),
         })
 
     for m in short_term[-12:]:  # last 12 entries to avoid blowing context

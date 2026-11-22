@@ -22,6 +22,26 @@ export const AGENT_OP = Object.freeze({
     REPLY_SUGGEST: 'REPLY_SUGGEST'
 })
 
+const sessionPath = sid => `/agent/sessions/${encodeURIComponent(sid)}`
+const artifactPath = (sid, id) => `${sessionPath(sid)}/artifacts/${encodeURIComponent(id)}`
+
+/** Axios rejects HTTP errors; a non-OK AgentCommonResponse isn't a success either. */
+export function agentData(response) {
+    const envelope = response?.data
+    if (envelope?.code !== 'OK' || !Object.hasOwn(envelope, 'data')) {
+        throw Object.assign(new Error(envelope?.message || 'Invalid agent response'), { code: envelope?.code })
+    }
+    return envelope.data
+}
+
+export function agentOwnerId() {
+    try {
+        if (!localStorage.getItem('token')) return null
+        const id = JSON.parse(localStorage.getItem('user'))?.id
+        return (typeof id === 'number' || typeof id === 'string') && String(id).trim() ? String(id) : null
+    } catch { return null }
+}
+
 export const agentAPI = {
     /** Create a new Agent session (Mode A: AI 助手会话). */
     createSession: ({ entryMode = AGENT_OP.ASSISTANT_CHAT, title = i18n.global.t('agent.title'), boundChatId = null } = {}) =>
@@ -32,23 +52,39 @@ export const agentAPI = {
 
     /** Rename a session. */
     renameSession: (sessionId, title) =>
-        apiClient.patch(`/agent/sessions/${sessionId}`, { title }),
+        apiClient.patch(`${sessionPath(sessionId)}`, { title }),
 
     /** Delete a session (clears short-term memory too). */
     deleteSession: (sessionId) =>
-        apiClient.delete(`/agent/sessions/${sessionId}`),
+        apiClient.delete(`${sessionPath(sessionId)}`),
 
     /** Fetch persisted messages of a session (currently from Redis short-term memory). */
     sessionMessages: (sessionId) =>
-        apiClient.get(`/agent/sessions/${sessionId}/messages`),
+        apiClient.get(`${sessionPath(sessionId)}/messages`),
+    pendingRuns: sid => apiClient.get(`${sessionPath(sid)}/runs/pending`),
+    listRuns: sid => apiClient.get(`${sessionPath(sid)}/runs`),
+    listAttachments: sid => apiClient.get(`${sessionPath(sid)}/attachments`),
+    listTasks: sid => apiClient.get(`${sessionPath(sid)}/tasks`),
+    uploadAttachment: (sid, file) => {
+        const form = new FormData()
+        form.append('file', file)
+        return apiClient.post(`${sessionPath(sid)}/attachments`, form, { headers: { 'Content-Type': undefined } })
+    },
+    removeAttachment: (sid, id) => apiClient.delete(`${sessionPath(sid)}/attachments/${encodeURIComponent(id)}`),
+    previewPatch: (sid, id, baseAttachmentId) => apiClient.post(`${artifactPath(sid, id)}/patch-preview`, { baseAttachmentId }),
+    applyPatch: (sid, id, { baseAttachmentId, baseHash, patchHash }) =>
+        apiClient.post(`${artifactPath(sid, id)}/apply`, { baseAttachmentId, baseHash, patchHash, confirmed: true }),
+    createTasks: (sid, id) => apiClient.post(`${artifactPath(sid, id)}/tasks`),
+    updateTask: (sid, id, status) => apiClient.patch(`${sessionPath(sid)}/tasks/${encodeURIComponent(id)}`, { status }),
+    saveArtifact: (sid, id) => apiClient.post(`${artifactPath(sid, id)}/save`),
 
     /** Non-streaming chat (kept as a fallback when SSE fails). */
     chat: (sessionId, payload) =>
-        apiClient.post(`/agent/sessions/${sessionId}/chat`, payload),
+        apiClient.post(`${sessionPath(sessionId)}/chat`, payload),
 
     /** Clear short-term Redis memory for a session. */
     clearSessionMemory: (sessionId) =>
-        apiClient.delete(`/agent/sessions/${sessionId}/memory`),
+        apiClient.delete(`${sessionPath(sessionId)}/memory`),
 
     /** Clear all long-term memory for the current user. */
     resetLongTermMemory: () =>
@@ -64,6 +100,7 @@ export const agentAPI = {
     listProviders: (purpose) => apiClient.get('/agent/providers', {
         params: purpose ? { purpose } : undefined
     }),
+    listProviderModels: (id) => apiClient.get(`/agent/providers/${encodeURIComponent(id)}/models`),
     upsertProvider: (payload) => apiClient.post('/agent/providers', payload),
     deleteProvider: (id) => apiClient.delete(`/agent/providers/${id}`),
     setDefaultProvider: (id) => apiClient.post(`/agent/providers/${id}/default`),
@@ -78,7 +115,9 @@ export const agentAPI = {
  *
  * Returns an object with `cancel()` to abort the stream and `done` Promise.
  *
- * Handlers:
+ * onEvent({name, data, id}) observes each valid wire frame once. Transport errors go to
+ * onTransportError and legacy onError, never to onEvent. onClose also runs for a rejected POST.
+ * Legacy handlers:
  *   onMeta(payload)
  *   onStage(payload)        // payload: { phase, ... } — context / knowledge / mock / model
  *   onReasoning(payload)    // payload: { iteration, text } — the model's own thinking
@@ -90,99 +129,106 @@ export const agentAPI = {
  *   onError(payload)        // payload: { code, message }
  */
 export function streamAgentChat(sessionId, payload, handlers = {}) {
-    const controller = new AbortController()
-    const url = `${API_BASE_URL}/agent/sessions/${sessionId}/chat/stream`
-    const token = localStorage.getItem('token')
-
-    const headers = {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream'
-    }
-    if (token) headers.Authorization = `Bearer ${token}`
-
-    const done = (async () => {
-        let response
-        try {
-            response = await fetch(url, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(payload),
-                signal: controller.signal,
-                credentials: 'include'
-            })
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                handlers.onError?.({ code: 'NETWORK', message: err.message })
-            }
-            return
-        }
-
-        if (!response.ok) {
-            let errBody = {}
-            try { errBody = await response.json() } catch { /* non-json */ }
-            handlers.onError?.({
-                code: errBody.code || 'HTTP_' + response.status,
-                message: errBody.message || `HTTP ${response.status}`
-            })
-            return
-        }
-
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder('utf-8')
-        let buffer = ''
-
-        try {
-            while (true) {
-                const { value, done: streamDone } = await reader.read()
-                if (streamDone) break
-                buffer += decoder.decode(value, { stream: true })
-
-                // SSE frames are separated by blank lines
-                let frameEnd
-                while ((frameEnd = buffer.indexOf('\n\n')) !== -1) {
-                    const rawFrame = buffer.slice(0, frameEnd)
-                    buffer = buffer.slice(frameEnd + 2)
-                    dispatchFrame(rawFrame, handlers)
-                }
-            }
-            if (buffer.trim()) dispatchFrame(buffer, handlers)
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                handlers.onError?.({ code: 'STREAM', message: err.message })
-            }
-        }
-    })()
-
-    return {
-        cancel: () => controller.abort(),
-        done
-    }
+    return streamAgent(`${API_BASE_URL}/agent/sessions/${encodeURIComponent(sessionId)}/chat/stream`, payload, handlers)
 }
 
-function dispatchFrame(rawFrame, handlers) {
-    let event = 'message'
-    const dataLines = []
-    for (const line of rawFrame.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
-        // id: lines are intentionally ignored — we don't yet support Last-Event-ID reconnect
-    }
-    if (dataLines.length === 0) return
+export function streamAgentResume(sessionId, runId, payload, handlers = {}) {
+    return streamAgent(`${API_BASE_URL}/agent/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/resume/stream`, payload, handlers)
+}
 
-    const dataStr = dataLines.join('\n')
-    let parsed = dataStr
-    try { parsed = JSON.parse(dataStr) } catch { /* leave as string */ }
+const eventHandlers = new Map(Object.entries({
+    meta: 'onMeta', stage: 'onStage', reasoning: 'onReasoning', tool_call: 'onToolCall', tool_result: 'onToolResult',
+    agent_output: 'onAgentOutput', sources: 'onSources', artifact: 'onArtifact', delta: 'onDelta', usage: 'onUsage',
+    done: 'onDone', error: 'onError'
+}))
+const streamError = (code, message) => Object.assign(new Error(message), { code })
 
-    switch (event) {
-        case 'meta': handlers.onMeta?.(parsed); break
-        case 'stage': handlers.onStage?.(parsed); break
-        case 'reasoning': handlers.onReasoning?.(parsed); break
-        case 'tool_call': handlers.onToolCall?.(parsed); break
-        case 'tool_result': handlers.onToolResult?.(parsed); break
-        case 'delta': handlers.onDelta?.(parsed); break
-        case 'usage': handlers.onUsage?.(parsed); break
-        case 'done': handlers.onDone?.(parsed); break
-        case 'error': handlers.onError?.(parsed); break
-        default: /* ignore unknown */ break
+function parseFrame(frame) {
+    let name = 'message', id = null
+    const lines = []
+    for (const line of frame.split('\n')) {
+        const colon = line.indexOf(':')
+        const field = colon < 0 ? line : line.slice(0, colon)
+        const value = colon < 0 ? '' : line.slice(colon + 1).replace(/^ /, '')
+        if (field === 'event') name = value || 'message'
+        if (field === 'id' && !value.includes('\0')) id = value
+        if (field === 'data') lines.push(value)
     }
+    if (!lines.length) return null // comment/heartbeat
+    let data
+    try { data = JSON.parse(lines.join('\n')) } catch { /* fail closed below */ }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw streamError('STREAM_INVALID_FRAME', `Invalid JSON object in ${name} event`)
+    }
+    return { name, data, id }
+}
+
+function streamAgent(url, payload, handlers) {
+    const controller = new AbortController()
+    const { signal } = controller
+    const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' }
+    const token = localStorage.getItem('token')
+    if (token) headers.Authorization = `Bearer ${token}`
+    let reader, closing
+    const closeReader = () => { if (reader) closing ??= reader.cancel().catch(() => {}) }
+    signal.addEventListener('abort', closeReader, { once: true })
+
+    const done = (async () => {
+        let response, completed = false, errorEvent = false, runId = null
+        try {
+            response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal, credentials: 'include' })
+            if (signal.aborted) return
+            if (!response.ok) {
+                const body = await response.json().catch(() => null)
+                throw streamError(body?.code || `HTTP_${response.status}`, body?.message || `HTTP ${response.status}`)
+            }
+            if (!/^text\/event-stream(?:\s*;|$)/i.test(response.headers.get('content-type') || '') || !response.body) {
+                throw streamError('STREAM_CONTENT_TYPE', 'Expected a text/event-stream response')
+            }
+            reader = response.body.getReader()
+            const decoder = new TextDecoder('utf-8', { fatal: true })
+            let buffer = '', afterCR = false
+            while (!completed && !signal.aborted) {
+                const part = await reader.read()
+                if (signal.aborted) break
+                let chunk = decoder.decode(part.value, { stream: !part.done })
+                if (chunk) {
+                    if (afterCR && chunk.startsWith('\n')) chunk = chunk.slice(1)
+                    afterCR = chunk.endsWith('\r')
+                    buffer += chunk.replace(/\r\n?/g, '\n')
+                }
+                let end
+                while (!completed && !signal.aborted && (end = buffer.indexOf('\n\n')) !== -1) {
+                    const frame = parseFrame(buffer.slice(0, end))
+                    buffer = buffer.slice(end + 2)
+                    if (!frame) continue
+                    // Keep the wire observer lossless; unrelated frames cannot close this POST or reach legacy handlers.
+                    handlers.onEvent?.(frame)
+                    if (frame.data.runId && runId && frame.data.runId !== runId) continue
+                    runId ??= frame.data.runId
+                    completed = frame.name === 'done'
+                    if (frame.name === 'error' && !frame.data.agentId) errorEvent = true
+                    const handler = eventHandlers.get(frame.name)
+                    if (handler) handlers[handler]?.(frame.data)
+                }
+                if (part.done) break // SSE dispatch requires a blank line, not just EOF.
+            }
+            if (!completed && !errorEvent && !signal.aborted) {
+                throw streamError('STREAM_INCOMPLETE', i18n.global.t('agent.streamInterrupted'))
+            }
+        } catch (err) {
+            if (!signal.aborted) {
+                const diagnostic = { code: err.code || (response ? 'STREAM' : 'NETWORK'), message: err.message }
+                // Transport failures are not fabricated server events. Existing onError subscribers still receive both.
+                handlers.onTransportError?.(diagnostic)
+                handlers.onError?.(diagnostic)
+            }
+        } finally {
+            signal.removeEventListener('abort', closeReader)
+            if (reader) { closeReader(); await closing; reader.releaseLock() }
+            else if (response?.body && !response.bodyUsed) await response.body.cancel().catch(() => {})
+            handlers.onClose?.({ completed, cancelled: signal.aborted })
+        }
+    })()
+    return { cancel: () => controller.abort(), done }
 }

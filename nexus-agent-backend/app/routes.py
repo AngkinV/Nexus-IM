@@ -1,20 +1,25 @@
 """FastAPI routes for the Python Agent backend."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Callable
+from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .checkpoint import open_run_store
 from .config import get_settings
 from .knowledge.ingestion import IngestionError, delete_document, ingest_document
-from .orchestrator import Event
-from .orchestrator import run_agent as run_handcrafted
-from .orchestrator_langgraph import run_agent as run_langgraph
+from .orchestrator import Event, active_thread_ids, is_run_active, resume_agent, run_agent
 from .rag import knowledge_rag
+from .artifacts import ArtifactError, apply_unified_patch
+from .attachments import extract_attachment
 from .schemas import (
+    AttachmentExtractRequest,
+    AttachmentExtractResponse,
     InvokeRequest,
     InvokeResponse,
     InvokeResult,
@@ -25,35 +30,39 @@ from .schemas import (
     KnowledgeIngestResponse,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
+    PatchPreviewRequest,
+    PatchPreviewResponse,
+    ResumeRequest,
+    RunQuery,
     TokenUsage,
 )
 from .security import verify_internal_signature
-from .sse import event_to_sse, reset_id_seq
+from .sse import sse_encoder
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-
-# Both engines must expose the same generator signature so this dispatcher
-# stays a one-liner. Day 15/16 verified the LangGraph engine emits the
-# canonical event sequence so the SSE wire format is engine-agnostic.
-EngineRunner = Callable[..., AsyncIterator[Event]]
+_SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
 
 
-def _resolve_engine() -> EngineRunner:
-    """Pick the engine for this request based on `settings.engine`.
+def _actor_mismatch_stream() -> StreamingResponse:
+    async def err():
+        encode = sse_encoder()
+        yield encode("error", {"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
+        yield encode("done", {"finishReason": "error", "resumable": False})
+    return StreamingResponse(err(), media_type="text/event-stream")
 
-    Recognised values:
-      - "handcrafted" (default): orchestrator.run_agent — production path
-      - "langgraph"            : orchestrator_langgraph.run_agent — Module C
-    Unknown values silently fall back to the handcrafted engine; the
-    config field is operator-controlled so we don't need to surface a
-    400 to the user.
-    """
-    engine = (get_settings().engine or "handcrafted").strip().lower()
-    if engine == "langgraph":
-        return run_langgraph
-    return run_handcrafted
+
+def _event_stream(events: AsyncIterator[Event]) -> StreamingResponse:
+    async def stream():
+        encode = sse_encoder()
+        # Closing the run when the client goes away is what cancels the model call.
+        async with contextlib.aclosing(events) as source:
+            async for event in source:
+                if event.name != "__final__":
+                    yield encode(event.name, event.data)
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 @router.get("/v1/agent/health")
@@ -75,19 +84,19 @@ async def invoke(request: InvokeRequest, ctx: dict = Depends(verify_internal_sig
     if request.traceId != ctx["traceId"]:
         return JSONResponse(status_code=400, content={"code": "AGENT_PARAM_40001", "message": "trace mismatch"})
 
-    runner = _resolve_engine()
     final: dict | None = None
     error_message: str | None = None
-    async for event in runner(request, provider=ctx.get("provider")):
+    # Non-streaming callers have no way to continue a run, so a failed one is not kept.
+    async for event in run_agent(request, provider=ctx.get("provider"), keep_failed=False):
         if event.name == "__final__":
             final = event.data["result"]
         elif event.name == "error":
             error_message = event.data.get("message") or "model call failed"
     if final is None:
-        final = InvokeResult(answer="", usage=TokenUsage()).model_dump()
+        final = InvokeResult(answer="", usage=TokenUsage(), finishReason="error").model_dump()
     if error_message and not final.get("answer"):
-        # Display-only note for the non-streaming caller; engines never
-        # persist error text to memory. Partial streamed text is kept as-is.
+        # Display-only note for the non-streaming caller; the engine never
+        # persists error text to memory. Partial streamed text is kept as-is.
         final["answer"] = f"（模型调用失败：{error_message}）"
     return InvokeResponse(traceId=request.traceId, result=InvokeResult(**final))
 
@@ -95,20 +104,98 @@ async def invoke(request: InvokeRequest, ctx: dict = Depends(verify_internal_sig
 @router.post("/v1/agent/invoke/stream")
 async def invoke_stream(request: InvokeRequest, ctx: dict = Depends(verify_internal_signature)):
     if request.actor.userId != ctx["actorUserId"]:
-        async def err():
-            yield event_to_sse("error", {"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
-        return StreamingResponse(err(), media_type="text/event-stream")
+        return _actor_mismatch_stream()
+    if request.traceId != ctx["traceId"]:
+        return JSONResponse(status_code=400, content={"code": "AGENT_PARAM_40001", "message": "trace mismatch"})
+    return _event_stream(run_agent(request, provider=ctx.get("provider")))
 
-    runner = _resolve_engine()
 
-    async def stream():
-        reset_id_seq()
-        async for event in runner(request, provider=ctx.get("provider")):
-            if event.name == "__final__":
-                continue
-            yield event_to_sse(event.name, event.data)
+@router.post("/v1/agent/runs/resume/stream")
+async def resume_stream(request: ResumeRequest, ctx: dict = Depends(verify_internal_signature)):
+    """Continue an unfinished run. Java re-checks session ownership and re-sends
+    the provider credentials; the run itself stored neither."""
+    if request.actor.userId != ctx["actorUserId"]:
+        return _actor_mismatch_stream()
+    if request.traceId != ctx["traceId"]:
+        return JSONResponse(status_code=400, content={"code": "AGENT_PARAM_40001", "message": "trace mismatch"})
+    return _event_stream(resume_agent(request, provider=ctx.get("provider")))
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+
+@router.post("/v1/agent/runs/pending")
+async def pending_runs(request: RunQuery, ctx: dict = Depends(verify_internal_signature)):
+    if request.actor.userId != ctx["actorUserId"]:
+        return JSONResponse(status_code=403, content={"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
+    async with open_run_store() as store:
+        records = await store.pending(request.actor.userId, request.sessionId)
+        finished = await store.finished(request.actor.userId, request.sessionId)
+    return {
+        "runs": [{
+            "runId": record.run_id,
+            "operationType": record.operation_type,
+            "updatedAt": record.updated_at,
+            "active": is_run_active(record.actor_user_id, record.run_id),
+        } for record in records],
+        # Ended runs whose outcome a client that missed `done` can still fetch by resuming.
+        "finished": finished,
+    }
+
+
+@router.post("/v1/agent/runs/purge")
+async def purge_runs(request: RunQuery, ctx: dict = Depends(verify_internal_signature)):
+    """Drop a session's unfinished runs (called when the session is deleted)."""
+    if request.actor.userId != ctx["actorUserId"]:
+        return JSONResponse(status_code=403, content={"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
+    async with open_run_store() as store:
+        records = await store.pending(request.actor.userId, request.sessionId)
+        if any(record.thread_id in active_thread_ids() for record in records):
+            return JSONResponse(status_code=409, content={"code": "AGENT_RUN_40901", "message": "session has an active run"})
+        purged = await store.purge_session(
+            request.actor.userId, request.sessionId, keep=set())
+    return {"purged": purged}
+
+
+# ---------- Workbench documents ----------
+#
+# Java owns the uploaded bytes and the ownership checks; these two endpoints only
+# read a file and dry-run a patch. Neither writes anything.
+
+
+@router.post("/v1/agent/attachments/extract", response_model=AttachmentExtractResponse)
+async def extract_upload(
+    request: AttachmentExtractRequest,
+    ctx: dict = Depends(verify_internal_signature),
+):
+    import base64
+    import binascii
+
+    try:
+        content = base64.b64decode(request.contentBase64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="The upload is not valid base64") from exc
+    try:
+        extracted = await asyncio.to_thread(extract_attachment, request.fileName, content)
+    except ValueError as exc:
+        # The reason is meant for the person who uploaded the file.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return extracted
+
+
+@router.post("/v1/agent/artifacts/patch-preview", response_model=PatchPreviewResponse)
+async def preview_patch(
+    request: PatchPreviewRequest,
+    ctx: dict = Depends(verify_internal_signature),
+):
+    import hashlib
+
+    try:
+        after = await asyncio.to_thread(apply_unified_patch, request.original, request.patch, request.fileName)
+    except ArtifactError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "content": after,
+        "baseHash": hashlib.sha256(request.original.encode("utf-8")).hexdigest(),
+        "patchHash": hashlib.sha256(request.patch.encode("utf-8")).hexdigest(),
+    }
 
 
 # ---------- Module B: knowledge base ----------

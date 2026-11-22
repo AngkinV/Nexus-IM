@@ -16,6 +16,7 @@ from .base import (
     LLMClient,
     ProviderConfig,
     LLMChunk,
+    LLMError,
     LLMUsage,
     LLMToolCall,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "LLMClient",
     "ProviderConfig",
     "LLMChunk",
+    "LLMError",
     "LLMUsage",
     "LLMToolCall",
     "build_client",

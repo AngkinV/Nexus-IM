@@ -70,6 +70,7 @@ node_modules
 
 # 忽略整个虚拟环境目录
 nexus-agent-backend/.venv/
+nexus-agent-backend/.venv311
 
 # 测试运行缓存（不含测试源码）
 /.pytest_cache/

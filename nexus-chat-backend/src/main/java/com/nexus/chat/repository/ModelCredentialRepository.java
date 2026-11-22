@@ -2,6 +2,11 @@ package com.nexus.chat.repository;
 
 import com.nexus.chat.model.ModelCredential;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,4 +34,16 @@ public interface ModelCredentialRepository extends JpaRepository<ModelCredential
     Optional<ModelCredential> findFirstByUserIdAndPurposeOrderByIsDefaultDescUpdatedAtDesc(Long userId, String purpose);
 
     Optional<ModelCredential> findByIdAndUserId(Long id, Long userId);
+
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("""
+            update ModelCredential c set c.status = :status where c.id = :id and c.userId = :userId
+            and (c.apiKeyEncrypted = :cipher or (c.apiKeyEncrypted is null and :cipher is null))
+            and (c.baseUrl = :base or (c.baseUrl is null and :base is null))
+            and (c.defaultModel = :model or (c.defaultModel is null and :model is null))
+            and (c.updatedAt = :updated or (c.updatedAt is null and :updated is null))
+            """)
+    int setTestStatus(Long id, Long userId, String cipher, String base, String model,
+                      LocalDateTime updated, ModelCredential.CredentialStatus status);
 }

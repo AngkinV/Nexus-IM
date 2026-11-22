@@ -12,15 +12,10 @@ import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -29,10 +24,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Base64;
 import java.util.UUID;
 
 @Slf4j
@@ -41,7 +36,6 @@ import java.util.UUID;
 public class AgentGatewayService {
 
     private final ObjectMapper objectMapper;
-    private final AgentSseReplayCache replayCache;
     private final RestTemplateBuilder restTemplateBuilder;
     private final AgentProviderService providerService;
 
@@ -77,9 +71,8 @@ public class AgentGatewayService {
         try {
             Map<String, Object> body = buildInvokeBody(actorUserId, username, traceId, sessionId, request);
             String bodyJson = objectMapper.writeValueAsString(body);
-            AgentProviderService.ResolvedProvider provider = providerService
-                    .resolveForRequest(actorUserId, request.getProviderId())
-                    .orElse(null);
+            AgentProviderService.ResolvedProvider provider =
+                    resolveChannel(actorUserId, request.getProviderId());
             HttpHeaders headers = buildInternalHeaders(actorUserId, traceId, bodyJson, provider);
 
             HttpEntity<String> entity = new HttpEntity<>(bodyJson, headers);
@@ -155,92 +148,99 @@ public class AgentGatewayService {
         }
     }
 
-    /**
-     * Pipe the Python SSE stream straight to the given output stream.
-     *
-     * Designed to be invoked from a {@link org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody}
-     * so Spring/Tomcat handles chunked-transfer termination correctly. We deliberately avoid
-     * SseEmitter + CompletableFuture.runAsync here — that combination caused
-     * net::ERR_INCOMPLETE_CHUNKED_ENCODING in browsers because the response was sometimes closed
-     * without a proper terminator chunk.
-     *
-     * The replay cache is bypassed in this path; if Last-Event-ID resume is needed later, a
-     * pass-through SSE parser can be reintroduced as a thin layer.
-     *
-     * 将 Python SSE 流直接传输到给定的输出流。
-     *
-     * 设计为由 {@link org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody} 调用，
-     * 以便 Spring/Tomcat 能正确处理分块传输的终止。我们有意避免在此处使用
-     * SseEmitter + CompletableFuture.runAsync 的组合 —— 这种组合会导致浏览器出现
-     * net::ERR_INCOMPLETE_CHUNKED_ENCODING 错误，因为响应有时会在没有正确的终止块的情况下关闭。
-     *
-     * 该路径绕过了重放缓存；如果以后需要基于 Last-Event-ID 的恢复，
-     * 可以重新引入一个透传 SSE 解析器作为薄层。
-     */
-    public void streamPythonRaw(Long actorUserId,
-                                String username,
-                                String traceId,
-                                String sessionId,
-                                AgentSessionAndChatDtos.SessionChatRequest request,
-                                OutputStream out) throws IOException {
-        Map<String, Object> body = buildInvokeBody(actorUserId, username, traceId, sessionId, request);
+    public Map<String, Object> pendingRuns(Long actorUserId, String traceId, String sessionId) {
+        return postRunRequest("/v1/agent/runs/pending", actorUserId, traceId,
+                Map.of("actor", Map.of("userId", actorUserId), "sessionId", sessionId, "traceId", traceId));
+    }
+
+    public void purgeRuns(Long actorUserId, String traceId, String sessionId) {
+        postRunRequest("/v1/agent/runs/purge", actorUserId, traceId,
+                Map.of("actor", Map.of("userId", actorUserId), "sessionId", sessionId, "traceId", traceId));
+    }
+
+    private Map<String, Object> postRunRequest(String path, Long actorUserId, String traceId, Map<String, Object> body) {
+        try {
+            String bodyJson = objectMapper.writeValueAsString(body);
+            ResponseEntity<Map> response = restTemplate().exchange(pythonBaseUrl + path, HttpMethod.POST,
+                    new HttpEntity<>(bodyJson, buildInternalHeaders(actorUserId, traceId, bodyJson)), Map.class);
+            if (response.getBody() == null) {
+                throw new AgentException(AgentErrorCode.AGENT_MODEL_50202, "Python returned no response");
+            }
+            return response.getBody();
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            if (e.getStatusCode().value() == 409) {
+                throw new AgentException(AgentErrorCode.AGENT_STREAM_40901, "Session has a running task; stop it before clearing");
+            }
+            throw new AgentException(AgentErrorCode.AGENT_MODEL_50202, "Python run API returned " + e.getStatusCode().value());
+        } catch (AgentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AgentException(AgentErrorCode.AGENT_MODEL_50202, "Python agent service unavailable");
+        }
+    }
+
+    public void resumePythonRaw(Long actorUserId, String username, String traceId, String sessionId,
+                                String runId, Long providerId, OutputStream out) throws IOException {
+        if (runId == null || !runId.matches("[A-Za-z0-9_-]{8,64}")) {
+            throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, "Invalid run id");
+        }
+        Map<String, Object> body = Map.of("actor", Map.of("userId", actorUserId, "username", username),
+                "sessionId", sessionId, "runId", runId, "traceId", traceId);
+        streamInternal("/v1/agent/runs/resume/stream", actorUserId, traceId, body, providerId, out);
+    }
+
+    public void streamPythonRaw(Long actorUserId, String username, String traceId, String sessionId,
+                                AgentSessionAndChatDtos.SessionChatRequest request, OutputStream out) throws IOException {
+        streamInternal("/v1/agent/invoke/stream", actorUserId, traceId,
+                buildInvokeBody(actorUserId, username, traceId, sessionId, request), request.getProviderId(), out);
+    }
+
+    private void streamInternal(String path, Long actorUserId, String traceId, Map<String, Object> body,
+                                Long providerId, OutputStream out) throws IOException {
         String bodyJson = objectMapper.writeValueAsString(body);
-
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
-                .version(HttpClient.Version.HTTP_1_1)
-                .build();
-
-        HttpRequest.Builder rb = HttpRequest.newBuilder()
-                .uri(URI.create(pythonBaseUrl + "/v1/agent/invoke/stream"))
+        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(connectTimeoutMs))
+                .version(HttpClient.Version.HTTP_1_1).build();
+        HttpRequest.Builder rb = HttpRequest.newBuilder().uri(URI.create(pythonBaseUrl + path))
                 .timeout(Duration.ofMillis(Math.max(readTimeoutMs, 120_000L)))
-                .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(bodyJson, StandardCharsets.UTF_8));
-
         try {
-            for (Map.Entry<String, java.util.List<String>> entry : buildInternalHeaders(actorUserId, traceId, bodyJson, providerService.resolveForRequest(actorUserId, request.getProviderId()).orElse(null)).entrySet()) {
-                if (entry.getValue() != null && !entry.getValue().isEmpty()) {
-                    rb.header(entry.getKey(), entry.getValue().get(0));
-                }
+            AgentProviderService.ResolvedProvider provider = resolveChannel(actorUserId, providerId);
+            for (Map.Entry<String, java.util.List<String>> entry : buildInternalHeaders(actorUserId, traceId, bodyJson, provider).entrySet()) {
+                rb.header(entry.getKey(), entry.getValue().get(0));
             }
+        } catch (AgentException e) {
+            // The channel cannot be used as configured (e.g. no model set). The response is
+            // already an event stream, so say so in-band with the real reason. "CONFIG" is the
+            // same reason Python reports for an unusable channel, so the client offers the settings.
+            String payload = "event: error\ndata: " + objectMapper.writeValueAsString(
+                    Map.of("code", e.getCode().name(), "reason", "CONFIG", "message", e.getMessage())) + "\n\n";
+            out.write(payload.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            return;
         } catch (Exception e) {
-            throw new IOException("failed to build internal headers", e);
+            throw new IOException("Failed to authenticate internal request", e);
         }
-
         HttpResponse<InputStream> response;
         try {
             response = client.send(rb.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("interrupted while contacting agent", e);
+            throw new IOException("Interrupted while contacting Python", e);
         } catch (IOException e) {
-            log.warn("agent stream connect failure: {}", e.getMessage());
-            writeErrorEvent(out, "AGENT_MODEL_50202", "upstream connect: " + e.getMessage());
+            writeErrorEvent(out, "PYTHON_UNAVAILABLE", "Python agent service unavailable");
             return;
         }
-
-        int status = response.statusCode();
-        if (status < 200 || status >= 300) {
-            writeErrorEvent(out, "AGENT_MODEL_50202", "upstream returned status " + status);
-            try (InputStream in = response.body()) { in.readAllBytes(); } catch (IOException ignored) {}
-            return;
-        }
-
         try (InputStream in = response.body()) {
-            byte[] buf = new byte[4096];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                out.write(buf, 0, n);
-                // Flush after every chunk so each SSE event reaches the browser ASAP.
-                out.flush();
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                writeErrorEvent(out, "PYTHON_HTTP_" + response.statusCode(), "Python agent returned " + response.statusCode());
+                return;
             }
-        } catch (IOException e) {
-            log.warn("agent stream IO failure mid-stream: {}", e.getMessage());
-            try {
-                writeErrorEvent(out, "AGENT_MODEL_50202", e.getMessage() == null ? "upstream IO failure" : e.getMessage());
-            } catch (IOException ignored) {
-                // client already gone; nothing to do
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = in.read(buffer)) != -1) {
+                out.write(buffer, 0, count);
+                out.flush();
             }
         }
     }
@@ -251,34 +251,19 @@ public class AgentGatewayService {
         out.flush();
     }
 
-    /**
-     * @deprecated Kept for backward compatibility with the old SseEmitter wiring; prefer
-     * {@link #streamPythonRaw} which avoids chunked-encoding termination issues.
-     */
-    @Deprecated
-    public SseEmitter invokeStream(Long actorUserId,
-                                   String username,
-                                   String traceId,
-                                   String sessionId,
-                                   String streamKey,
-                                   String lastEventId,
-                                   AgentSessionAndChatDtos.SessionChatRequest request) {
-        SseEmitter emitter = new SseEmitter(70_000L);
-        try {
-            emitter.send(SseEmitter.event().name("error").data(Map.of("code", "AGENT_DEPRECATED", "message", "use streamPythonRaw")));
-        } catch (IOException ignored) {
-            // best effort
-        }
-        emitter.complete();
-        return emitter;
-    }
-
     private Map<String, Object> buildInvokeBody(Long actorUserId,
                                                 String username,
                                                 String traceId,
                                                 String sessionId,
                                                 AgentSessionAndChatDtos.SessionChatRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
+        // The client's run id when it has one: a retry must be a new run of the same question,
+        // and the record of it already exists on this side.
+        body.put("runId", request.getRunId() != null && !request.getRunId().isBlank()
+                ? request.getRunId() : UUID.randomUUID().toString().replace("-", ""));
+        if (request.getRetryOfRunId() != null) {
+            body.put("retryOfRunId", request.getRetryOfRunId());
+        }
         body.put("traceId", traceId);
         body.put("actor", Map.of("userId", actorUserId, "username", username == null ? "unknown" : username));
         Map<String, Object> session = new LinkedHashMap<>();
@@ -294,13 +279,77 @@ public class AgentGatewayService {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("text", request.getInput());
         input.put("chatId", request.getChatContext() != null ? request.getChatContext().getChatId() : null);
+        if (request.getResolvedAttachments() != null && !request.getResolvedAttachments().isEmpty()) {
+            // Only what the workspace resolved; a client cannot put its own text here.
+            input.put("attachments", request.getResolvedAttachments());
+        }
         body.put("input", input);
-        body.put("options", Map.of(
-                "maxIterations", request.getOptions() != null && request.getOptions().getMaxIterations() != null ? request.getOptions().getMaxIterations() : 6,
-                "maxOutputTokens", request.getOptions() != null && request.getOptions().getMaxOutputTokens() != null ? request.getOptions().getMaxOutputTokens() : 1024,
-                "temperature", request.getOptions() != null && request.getOptions().getTemperature() != null ? request.getOptions().getTemperature() : 0.2
-        ));
+        Map<String, Object> options = new LinkedHashMap<>();
+        options.put("maxIterations", request.getOptions() != null && request.getOptions().getMaxIterations() != null ? request.getOptions().getMaxIterations() : 6);
+        options.put("maxOutputTokens", request.getOptions() != null && request.getOptions().getMaxOutputTokens() != null ? request.getOptions().getMaxOutputTokens() : 1024);
+        options.put("temperature", request.getOptions() != null && request.getOptions().getTemperature() != null ? request.getOptions().getTemperature() : 0.2);
+        options.put("collaborationEnabled", request.getOptions() != null && Boolean.TRUE.equals(request.getOptions().getCollaborationEnabled()));
+        options.put("webSearchEnabled", request.getOptions() != null && Boolean.TRUE.equals(request.getOptions().getWebSearchEnabled()));
+        body.put("options", options);
         return body;
+    }
+
+    /**
+     * The channel to use. A channel the user explicitly chose must resolve: silently
+     * dropping to the service's own default would answer with a different model than
+     * the one on screen.
+     */
+    private AgentProviderService.ResolvedProvider resolveChannel(Long actorUserId, Long providerId) {
+        var resolved = providerService.resolveForRequest(actorUserId, providerId);
+        if (resolved.isEmpty() && providerId != null) {
+            throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301,
+                    "The selected model channel is not available to this user");
+        }
+        return resolved.orElse(null);
+    }
+
+    /**
+     * Extract the text of an uploaded file. The bytes go to Python, which owns every
+     * document parser, and the answer is returned as it came: no local guessing.
+     */
+    public Map<String, Object> extractAttachment(Long actorUserId, String fileName, byte[] content) {
+        return postInternal(actorUserId, "/v1/agent/attachments/extract",
+                Map.of("fileName", fileName, "contentBase64", Base64.getEncoder().encodeToString(content)));
+    }
+
+    /** Dry-run a patch against the uploaded text. Nothing is written. */
+    public Map<String, Object> previewArtifactPatch(Long actorUserId, String fileName, String original, String patch) {
+        return postInternal(actorUserId, "/v1/agent/artifacts/patch-preview",
+                Map.of("fileName", fileName, "original", original, "patch", patch));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> postInternal(Long actorUserId, String path, Map<String, Object> body) {
+        String traceId = "tr_" + UUID.randomUUID().toString().replace("-", "");
+        try {
+            String bodyJson = objectMapper.writeValueAsString(body);
+            HttpEntity<String> entity = new HttpEntity<>(bodyJson, buildInternalHeaders(actorUserId, traceId, bodyJson));
+            ResponseEntity<Map> response = restTemplate().exchange(pythonBaseUrl + path, HttpMethod.POST, entity, Map.class);
+            return response.getBody() == null ? Map.of() : (Map<String, Object>) response.getBody();
+        } catch (org.springframework.web.client.HttpStatusCodeException ex) {
+            // The document service says why (e.g. the old lines do not match); pass that on
+            // with its status, and never echo the body it was given.
+            String detail = ex.getResponseBodyAsString();
+            String reason = "The document service refused the request";
+            try {
+                Object parsed = objectMapper.readValue(detail, Map.class).get("detail");
+                if (parsed instanceof String text && !text.isBlank()) reason = text;
+            } catch (Exception ignored) {
+                // A body we cannot read leaves the generic reason.
+            }
+            AgentErrorCode code = ex.getStatusCode().value() == 422
+                    ? AgentErrorCode.AGENT_DOCUMENT_42202 : AgentErrorCode.AGENT_PARAM_40001;
+            throw new AgentException(code, reason, Map.of("upstreamStatus", ex.getStatusCode().value()));
+        } catch (org.springframework.web.client.ResourceAccessException ex) {
+            throw new AgentException(AgentErrorCode.AGENT_MODEL_50202, "The document service is unavailable");
+        } catch (Exception ex) {
+            throw new IllegalStateException("Internal document request failed", ex);
+        }
     }
 
     private HttpHeaders buildInternalHeaders(Long actorUserId, String traceId, String bodyJson) throws Exception {
@@ -317,55 +366,6 @@ public class AgentGatewayService {
                                              String traceId,
                                              String bodyJson,
                                              AgentProviderService.ResolvedProvider provider) throws Exception {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        String timestamp = String.valueOf(System.currentTimeMillis());
-        String nonce = UUID.randomUUID().toString();
-        String bodyHash = sha256Hex(bodyJson);
-
-        StringBuilder providerSig = new StringBuilder();
-        if (provider != null) {
-            String safeBaseUrl = provider.baseUrl() == null ? "" : provider.baseUrl();
-            String safeModel = provider.defaultModel() == null ? "" : provider.defaultModel();
-            String apiKeyB64 = provider.apiKeyPlain() == null
-                    ? ""
-                    : java.util.Base64.getEncoder().encodeToString(provider.apiKeyPlain().getBytes(StandardCharsets.UTF_8));
-            headers.set("X-Model-Provider", provider.provider());
-            headers.set("X-Model-Base-URL", safeBaseUrl);
-            headers.set("X-Model-Name", safeModel);
-            headers.set("X-Model-Api-Key", apiKeyB64);
-            // Hash provider material into the signature
-            providerSig.append(".").append(sha256Hex(provider.provider() + "|" + safeBaseUrl + "|" + safeModel + "|" + apiKeyB64));
-        }
-
-        String signature = hmacSha256Hex(signingSecret, timestamp + "." + nonce + "." + bodyHash + providerSig);
-        headers.set("X-Internal-Service", "nexus-chat-backend");
-        headers.set("X-Internal-Timestamp", timestamp);
-        headers.set("X-Internal-Nonce", nonce);
-        headers.set("X-Internal-Signature", signature);
-        headers.set("X-Trace-Id", traceId);
-        headers.set("X-Actor-User-Id", String.valueOf(actorUserId));
-        return headers;
-    }
-
-    private String sha256Hex(String content) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hash = digest.digest(content.getBytes(StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
-
-    private String hmacSha256Hex(String secret, String content) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-        byte[] hash = mac.doFinal(content.getBytes(StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        for (byte b : hash) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
+        return InternalRequestSigner.headers(signingSecret, actorUserId, traceId, bodyJson, provider);
     }
 }

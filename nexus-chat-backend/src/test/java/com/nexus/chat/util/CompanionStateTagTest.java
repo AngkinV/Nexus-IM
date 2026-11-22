@@ -199,6 +199,25 @@ class CompanionStateTagTest {
     }
 
     @Test
+    void cutShortMarkerIsStoredBesideTheStateButIsNeverPartOfIt() {
+        CompanionStateTag.State state = new CompanionStateTag.State("shy", null, null, null);
+        String stored = CompanionStateTag.toJson(state, true);
+        assertTrue(CompanionStateTag.isPartial(stored));
+        assertEquals(state, CompanionStateTag.fromJson(stored));
+        assertEquals("<state>{\"mood\":\"shy\"}</state>", CompanionStateTag.render(CompanionStateTag.fromJson(stored)));
+
+        String markerOnly = CompanionStateTag.toJson(null, true);
+        assertTrue(CompanionStateTag.isPartial(markerOnly), "a fragment without any state is still marked");
+        assertNull(CompanionStateTag.fromJson(markerOnly));
+
+        assertFalse(CompanionStateTag.isPartial(CompanionStateTag.toJson(state, false)));
+        assertFalse(CompanionStateTag.isPartial(CompanionStateTag.toJson(state)));
+        assertFalse(CompanionStateTag.isPartial(null));
+        assertFalse(CompanionStateTag.isPartial("mood=calm"));
+        assertNull(CompanionStateTag.toJson(null, false));
+    }
+
+    @Test
     void renderRoundTrips() {
         CompanionStateTag.State state = new CompanionStateTag.State("shy", "look_away", "低头擦杯子", "wipe");
         assertEquals(state, CompanionStateTag.parse(CompanionStateTag.render(state) + "嗯。").state());

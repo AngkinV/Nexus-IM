@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 log = logging.getLogger(__name__)
 
+SUPPORTED_ENGINE = "langgraph"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -29,6 +31,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     model_name: str = "gpt-4.1-mini"
+    model_endpoint_allow_private_network: bool = True
 
     # ----- Agent loop -----
     max_iterations: int = 6
@@ -38,7 +41,7 @@ class Settings(BaseSettings):
     tool_timeout_sec: int = 3
     enable_parallel_tool_calls: bool = True
 
-    # ----- Java internal API (for tools) -----
+    # ----- Java internal API (tools are discovered and called over MCP at <base>/mcp) -----
     java_internal_base_url: str = "http://localhost:8080/internal/agent"
     java_internal_token: str = "dev-internal-token-change-me"
 
@@ -130,10 +133,35 @@ class Settings(BaseSettings):
     knowledge_chunk_overlap: int = 64
     knowledge_rag_top_k: int = 4
 
-    # ----- Orchestration engine (Module C) -----
-    # "handcrafted" — the original ReAct loop in orchestrator.py
-    # "langgraph"   — the LangGraph StateGraph implementation in orchestrator_langgraph.py
-    engine: str = "handcrafted"
+    # ----- Orchestration engine -----
+    # LangGraph is the only engine; any other value is rejected at startup.
+    engine: str = "langgraph"
+    tool_max_concurrency: int = 4
+    # Events a slow SSE consumer may leave unread before the model stream is
+    # paused, and how long it may stay paused before the turn is cancelled.
+    stream_buffer_events: int = 256
+    stream_stall_timeout_sec: int = 30
+
+    # ----- Tool catalog -----
+    # How long the discovered tool list is reused before asking the servers again.
+    tool_catalog_ttl_sec: int = 60
+    # Operator-managed allow-list of extra MCP servers, as a JSON object of
+    # name -> http(s) URL. Empty = only the Java backend's tools are offered.
+    mcp_external_servers: str = ""
+    # Longest result an external tool may hand to the model.
+    mcp_external_result_max_chars: int = 8000
+
+    # ----- Run checkpoints (resume after a crash, disconnect or provider failure) -----
+    checkpoint_path: str = "./data/checkpoints.sqlite"
+    # Unfinished runs hold fetched chat content at rest, and finished ones keep
+    # their final answer so a client that missed the end can fetch it; both expire.
+    checkpoint_ttl_sec: int = 24 * 60 * 60
+
+    # ----- Tracing -----
+    # OTLP/HTTP base URL of a self-hosted collector. Unset = nothing is exported.
+    otel_exporter_otlp_endpoint: str | None = None
+    # Adds prompt and answer text to spans. Off by default: spans leave the process.
+    trace_capture_content: bool = False
 
 
 # Maps EMBEDDING_PROVIDER value -> (key_attr, url_attr, model_attr) on Settings.
@@ -181,6 +209,12 @@ def _apply_embedding_preset(s: "Settings") -> None:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     s = Settings()
+    if s.engine.strip().lower() != SUPPORTED_ENGINE:
+        raise ValueError(
+            f"ENGINE={s.engine!r} is no longer supported: the hand-written loop was removed. "
+            f"Set ENGINE={SUPPORTED_ENGINE} or delete the ENGINE line from the environment/.env."
+        )
+    s.engine = SUPPORTED_ENGINE
     if s.openai_api_key:
         s.use_real_model = True
     _apply_embedding_preset(s)

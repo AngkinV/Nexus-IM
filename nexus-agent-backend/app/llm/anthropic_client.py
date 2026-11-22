@@ -1,21 +1,57 @@
 """Anthropic Claude adapter.
 
-The Anthropic API uses a different message shape: system prompts go in a top-level
-``system`` field, role alternation must be strict (user/assistant), and tool calls
-use ``tool_use`` / ``tool_result`` blocks. This adapter normalizes both directions.
-
-Requires: ``pip install anthropic``  (kept as a soft dependency: only loaded when
-the user actually configures an Anthropic provider).
+The Messages API differs from the OpenAI shape used internally: system prompts
+go in a top-level `system` field, an assistant's tool calls are `tool_use`
+content blocks, and their results are `tool_result` blocks in the next user turn.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, AsyncIterator
 
-from .base import LLMChunk, LLMClient, LLMToolCall, LLMUsage, ProviderConfig
+import httpx2
+
+from .base import AnthropicTransport, LLMChunk, LLMClient, LLMError, LLMToolCall, LLMUsage, classify_error, error_chunks
 
 log = logging.getLogger(__name__)
+
+_FINISH = {"end_turn": "stop", "stop_sequence": "stop", "pause_turn": "stop", "tool_use": "tool_calls",
+           "max_tokens": "length", "model_context_window_exceeded": "length", "refusal": "content_filter"}
+
+
+def _to_anthropic(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    system: list[str] = []
+    turns: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content") or ""
+        if role == "system":
+            system.append(content)
+        elif role == "user":
+            turns.append({"role": "user", "content": content})
+        elif role == "assistant":
+            blocks: list[dict[str, Any]] = [{"type": "text", "text": content}] if content else []
+            for call in m.get("tool_calls") or []:
+                function = call["function"]
+                blocks.append({
+                    "type": "tool_use",
+                    "id": call["id"],
+                    "name": function["name"],
+                    "input": json.loads(function["arguments"] or "{}"),
+                })
+            if blocks:
+                turns.append({"role": "assistant", "content": blocks})
+        elif role == "tool":
+            result = {"type": "tool_result", "tool_use_id": m.get("tool_call_id", ""), "content": content}
+            previous = turns[-1] if turns else None
+            # Every result for one assistant turn must share a single user turn.
+            if previous and previous["role"] == "user" and isinstance(previous["content"], list):
+                previous["content"].append(result)
+            else:
+                turns.append({"role": "user", "content": [result]})
+    return "\n\n".join(system), turns
 
 
 class AnthropicClient(LLMClient):
@@ -32,98 +68,96 @@ class AnthropicClient(LLMClient):
         try:
             from anthropic import AsyncAnthropic
         except ImportError:
-            yield LLMChunk(kind="error", text="未安装 anthropic SDK，请运行 pip install anthropic")
-            yield LLMChunk(kind="finish", finish_reason="error")
+            for chunk in error_chunks(LLMError("DEPENDENCY", "anthropic SDK is not installed")):
+                yield chunk
             return
 
-        # Split system from user/assistant turns
-        system_blocks: list[str] = []
-        turns: list[dict[str, Any]] = []
-        for m in messages:
-            role = m.get("role")
-            content = m.get("content", "")
-            if role == "system":
-                system_blocks.append(content)
-            elif role in {"user", "assistant"}:
-                turns.append({"role": role, "content": content})
-            elif role == "tool":
-                # Anthropic expects tool results to be wrapped in a user turn
-                turns.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": m.get("tool_call_id", ""),
-                        "content": content,
-                    }],
-                })
-
-        anthropic_tools = None
+        system, turns = _to_anthropic(messages)
+        # `temperature` is deliberately not sent: the Messages API in this SDK
+        # version has no sampling parameters at all.
+        kwargs: dict[str, Any] = {
+            "model": self.cfg.model,
+            "messages": turns,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if system:
+            kwargs["system"] = system
         if tools:
-            anthropic_tools = []
-            for t in tools:
-                fn = t.get("function", {})
-                anthropic_tools.append({
-                    "name": fn.get("name"),
-                    "description": fn.get("description", ""),
-                    "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-                })
+            kwargs["tools"] = [{
+                "name": t["function"]["name"],
+                "description": t["function"].get("description", ""),
+                "input_schema": t["function"].get("parameters", {"type": "object", "properties": {}}),
+            } for t in tools]
+            kwargs["tool_choice"] = {"type": "any" if tool_choice == "required" else "auto"}
 
-        client = AsyncAnthropic(
-            api_key=self.cfg.api_key,
-            base_url=self.cfg.base_url or None,
-        )
+        client = AsyncAnthropic(api_key=self.cfg.api_key, base_url=self.cfg.base_url or None, max_retries=0,
+                                http_client=httpx2.AsyncClient(transport=AnthropicTransport(), follow_redirects=False, trust_env=False))
+        stream = None
+        blocks: dict[int, dict[str, str]] = {}
+        usage_in = 0
+        usage_out = 0
+        stop_reason: str | None = None
+        error: LLMError | None = None
         try:
-            response = await asyncio.wait_for(
-                client.messages.create(
-                    model=self.cfg.model,
-                    system="\n\n".join(system_blocks) if system_blocks else None,
-                    messages=turns,
-                    tools=anthropic_tools,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                ),
-                timeout=timeout_sec,
-            )
-        except asyncio.TimeoutError:
-            yield LLMChunk(kind="error", text=f"model call timeout after {timeout_sec}s")
-            yield LLMChunk(kind="finish", finish_reason="timeout")
+            try:
+                stream = await asyncio.wait_for(client.messages.create(**kwargs), timeout=timeout_sec)
+                while True:
+                    try:
+                        event = await asyncio.wait_for(stream.__anext__(), timeout=timeout_sec)
+                    except StopAsyncIteration:
+                        break
+                    if event.type == "message_start":
+                        usage_in = getattr(event.message.usage, "input_tokens", 0) or 0
+                    elif event.type == "content_block_start":
+                        block = event.content_block
+                        if block.type == "tool_use":
+                            blocks[event.index] = {"id": block.id, "name": block.name, "arguments": ""}
+                    elif event.type == "content_block_delta":
+                        delta = event.delta
+                        if delta.type == "text_delta" and delta.text:
+                            yield LLMChunk(kind="text", text=delta.text)
+                        elif delta.type == "thinking_delta" and delta.thinking:
+                            yield LLMChunk(kind="reasoning", text=delta.thinking)
+                        elif delta.type == "input_json_delta" and event.index in blocks:
+                            blocks[event.index]["arguments"] += delta.partial_json or ""
+                    elif event.type == "message_delta":
+                        stop_reason = event.delta.stop_reason or stop_reason
+                        usage_out = getattr(event.usage, "output_tokens", 0) or usage_out
+            except asyncio.TimeoutError:
+                error = LLMError("TIMEOUT", f"model stream idle timeout after {timeout_sec}s")
+            except Exception as exc:
+                error = classify_error(exc, self.cfg)
+                log.warning("Anthropic stream failed: code=%s http=%s", error.code, error.http_status)
+        finally:
+            if stream is not None:
+                await stream.close()
+            await client.close()
+
+        if error is None and stop_reason is None:
+            error = LLMError("INCOMPLETE", "model stream ended without a stop reason")
+        finish = _FINISH.get(stop_reason or "", "stop")
+
+        calls: list[LLMToolCall] = []
+        if error is None and finish in ("stop", "tool_calls"):
+            for index in sorted(blocks):
+                block = blocks[index]
+                try:
+                    args = json.loads(block["arguments"]) if block["arguments"].strip() else {}
+                    if not isinstance(args, dict):
+                        raise ValueError("arguments are not a JSON object")
+                except ValueError:
+                    error = LLMError("BAD_TOOL_CALL", f"model returned malformed arguments for tool {block['name']!r}")
+                    break
+                calls.append(LLMToolCall(id=block["id"], name=block["name"], arguments=args))
+
+        if usage_in or usage_out:
+            yield LLMChunk(kind="usage", usage=LLMUsage(
+                input_tokens=usage_in, output_tokens=usage_out, total_tokens=usage_in + usage_out))
+        if error is not None:
+            for chunk in error_chunks(error):
+                yield chunk
             return
-        except Exception as exc:
-            log.warning("anthropic call failed: %s", exc)
-            yield LLMChunk(kind="error", text=f"Claude 调用失败：{exc}")
-            yield LLMChunk(kind="finish", finish_reason="error")
-            return
-
-        text_parts: list[str] = []
-        had_tool = False
-        for block in response.content:
-            btype = getattr(block, "type", None)
-            if btype == "text":
-                text_parts.append(block.text or "")
-            elif btype == "tool_use":
-                had_tool = True
-                yield LLMChunk(
-                    kind="tool_call",
-                    tool_call=LLMToolCall(
-                        id=block.id,
-                        name=block.name,
-                        arguments=dict(block.input or {}),
-                    ),
-                    raw=block,
-                )
-
-        if not had_tool and text_parts:
-            yield LLMChunk(kind="text", text="".join(text_parts))
-
-        usage = getattr(response, "usage", None)
-        if usage:
-            yield LLMChunk(
-                kind="usage",
-                usage=LLMUsage(
-                    input_tokens=getattr(usage, "input_tokens", 0) or 0,
-                    output_tokens=getattr(usage, "output_tokens", 0) or 0,
-                    total_tokens=(getattr(usage, "input_tokens", 0) or 0) + (getattr(usage, "output_tokens", 0) or 0),
-                ),
-            )
-
-        yield LLMChunk(kind="finish", finish_reason=response.stop_reason or "stop")
+        for call in calls:
+            yield LLMChunk(kind="tool_call", tool_call=call)
+        yield LLMChunk(kind="finish", finish_reason="tool_calls" if calls else finish)
