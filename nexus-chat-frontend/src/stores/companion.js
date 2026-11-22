@@ -246,6 +246,9 @@ export const useCompanionStore = defineStore('companion', () => {
             const seat = roles.value.find(r => r.id === roleId)
             if (seat) {
                 seat.lastMessageAt = null
+                // The preview line belongs to the deleted conversation; leaving it
+                // behind would show a sentence from a chat that no longer exists.
+                seat.lastMessage = null
                 seat.presence = null
                 seat.originSessionId = null
                 seat.conversationHidden = true
@@ -335,6 +338,11 @@ export const useCompanionStore = defineStore('companion', () => {
             seat.conversationHidden = false
             seat.lastMessageAt = data.roleMessage.createdAt
             if (data.status?.summary) seat.presence = data.status.summary
+            // The row's preview line. Without this the list keeps showing the
+            // previous exchange until the roles are re-fetched — the timestamp
+            // moves but the sentence under it does not, which reads as stale.
+            const latest = data.roleMessage.content || data.userMessage?.content
+            if (latest) seat.lastMessage = latest
         }
         if (!isCurrent(roleId)) return
         const serverIds = [data.openingMessage?.id, data.userMessage?.id, data.roleMessage?.id].filter(Boolean)
@@ -382,6 +390,16 @@ export const useCompanionStore = defineStore('companion', () => {
         }
         const result = { ...data, userMessage, roleMessage, fallback: false, modelError, partial, clientMsgId }
         settleExchange(roleId, result, row.id, live?.id)
+        // A failure with no reply at all still stamps the conversation (the
+        // server does the same), but the preview must not keep an older sentence
+        // while the timestamp says now — show what the user just sent instead.
+        if (!roleMessage) {
+            const seat = roles.value.find(r => r.id === roleId)
+            if (seat) {
+                seat.lastMessageAt = userMessage.createdAt || new Date().toISOString()
+                if (userMessage.content) seat.lastMessage = userMessage.content
+            }
+        }
         return result
     }
 
@@ -685,14 +703,29 @@ export const useCompanionStore = defineStore('companion', () => {
         }
     }
 
-    /** Fill the empty seat with a new guest. One model call when configured. */
-    const inviteGuest = async (userId, sceneKey) => {
+    /**
+     * Fill the empty seat with a new guest. One model call when configured.
+     * Pass a modelUrl to choose the 3D model; omit it and the tavern picks one
+     * no other character is wearing.
+     */
+    const inviteGuest = async (userId, sceneKey, modelUrl = null) => {
         try {
-            const response = await companionAPI.inviteGuest(userId, sceneKey)
+            const response = await companionAPI.inviteGuest(userId, sceneKey, modelUrl)
             return response.data || null
         } catch (error) {
             console.error('Invite guest failed:', error)
             return null
+        }
+    }
+
+    /** The models a guest can wear. Empty when nothing has been uploaded. */
+    const fetchInviteModels = async (userId) => {
+        try {
+            const response = await companionAPI.inviteModels(userId)
+            return response.data || []
+        } catch (error) {
+            console.error('Fetch invite models failed:', error)
+            return []
         }
     }
 
@@ -862,6 +895,7 @@ export const useCompanionStore = defineStore('companion', () => {
         closeSession,
         fetchSessionHistory,
         inviteGuest,
+        fetchInviteModels,
         adoptRole,
         fetchMemories,
         createMemory,

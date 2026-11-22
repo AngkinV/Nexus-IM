@@ -368,8 +368,13 @@ export const companionAPI = {
 
     // Inviting and closing both end in a model call. Cap the wait on the client
     // too, so a hung provider can never leave the UI spinning forever.
-    inviteGuest: (userId, sceneKey) =>
-        apiClient.post('/tavern/roles/invite', { sceneKey }, { params: { userId }, timeout: 12000 }),
+    // modelUrl is optional: omit it and the tavern picks a model nobody wears.
+    inviteGuest: (userId, sceneKey, modelUrl = null) =>
+        apiClient.post('/tavern/roles/invite', { sceneKey, modelUrl }, { params: { userId }, timeout: 12000 }),
+
+    // The models a guest can wear — the same catalogue the settings panel lists.
+    inviteModels: (userId) =>
+        apiClient.get('/tavern/roles/models', { params: { userId } }),
 
     adoptGuest: (roleId, userId, sessionId) =>
         apiClient.post(`/tavern/roles/${roleId}/adopt`, { sessionId }, { params: { userId } }),

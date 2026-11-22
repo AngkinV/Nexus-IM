@@ -51,6 +51,7 @@ public class TavernSessionService {
     private final CompanionStatusRepository statusRepository;
     private final TransactionTemplate tx;
     private final CompanionConversationGuard conversationGuard;
+    private final CompanionModelAssetCatalog modelAssetCatalog;
 
     public TavernSessionService(TavernSessionRepository sessionRepository,
                                 CompanionRoleRepository roleRepository,
@@ -62,7 +63,8 @@ public class TavernSessionService {
                                 CompanionConversationRepository conversationRepository,
                                 CompanionStatusRepository statusRepository,
                                 PlatformTransactionManager transactionManager,
-                                CompanionConversationGuard conversationGuard) {
+                                CompanionConversationGuard conversationGuard,
+                                CompanionModelAssetCatalog modelAssetCatalog) {
         this.sessionRepository = sessionRepository;
         this.roleRepository = roleRepository;
         this.messageRepository = messageRepository;
@@ -74,6 +76,7 @@ public class TavernSessionService {
         this.statusRepository = statusRepository;
         this.tx = new TransactionTemplate(transactionManager);
         this.conversationGuard = conversationGuard;
+        this.modelAssetCatalog = modelAssetCatalog;
     }
 
     /**
@@ -259,13 +262,29 @@ public class TavernSessionService {
      * Invent a guest for an empty seat. Uses the account's model channel; without
      * one a neutral preset is used rather than failing — an empty seat should
      * still be fillable offline.
+     *
+     * The 3D model comes from the same catalogue the settings panel lists. A
+     * guest used to be saved with no model at all, so an invited character stood
+     * on an empty stage with no explanation. Now: the requested model when it
+     * really exists on disk, otherwise one that no other character is wearing.
      */
     public CompanionRole inviteRole(Long userId, String sceneKey) {
+        return inviteRole(userId, sceneKey, null);
+    }
+
+    /**
+     * @param requestedModelUrl a model chosen by the user ("/models/x.vrm"), or
+     *                          null to let the tavern pick one
+     */
+    public CompanionRole inviteRole(Long userId, String sceneKey, String requestedModelUrl) {
         // Model call first, outside any transaction — see the class comment.
         CompanionModelResolver.Resolved resolved = modelResolver.resolveForUser(userId);
         CompanionModelService.GeneratedRole generated = resolved.usable()
                 ? modelService.generateRole(resolved.binding(), resolved.credential(), sceneKey)
                 : null;
+
+        // Resolved before the transaction: it reads the disk, not the database.
+        String modelUrl = resolveGuestModelUrl(userId, requestedModelUrl);
 
         return tx.execute(status -> {
             CompanionRole role = new CompanionRole();
@@ -273,6 +292,10 @@ public class TavernSessionService {
             role.setKind(CompanionRole.Kind.guest);
             role.setActive(true);
             role.setBaselineMood("平静");
+            if (modelUrl != null) {
+                role.setModelUrl(modelUrl);
+                role.setModelType(modelAssetCatalog.typeOfUrl(modelUrl));
+            }
             if (generated != null) {
                 role.setName(generated.name());
                 role.setTraits(JsonUtil.toJson(splitTraits(generated.traits())));
@@ -299,6 +322,29 @@ public class TavernSessionService {
             }
             return saved;
         });
+    }
+
+    /**
+     * Which model a guest wears when they walk in.
+     *
+     * A requested model is honoured only when the file is really there — a URL
+     * to a missing file renders an empty stage, which is the bug this fixes.
+     * Otherwise the catalogue picks one nobody else is wearing; when every model
+     * is taken it reuses one rather than leaving the character faceless. Null
+     * only when the user has never uploaded a model.
+     */
+    private String resolveGuestModelUrl(Long userId, String requestedModelUrl) {
+        if (requestedModelUrl != null && !requestedModelUrl.isBlank()
+                && modelAssetCatalog.exists(requestedModelUrl)) {
+            return requestedModelUrl.trim();
+        }
+        java.util.Set<String> inUse = new java.util.HashSet<>();
+        for (CompanionRole role : roleRepository.findByUserIdOrderByIdAsc(userId)) {
+            String url = role.getModelUrl();
+            if (url != null && !url.isBlank()) inUse.add(url.trim());
+        }
+        CompanionModelAssetCatalog.ModelAsset picked = modelAssetCatalog.pickForGuest(inUse);
+        return picked == null ? null : picked.fileUrl();
     }
 
     private List<String> splitTraits(String raw) {

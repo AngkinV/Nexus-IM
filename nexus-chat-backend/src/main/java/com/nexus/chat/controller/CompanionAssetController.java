@@ -3,6 +3,7 @@ package com.nexus.chat.controller;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexus.chat.service.CompanionModelAssetCatalog;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +42,8 @@ public class CompanionAssetController {
     private String motionsConfigPath;
 
     private final ObjectMapper objectMapper;
+
+    private final CompanionModelAssetCatalog modelAssetCatalog;
 
     private final Object motionLock = new Object();
 
@@ -223,34 +226,23 @@ public class CompanionAssetController {
         }
     }
 
+    /**
+     * Every model on disk. Reads the shared catalogue rather than listing the
+     * directory itself, so what settings shows and what an invited guest can
+     * wear are guaranteed to be the same set.
+     */
     @GetMapping("/models")
     public ResponseEntity<List<Map<String, Object>>> listModels() {
-        try {
-            Path dir = Paths.get(modelsDir).toAbsolutePath().normalize();
-            if (!Files.exists(dir)) {
-                return ResponseEntity.ok(new ArrayList<>());
-            }
-            List<Map<String, Object>> result = new ArrayList<>();
-            try (var stream = Files.list(dir)) {
-                stream.filter(p -> {
-                    String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
-                    return name.endsWith(".vrm") || name.endsWith(".glb") || name.endsWith(".gltf") || name.endsWith(".fbx");
-                }).sorted().forEach(p -> {
-                    Map<String, Object> item = new HashMap<>();
-                    String fileName = p.getFileName().toString();
-                    item.put("fileName", fileName);
-                    item.put("fileUrl", "/models/" + fileName);
-                    try {
-                        item.put("size", Files.size(p));
-                    } catch (IOException ignored) {}
-                    result.add(item);
-                });
-            }
-            return ResponseEntity.ok(result);
-        } catch (IOException e) {
-            log.error("List models failed", e);
-            return ResponseEntity.internalServerError().build();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (CompanionModelAssetCatalog.ModelAsset asset : modelAssetCatalog.list()) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("fileName", asset.fileName());
+            item.put("fileUrl", asset.fileUrl());
+            item.put("size", asset.size());
+            item.put("type", asset.type());
+            result.add(item);
         }
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/motions")

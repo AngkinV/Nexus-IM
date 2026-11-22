@@ -3,6 +3,7 @@ package com.nexus.chat.controller;
 import com.nexus.chat.dto.CompanionRoleDTO;
 import com.nexus.chat.dto.TavernSessionDTO;
 import com.nexus.chat.security.CurrentUser;
+import com.nexus.chat.service.CompanionModelAssetCatalog;
 import com.nexus.chat.service.CompanionService;
 import com.nexus.chat.service.TavernSessionService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class TavernSessionController {
 
     private final TavernSessionService sessionService;
     private final CompanionService companionService;
+    private final CompanionModelAssetCatalog modelAssetCatalog;
 
     /**
      * Enter the tavern: return the evening in progress, opening one if needed.
@@ -87,7 +89,15 @@ public class TavernSessionController {
         }
     }
 
-    /** Fill the empty seat with a new guest. Costs one model call when one is configured. */
+    /**
+     * Fill the empty seat with a new guest. Costs one model call when one is
+     * configured.
+     *
+     * {@code modelUrl} is optional: omit it and the tavern picks a model nobody
+     * else is wearing; send one from the asset list to choose it explicitly. An
+     * unknown or missing model is ignored rather than stored, because a URL to a
+     * file that is not there renders an empty stage.
+     */
     @PostMapping("/roles/invite")
     public ResponseEntity<CompanionRoleDTO> invite(
             @RequestParam(name = "userId", required = false) Long claimedUserId,
@@ -96,11 +106,34 @@ public class TavernSessionController {
         try {
             String sceneKey = request == null || request.get("sceneKey") == null
                     ? null : request.get("sceneKey").toString();
-            return ResponseEntity.ok(companionService.toRoleDTO(sessionService.inviteRole(userId, sceneKey)));
+            String modelUrl = request == null || request.get("modelUrl") == null
+                    ? null : request.get("modelUrl").toString();
+            return ResponseEntity.ok(companionService.toRoleDTO(
+                    sessionService.inviteRole(userId, sceneKey, modelUrl)));
         } catch (Exception e) {
             log.error("Invite tavern guest failed", e);
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    /**
+     * The models an invited guest can wear: exactly the list the settings panel
+     * shows, so the two cannot drift apart.
+     */
+    @GetMapping("/roles/models")
+    public ResponseEntity<List<Map<String, Object>>> inviteModels(
+            @RequestParam(name = "userId", required = false) Long claimedUserId) {
+        CurrentUser.require(claimedUserId);
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (CompanionModelAssetCatalog.ModelAsset asset : modelAssetCatalog.list()) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("fileName", asset.fileName());
+            item.put("fileUrl", asset.fileUrl());
+            item.put("size", asset.size());
+            item.put("type", asset.type());
+            out.add(item);
+        }
+        return ResponseEntity.ok(out);
     }
 
     /** Keep a guest: they move from 过往相逢 into 当前席位. */
