@@ -19,5 +19,6 @@ public class PrivacySettingsDTO {
     /**
      * 好友验证方式: DIRECT(直接同意) 或 VERIFY(验证同意)
      */
+    @jakarta.validation.constraints.Pattern(regexp = "^(DIRECT|VERIFY)$")
     private String friendRequestMode;
 }

@@ -140,6 +140,14 @@
 
 /* Element Plus surfaces follow the same monochrome ramp so its dropdowns,
    poppers and message boxes stop leaking blue. */
+
+/* Glass intensity, driven by Settings → 通用与界面 → 超感毛玻璃透明度.
+   1 = full blur, 0 = no blur. Every backdrop-filter multiplies its base
+   radius by this, so one slider retunes the whole interface. */
+:root {
+  --glass-blur-scale: 1;
+}
+
 :root {
   --el-color-primary: #ffffff;
   --el-color-primary-light-3: #e2e2e2;
@@ -389,7 +397,7 @@ button.tg-button:hover {
 /* Overlay + dialog shell */
 .el-overlay {
   background-color: rgba(6, 6, 8, 0.72);
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(calc(2px * var(--glass-blur-scale, 1)));
 }
 
 .el-dialog {

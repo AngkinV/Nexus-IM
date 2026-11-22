@@ -93,3 +93,7 @@ __pycache__/
 
 # 手机端已暂停开发，源码只留在本机，不进仓库（最后一个包含它的提交：88b0d0e）
 /nexus-chat-app/
+
+# Per-account companion assets are runtime user data, never source code.
+/storage/companion-user-assets/
+/nexus-chat-backend/storage/companion-user-assets/

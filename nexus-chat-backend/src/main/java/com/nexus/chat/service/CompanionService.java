@@ -100,10 +100,18 @@ public class CompanionService {
         for (CompanionStatus status : statusRepository.findByUserId(userId)) {
             presence.put(status.getRoleId(), status.getSummary());
         }
+        // The row preview: the newest line per character, one query for the list.
+        Map<Long, String> lastLine = new HashMap<>();
+        for (CompanionMessage msg : messageRepository.findLatestPerRole(userId)) {
+            if (msg.getContent() != null && !msg.getContent().isBlank()) {
+                lastLine.put(msg.getRoleId(), msg.getContent());
+            }
+        }
 
         List<CompanionRoleDTO> result = new ArrayList<>(roles.size());
         for (CompanionRole role : roles) {
-            result.add(toRoleDTO(role, lastAt.get(role.getId()), presence.get(role.getId())));
+            result.add(toRoleDTO(role, lastAt.get(role.getId()), presence.get(role.getId()),
+                    lastLine.get(role.getId())));
         }
         return result;
     }
@@ -852,11 +860,17 @@ public class CompanionService {
                 .findByUserIdAndRoleId(role.getUserId(), role.getId())
                 .map(CompanionStatus::getSummary)
                 .orElse(null);
-        return toRoleDTO(role, lastMessageAt, presence);
+        return toRoleDTO(role, lastMessageAt, presence, null);
     }
 
     /** Bulk-aware variant — no per-row queries. */
     public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence) {
+        return toRoleDTO(role, lastMessageAt, presence, null);
+    }
+
+    /** Bulk-aware variant carrying the row's conversation preview. */
+    public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence,
+                                      String lastMessage) {
         return new CompanionRoleDTO(
                 role.getId(),
                 role.getName(),
@@ -870,6 +884,7 @@ public class CompanionService {
                 role.getKind() == null ? CompanionRole.Kind.regular.name() : role.getKind().name(),
                 lastMessageAt,
                 presence,
+                lastMessage,
                 role.getBackground(),
                 role.getGreeting(),
                 role.isConversationHidden()

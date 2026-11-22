@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { failureBelongsToSession } from '../utils/sessionGuard.js'
 import { API_BASE_URL, SERVER_BASE_URL } from './runtimeConfig'
 
 const apiClient = axios.create({
@@ -11,6 +12,13 @@ const apiClient = axios.create({
 // Add token to requests
 apiClient.interceptors.request.use(config => {
     const token = localStorage.getItem('token')
+    if (config._settingsSession !== undefined) {
+        let owner = null
+        try { owner = JSON.parse(localStorage.getItem('user') || 'null')?.id } catch {}
+        if (token !== config._settingsSession || String(owner) !== String(config._settingsOwner)) {
+            throw new axios.CanceledError('Account changed before settings request')
+        }
+    }
     if (token) {
         config.headers.Authorization = `Bearer ${token}`
     }
@@ -19,11 +27,14 @@ apiClient.interceptors.request.use(config => {
 
 // Force logout when the session was revoked on another device (HTTP 401).
 let authRedirecting = false
+let redirectingSession = null
 apiClient.interceptors.response.use(
     response => response,
     error => {
-        if (error.response?.status === 401 && !authRedirecting) {
+        const currentSession = localStorage.getItem('token')
+        if (failureBelongsToSession(error, currentSession) && (!authRedirecting || redirectingSession !== currentSession)) {
             authRedirecting = true
+            redirectingSession = currentSession
             localStorage.removeItem('token')
             localStorage.removeItem('user')
             const here = window.location.hash || window.location.pathname
@@ -87,6 +98,24 @@ export const userAPI = {
 
     updatePrivacySettings: (id, settings) =>
         apiClient.put(`/users/${id}/privacy`, settings),
+
+    /** Account-scoped interface preferences (hour cycle, glass, sounds). */
+    getPreferences: (id) => apiClient.get(`/users/${id}/preferences`),
+
+    // Settings' user-owned model/motion library. Built-in files are read-only.
+    getSettingModels: (ctx) => apiClient.get('/companion/user-assets/models', { _settingsOwner: ctx?.owner, _settingsSession: ctx?.session }),
+    getSettingMotions: (ctx) => apiClient.get('/companion/user-assets/motions', { _settingsOwner: ctx?.owner, _settingsSession: ctx?.session }),
+    uploadSettingAsset: (kind, file, ctx) => {
+        const body = new FormData()
+        body.append('file', file)
+        return apiClient.post(`/companion/user-assets/${kind}`, body, { headers: { 'Content-Type': 'multipart/form-data' }, _settingsOwner: ctx?.owner, _settingsSession: ctx?.session })
+    },
+    renameSettingAsset: (kind, id, name, ctx) =>
+        apiClient.put(`/companion/user-assets/${kind}/${encodeURIComponent(id)}/name`, { name }, { _settingsOwner: ctx?.owner, _settingsSession: ctx?.session }),
+    deleteSettingMotion: (id, ctx) => apiClient.delete(`/companion/user-assets/motion/${encodeURIComponent(id)}`, { _settingsOwner: ctx?.owner, _settingsSession: ctx?.session }),
+
+    /** Merge semantics: omitted fields are left untouched server-side. */
+    updatePreferences: (id, prefs) => apiClient.put(`/users/${id}/preferences`, prefs),
 
     getUserStats: (id) => apiClient.get(`/users/${id}/stats`),
 
@@ -339,8 +368,13 @@ export const companionAPI = {
 
     // Inviting and closing both end in a model call. Cap the wait on the client
     // too, so a hung provider can never leave the UI spinning forever.
-    inviteGuest: (userId, sceneKey) =>
-        apiClient.post('/tavern/roles/invite', { sceneKey }, { params: { userId }, timeout: 12000 }),
+    // modelUrl is optional: omit it and the tavern picks a model nobody wears.
+    inviteGuest: (userId, sceneKey, modelUrl = null) =>
+        apiClient.post('/tavern/roles/invite', { sceneKey, modelUrl }, { params: { userId }, timeout: 12000 }),
+
+    // The models a guest can wear — the same catalogue the settings panel lists.
+    inviteModels: (userId) =>
+        apiClient.get('/tavern/roles/models', { params: { userId } }),
 
     adoptGuest: (roleId, userId, sessionId) =>
         apiClient.post(`/tavern/roles/${roleId}/adopt`, { sessionId }, { params: { userId } }),

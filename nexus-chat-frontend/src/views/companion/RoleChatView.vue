@@ -220,7 +220,7 @@
                 </span>
               </div>
               <div class="role-meta">
-                <span>{{ dayjs(item.msg.createdAt).format('HH:mm') }}</span>
+                <span>{{ settings.format(item.msg.createdAt, 'HH:mm') }}</span>
                 <!-- The mood she reported with this reply. Absent when she reported none. -->
                 <span v-if="item.msg.state?.mood" class="role-mood">{{ $t(`companion.mood.${item.msg.state.mood}`) }}</span>
                 <span v-if="item.msg.stopped">{{ $t('companion.session.stopped') }}</span>
@@ -380,6 +380,9 @@ import dayjs from 'dayjs'
 import { useCompanionStore } from '@/stores/companion'
 import { describeModelError } from '@/stores/agentProviders'
 import { useUserStore } from '@/stores/user'
+import { useSettingsStore } from '@/stores/settings'
+import { SERVER_BASE_URL } from '@/services/runtimeConfig'
+import { assetRequest } from '@/utils/assetRequest'
 import RoleDossier from '@/components/companion/RoleDossier.vue'
 import MindOrbit from '@/components/companion/MindOrbit.vue'
 import ModelSettingsPanel from '@/components/companion/ModelSettingsPanel.vue'
@@ -392,6 +395,7 @@ const emit = defineEmits(['back', 'goAi', 'mood'])
 const { t } = useI18n()
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
+const settings = useSettingsStore()
 const {
   activeRole, activeRoleId, messages, growth, status, memories, activeSession, sessionHistory,
   isLoadingRoleData, isSending: sending, speaking, liveState, lastContext
@@ -676,7 +680,7 @@ const streamItems = computed(() => {
         const session = sessionsById.value.get(sessionId)
         const known = session?.sceneKey && TAVERN_SCENES.some((s) => s.key === session.sceneKey)
         const label = [
-          dayjs(session?.startedAt || msg.createdAt).format('MM-DD HH:mm'),
+          settings.format(session?.startedAt || msg.createdAt, 'MM-DD HH:mm'),
           known ? t(`companion.sceneNames.${session.sceneKey}`) : ''
         ].filter(Boolean).join(' · ')
         items.push({ type: 'divider', key: `start-${sessionId}`, label })
@@ -779,7 +783,8 @@ function mountStages() {
     stage = mountTavernStage(stageHost.value, {
       shouldRender: () => !stageCollapsed.value,
       reducedMotion,
-      onActorStatus: (value) => { actorStatus.value = value }
+      onActorStatus: (value) => { actorStatus.value = value },
+      requestAsset: (url) => assetRequest(url, SERVER_BASE_URL, userStore.token)
     })
     stage.setCharacter(activeRole.value)
     stage.setScene(sceneKey.value)
@@ -972,7 +977,7 @@ function stop() {
   gap: 10px;
   padding: 0 16px;
   background: rgba(14, 14, 17, 0.8);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   border-bottom: 1px solid rgba(68, 71, 72, 0.3);
 }
 

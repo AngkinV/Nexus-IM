@@ -290,8 +290,8 @@ watch(
   justify-content: center;
   padding: 16px;
   background: rgba(14, 14, 17, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   animation: palette-fade 160ms ease-out;
 }
 

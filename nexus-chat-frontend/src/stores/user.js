@@ -2,12 +2,14 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authAPI, userAPI, resolveFileUrl } from '@/services/api'
 import { useChatStore } from '@/stores/chat'
+import { useSettingsStore } from '@/stores/settings'
 import offlineStore from '@/services/offlineStore'
 
 export const useUserStore = defineStore('user', () => {
     const currentUser = ref(null)
     const token = ref(null)
     const isLoading = ref(false)
+    let profileSequence = 0
 
     // Computed: Check if user is logged in
     const isLoggedIn = computed(() => {
@@ -39,6 +41,7 @@ export const useUserStore = defineStore('user', () => {
             // Persist to localStorage
             localStorage.setItem('user', JSON.stringify(currentUser.value))
             localStorage.setItem('token', token.value)
+            await loadSettingsFor(userId)
 
             return currentUser.value
         } catch (error) {
@@ -74,6 +77,8 @@ export const useUserStore = defineStore('user', () => {
             localStorage.setItem('user', JSON.stringify(currentUser.value))
             localStorage.setItem('token', token.value)
 
+            await loadSettingsFor(userId)
+
             return currentUser.value
         } catch (error) {
             throw error.response?.data?.message || error.message || 'Login failed'
@@ -82,17 +87,44 @@ export const useUserStore = defineStore('user', () => {
         }
     }
 
+    /**
+     * Switch the settings store to this account before the app renders with it.
+     * main.js also watches the signed-in id, so this is about ordering, not
+     * correctness — and a settings failure must never block sign-in.
+     */
+    const loadSettingsFor = async (userId) => {
+        try {
+            await useSettingsStore().switchUser(userId)
+        } catch (error) {
+            console.error('Failed to load settings for the signed-in user:', error)
+        }
+    }
+
     const loadUserFromStorage = () => {
         const storedUser = localStorage.getItem('user')
         const storedToken = localStorage.getItem('token')
+        if (!storedUser || !storedToken) return
 
-        if (storedUser && storedToken) {
-            currentUser.value = JSON.parse(storedUser)
+        try {
+            const parsed = JSON.parse(storedUser)
+            if (!parsed || typeof parsed !== 'object' || parsed.id == null) throw new Error('no user id')
+            currentUser.value = parsed
             token.value = storedToken
+        } catch {
+            // A damaged session cannot be trusted: drop it so the router sends
+            // the device to the login page instead of crashing at boot.
+            localStorage.removeItem('user')
+            localStorage.removeItem('token')
         }
     }
 
     const logout = async () => {
+        // Send settings the server has not confirmed yet while the token still works.
+        try {
+            await useSettingsStore().flushAccount()
+        } catch {
+            /* they stay pending on this device and go out at the next sign-in */
+        }
         try {
             if (currentUser.value?.id) {
                 await authAPI.logout(currentUser.value.id)
@@ -198,9 +230,14 @@ export const useUserStore = defineStore('user', () => {
 
     const loadUserProfile = async () => {
         if (!currentUser.value?.id) return
+        const owner = currentUser.value.id
+        const session = token.value
+        const sequence = ++profileSequence
         try {
-            const response = await userAPI.getUserProfile(currentUser.value.id)
+            const response = await userAPI.getUserProfile(owner)
+            if (currentUser.value?.id !== owner || token.value !== session || sequence !== profileSequence) return
             const profile = response.data
+            if (!profile || String(profile.id) !== String(owner)) throw new Error('Profile identity mismatch')
             currentUser.value = {
                 ...currentUser.value,
                 nickname: profile.nickname,
@@ -212,12 +249,15 @@ export const useUserStore = defineStore('user', () => {
                 showLastSeen: profile.showLastSeen,
                 showPhone: profile.showPhone,
                 showEmail: profile.showEmail,
+                // Missing server data stays missing; stale local values must not
+                // masquerade as a successfully loaded privacy setting.
+                friendRequestMode: profile.friendRequestMode,
                 socialLinks: profile.socialLinks || {}
             }
             localStorage.setItem('user', JSON.stringify(currentUser.value))
             return currentUser.value
         } catch (error) {
-            console.error('Failed to load user profile:', error)
+            console.warn('Could not load authenticated user profile')
         }
     }
 

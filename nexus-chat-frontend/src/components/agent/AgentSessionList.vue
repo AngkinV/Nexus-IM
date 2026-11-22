@@ -107,6 +107,7 @@ import dayjs from 'dayjs'
 import { AI_ASSISTANT_CHAT_ID, useAgentStore } from '@/stores/agent'
 import { useAgentProvidersStore } from '@/stores/agentProviders'
 import { useChatStore } from '@/stores/chat'
+import { useSettingsStore } from '@/stores/settings'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { buildRunView } from './runView.js'
 
@@ -124,6 +125,7 @@ const { t } = useI18n({ messages: {
   }
 } })
 const agentStore = useAgentStore()
+const settings = useSettingsStore()
 const providersStore = useAgentProvidersStore()
 const chatStore = useChatStore()
 const knowledgeStore = useKnowledgeStore()
@@ -156,12 +158,13 @@ function previewOf(s) {
 }
 function createdLabel(s) {
   return s.createdAt && dayjs(s.createdAt).isValid()
-    ? globalT('agent.history.createdAt', { time: dayjs(s.createdAt).format('YYYY-MM-DD HH:mm') }) : ''
+    ? globalT('agent.history.createdAt', { time: settings.format(s.createdAt, 'YYYY-MM-DD HH:mm') }) : ''
 }
 function formatTime(time) {
   if (!time || !dayjs(time).isValid()) return ''
   const d = dayjs(time)
-  return d.format(d.isSame(dayjs(), 'day') ? 'HH:mm' : d.isSame(dayjs(), 'year') ? 'MM-DD' : 'YYYY-MM-DD')
+  // Settings → 时间显示格式 applies to every timestamp, this list included.
+  return settings.format(time, d.isSame(dayjs(), 'day') ? 'HH:mm' : d.isSame(dayjs(), 'year') ? 'MM-DD' : 'YYYY-MM-DD')
 }
 
 // Sorting depends only on metadata, not selection, text deltas or the filter.

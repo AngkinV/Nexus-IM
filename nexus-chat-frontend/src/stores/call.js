@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import websocket from '@/services/websocket'
 import webrtc from '@/services/webrtc'
 import { useUserStore } from '@/stores/user'
+import { useSettingsStore } from '@/stores/settings'
 
 /**
  * Call status enum
@@ -209,8 +210,8 @@ export const useCallStore = defineStore('call', () => {
         playRingtone()
         startRingTimeout()
 
-        // Electron notification
-        if (window.electronAPI) {
+        // Electron notification — suppressed when the user turned it off.
+        if (window.electronAPI && useSettingsStore().shouldNotify()) {
             window.electronAPI.showNotification(
                 payload.callType === 'video' ? 'Video Call' : 'Voice Call',
                 `${payload.callerName || 'Someone'} is calling...`

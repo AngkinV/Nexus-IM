@@ -50,6 +50,7 @@ class TavernSessionServiceTest {
     private final PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
     private final SimpleTransactionStatus transaction = new SimpleTransactionStatus();
     private final CompanionConversationGuard guard = new CompanionConversationGuard();
+    private final CompanionModelAssetCatalog modelAssets = mock(CompanionModelAssetCatalog.class);
     private TavernSessionService service;
     private CompanionRole role;
     private TavernSession session;
@@ -58,7 +59,7 @@ class TavernSessionServiceTest {
     void setUp() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transaction);
         service = new TavernSessionService(sessions, roles, messages, memories, resolver, model,
-                fallback, conversations, statuses, transactionManager, guard);
+                fallback, conversations, statuses, transactionManager, guard, modelAssets);
         role = new CompanionRole();
         role.setId(ROLE);
         role.setUserId(USER);

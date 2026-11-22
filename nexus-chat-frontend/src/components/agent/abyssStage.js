@@ -1,4 +1,13 @@
 import * as THREE from 'three'
+import {
+  createFrameGate,
+  scaledPixelRatio,
+  renderScaleFactor,
+  onRenderQualityChange,
+  isRenderSuspended,
+  requestFrame,
+  cancelFrame
+} from '../../utils/renderGovernor.js'
 
 // The AI canvas stage from the design export: an abyssal glyph-ring shader behind
 // a wireframe bust. Two layers, one clock. Nothing is drawn while the stage is
@@ -121,7 +130,7 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   const camera = new THREE.PerspectiveCamera(45, 2, 0.1, 100)
   camera.position.set(0, 0, 5.2)
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+  renderer.setPixelRatio(scaledPixelRatio(1.5))
   renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'
   container.appendChild(renderer.domElement)
 
@@ -177,16 +186,21 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
     const width = container.clientWidth
     const height = container.clientHeight
     if (!width || !height) return
-    shaderCanvas.width = width
-    shaderCanvas.height = height
-    gl.viewport(0, 0, width, height)
+    // Settings → 视口渲染分辨率: both layers follow the same factor. The shader
+    // layer draws at CSS resolution, so the factor applies to its buffer directly.
+    const factor = renderScaleFactor()
+    shaderCanvas.width = Math.max(1, Math.round(width * factor))
+    shaderCanvas.height = Math.max(1, Math.round(height * factor))
+    gl.viewport(0, 0, shaderCanvas.width, shaderCanvas.height)
     camera.aspect = width / height
     camera.updateProjectionMatrix()
+    renderer.setPixelRatio(scaledPixelRatio(1.5))
     renderer.setSize(width, height, false)
   }
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container)
   resize()
+  const stopQualityWatch = onRenderQualityChange(resize)
 
   let targetX = 0
   let targetY = 0
@@ -208,26 +222,40 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
   const clock = new THREE.Clock()
-  let frame = 0
-  const animate = () => {
-    frame = requestAnimationFrame(animate)
-    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
-    const time = reducedMotion.matches ? 0 : clock.getElapsedTime()
+  let elapsed = 0
+  let frame = null
+  const gate = createFrameGate()
+  const animate = (now = performance.now()) => {
+    frame = requestFrame(animate)
+    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden || isRenderSuspended()) {
+      clock.getDelta() // drop the time spent not drawing, so nothing jumps on the way back
+      return
+    }
+    // Honour Settings → 渲染帧率上限.
+    if (!gate.shouldDraw(now)) return
+    // Animation time is accumulated from real, clamped deltas rather than read off
+    // the wall clock: a pause never turns into a leap, and motion keeps the same
+    // speed whether the cap is 30 or 60.
+    const delta = Math.min(clock.getDelta(), 0.1)
+    elapsed += delta
+    const step = delta * 60 // 1 at 60 fps
+    const time = reducedMotion.matches ? 0 : elapsed
 
     gl.uniform1f(uTime, time)
     gl.uniform2f(uResolution, shaderCanvas.width, shaderCanvas.height)
     gl.uniform2f(uMouse, shaderMouse.x, shaderMouse.y)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
-    gazeX = reducedMotion.matches ? 0 : gazeX + (targetX - gazeX) * 0.06
-    gazeY = reducedMotion.matches ? 0 : gazeY + (targetY - gazeY) * 0.06
+    const ease = 1 - Math.pow(0.94, step)
+    gazeX = reducedMotion.matches ? 0 : gazeX + (targetX - gazeX) * ease
+    gazeY = reducedMotion.matches ? 0 : gazeY + (targetY - gazeY) * ease
     figure.position.y = Math.sin(time * 1.6) * 0.065 - 0.1
     figure.rotation.y = gazeX * 0.85 + Math.sin(time * 0.7) * 0.05
     figure.rotation.x = -gazeY * 0.55 + Math.cos(time * 0.9) * 0.035
     halo.rotation.z = time * 0.2
     outerHalo.rotation.z = -time * 0.12
     for (let i = 0; !reducedMotion.matches && i < DUST; i++) {
-      dustPositions[i * 3 + 1] += dustSpeeds[i]
+      dustPositions[i * 3 + 1] += dustSpeeds[i] * step
       if (dustPositions[i * 3 + 1] > 2.2) dustPositions[i * 3 + 1] = -2.2
     }
     dustGeometry.attributes.position.needsUpdate = true
@@ -237,7 +265,8 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   animate()
 
   return () => {
-    cancelAnimationFrame(frame)
+    cancelFrame(frame)
+    stopQualityWatch()
     window.removeEventListener('mousemove', onMouseMove)
     resizeObserver.disconnect()
     scene.traverse((node) => {
@@ -257,7 +286,7 @@ export function mountMiniHologram(container, { shouldRender = () => true } = {})
   camera.position.z = 2.8
 
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+  renderer.setPixelRatio(scaledPixelRatio(2))
   renderer.setClearColor(0x000000, 0)
   renderer.domElement.style.cssText = 'display:block;width:100%;height:100%'
   container.appendChild(renderer.domElement)
@@ -279,6 +308,7 @@ export function mountMiniHologram(container, { shouldRender = () => true } = {})
     const width = container.clientWidth
     const height = container.clientHeight
     if (!width || !height) return
+    renderer.setPixelRatio(scaledPixelRatio(2))
     renderer.setSize(width, height, false)
     camera.aspect = width / height
     camera.updateProjectionMatrix()
@@ -286,14 +316,23 @@ export function mountMiniHologram(container, { shouldRender = () => true } = {})
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container)
   resize()
+  const stopQualityWatch = onRenderQualityChange(resize)
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const clock = new THREE.Clock()
-  let frame = 0
-  const animate = () => {
-    frame = requestAnimationFrame(animate)
-    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden) return
-    const time = reducedMotion ? 0 : clock.getElapsedTime()
+  let elapsed = 0
+  let frame = null
+  const gate = createFrameGate()
+  const animate = (now = performance.now()) => {
+    frame = requestFrame(animate)
+    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden || isRenderSuspended()) {
+      clock.getDelta() // drop the time spent not drawing
+      return
+    }
+    // Honour Settings → 渲染帧率上限.
+    if (!gate.shouldDraw(now)) return
+    elapsed += Math.min(clock.getDelta(), 0.1)
+    const time = reducedMotion ? 0 : elapsed
     group.rotation.y = time * 0.55
     group.rotation.x = 0.2 + Math.sin(time * 0.7) * 0.08
     ring.rotation.z = time * 0.35
@@ -302,7 +341,8 @@ export function mountMiniHologram(container, { shouldRender = () => true } = {})
   animate()
 
   return () => {
-    cancelAnimationFrame(frame)
+    cancelFrame(frame)
+    stopQualityWatch()
     resizeObserver.disconnect()
     scene.traverse((node) => {
       node.geometry?.dispose()

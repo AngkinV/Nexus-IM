@@ -7,10 +7,14 @@ import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.service.RedisCacheService;
 import com.nexus.chat.service.RedisMessageRelay;
+import com.nexus.chat.service.UserPreferenceService;
 import com.nexus.chat.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataAccessException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,6 +32,7 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final UserPreferenceService userPreferenceService;
     private final ContactRepository contactRepository;
     private final PresenceService presenceService;
     private final RedisCacheService redisCacheService;
@@ -218,13 +223,63 @@ public class UserController {
     @PutMapping("/{id}/privacy")
     public ResponseEntity<PrivacySettingsDTO> updatePrivacySettings(
             @PathVariable Long id,
-            @RequestBody PrivacySettingsDTO request) {
+            @jakarta.validation.Valid @RequestBody PrivacySettingsDTO request) {
         CurrentUser.require(id);
         try {
             PrivacySettingsDTO settings = userService.updatePrivacySettings(id, request);
             return ResponseEntity.ok(settings);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * Account-scoped interface preferences.
+     * GET /api/users/{id}/preferences
+     *
+     * Only settings that should follow the account across machines live here;
+     * device-bound settings stay on the client.
+     */
+    @GetMapping("/{id}/preferences")
+    public ResponseEntity<UserPreferenceDTO> getPreferences(@PathVariable Long id) {
+        CurrentUser.require(id);
+        try {
+            return ResponseEntity.ok(userPreferenceService.getPreferences(id));
+        } catch (DataAccessException e) {
+            log.error("Preference storage unavailable for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Preference storage unavailable");
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("Could not read preferences for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not read preferences");
+        }
+    }
+
+    /**
+     * Merge account-scoped preferences.
+     * PUT /api/users/{id}/preferences
+     *
+     * Null fields are left untouched, so a partial update from one window does
+     * not erase what another window just set.
+     */
+    @PutMapping("/{id}/preferences")
+    public ResponseEntity<UserPreferenceDTO> updatePreferences(
+            @PathVariable Long id,
+            @jakarta.validation.Valid @RequestBody UserPreferenceDTO request) {
+        CurrentUser.require(id);
+        // Validation is 400, ownership is 401/403, transient storage failure is 503.
+        // Keep these distinct: the client must retry a server fault, not an invalid edit.
+        try {
+            return ResponseEntity.ok(userPreferenceService.updatePreferences(id, request));
+        } catch (DataAccessException e) {
+            log.error("Preference storage unavailable for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Preference storage unavailable");
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            log.error("Could not save preferences for user {}", id, e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not save preferences");
         }
     }
 

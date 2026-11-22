@@ -189,6 +189,7 @@ import { ref, onMounted, onBeforeUnmount, onUpdated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { WarningFilled, Download, PictureFilled, Loading } from '@element-plus/icons-vue'
 import { API_BASE_URL } from '@/services/runtimeConfig'
+import { useSettingsStore } from '@/stores/settings'
 
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
@@ -197,6 +198,7 @@ import 'vue3-emoji-picker/css'
 
 const router = useRouter()
 const { t } = useI18n()
+const settings = useSettingsStore()
 
 const props = defineProps({
   messages: {
@@ -313,9 +315,7 @@ const formatDayLabel = (time) => {
   return `${day} ${d.format('HH:mm')}`
 }
 
-const formatTime = (time) => {
-  return dayjs(time).format('HH:mm')
-}
+const formatTime = (time) => settings.format(time)
 
 const formatFileSize = (bytes) => {
   if (!bytes) return ''
@@ -495,8 +495,8 @@ const handleAvatarClick = (senderId) => {
 
 .bubble-in {
   background: rgba(27, 27, 30, 0.9);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   border: 1px solid rgba(68, 71, 72, 0.3);
   border-radius: 0 12px 12px 12px;
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);

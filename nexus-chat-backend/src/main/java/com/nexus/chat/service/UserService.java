@@ -118,6 +118,9 @@ public class UserService {
         profile.setShowLastSeen(privacy.getShowLastSeen());
         profile.setShowEmail(privacy.getShowEmail());
         profile.setShowPhone(privacy.getShowPhone());
+        profile.setFriendRequestMode(privacy.getFriendRequestMode() == null
+                ? UserPrivacySettings.FriendRequestMode.VERIFY.name()
+                : privacy.getFriendRequestMode().name());
 
         // Statistics
         profile.setContactCount((long) contactRepository.findByUserId(userId).size());
@@ -312,14 +315,11 @@ public class UserService {
             settings.setShowPhone(request.getShowPhone());
         }
         if (request.getFriendRequestMode() != null) {
-            try {
-                settings.setFriendRequestMode(
-                    UserPrivacySettings.FriendRequestMode.valueOf(request.getFriendRequestMode())
-                );
-            } catch (IllegalArgumentException e) {
-                // 默认使用 DIRECT
-                settings.setFriendRequestMode(UserPrivacySettings.FriendRequestMode.DIRECT);
-            }
+            // An unknown value is rejected (-> 400). It used to be stored as DIRECT,
+            // i.e. a typo silently switched the account to the *less* private mode.
+            settings.setFriendRequestMode(
+                UserPrivacySettings.FriendRequestMode.valueOf(request.getFriendRequestMode().trim())
+            );
         }
 
         UserPrivacySettings saved = privacySettingsRepository.save(settings);

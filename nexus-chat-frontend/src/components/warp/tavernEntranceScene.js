@@ -1,3 +1,6 @@
+// Each transition snapshots render quality when it starts. All frame loops
+// still honour the shared FPS and suspend settings.
+import { createFrameGate, scaledPixelRatio, isRenderSuspended, requestFrame, cancelFrame } from '../../utils/renderGovernor.js'
 /**
  * Tavern entrance scene: the picture that plays when the user walks into the tavern.
  *
@@ -971,7 +974,7 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
   function measure() {
     W = window.innerWidth
     H = window.innerHeight
-    dpr = Math.min(2, window.devicePixelRatio || 1)
+    dpr = scaledPixelRatio(2)
     Wpx = Math.round(W * dpr)
     Hpx = Math.round(H * dpr)
     cv.width = Wpx
@@ -1838,7 +1841,7 @@ void main() { vec2 d = (gl_FragCoord.xy - uC) / uRad; o = vec4(0., 0., 0., uS * 
     run = false
     fading = false
     hold = false
-    cancelAnimationFrame(raf)
+    cancelFrame(raf)
     clearTimeout(fadeTimer)
     budget = 6
     g.setTransform(1, 0, 0, 1, 0, 0)
@@ -1863,9 +1866,14 @@ void main() { vec2 d = (gl_FragCoord.xy - uC) / uRad; o = vec4(0., 0., 0., uS * 
     cv.style.opacity = glcv.style.opacity = '0'
     fadeTimer = setTimeout(() => end(reason), 260)
   }
+  const gate = createFrameGate()
+
   function frame(now) {
     if (!run) return
-    raf = requestAnimationFrame(frame)
+    raf = requestFrame(frame)
+    if (isRenderSuspended()) { last = 0; return }
+    // Honour Settings → 渲染帧率上限.
+    if (!gate.shouldDraw(now)) return
     const t = now / 1000,
       dt = last ? Math.min(0.05, t - last) : 0
     last = t
@@ -1936,7 +1944,7 @@ void main() { vec2 d = (gl_FragCoord.xy - uC) / uRad; o = vec4(0., 0., 0., uS * 
         enqueue(bakeCrease(W / H, ck))
       }
     }
-    raf = requestAnimationFrame(frame)
+    raf = requestFrame(frame)
     return true
   }
   // Leave early: picture and sheet fade out together. The caller decides whether that is a cancel or a skip.

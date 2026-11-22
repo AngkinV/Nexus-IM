@@ -304,6 +304,7 @@ import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useChatStore } from '@/stores/chat'
+import { useSettingsStore } from '@/stores/settings'
 import { useContactStore } from '@/stores/contact'
 import { useConnectionStore } from '@/stores/connection'
 import { version as appVersion } from '../../../package.json'
@@ -320,6 +321,7 @@ import { useCompanionStore } from '@/stores/companion'
 const { t } = useI18n()
 const userStore = useUserStore()
 const chatStore = useChatStore()
+const settings = useSettingsStore()
 const contactStore = useContactStore()
 const connectionStore = useConnectionStore()
 const agentStore = useAgentStore()
@@ -348,7 +350,7 @@ const unreadTotal = computed(() =>
   unreadChats.value.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
 )
 const initialOf = (name) => (name || '?').trim().charAt(0) || '?'
-const formatTime = (time) => (time ? dayjs(time).format('HH:mm') : '')
+const formatTime = (time) => settings.format(time)
 
 const markAllRead = () => {
   ;(chatStore.chats || []).forEach((c) => { c.unreadCount = 0 })
@@ -522,8 +524,8 @@ const handleGroupSelect = (group) => {
   cursor: pointer;
   user-select: none;
   position: relative;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(12px * var(--glass-blur-scale, 1)));
   transition: background 0.2s ease;
 }
 
@@ -630,8 +632,8 @@ const handleGroupSelect = (group) => {
   max-width: calc(100vw - 150px);
   border-radius: 16px;
   background: rgba(14, 14, 17, 0.95);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(calc(20px * var(--glass-blur-scale, 1)));
+  -webkit-backdrop-filter: blur(calc(20px * var(--glass-blur-scale, 1)));
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 14px;
   z-index: 50;
