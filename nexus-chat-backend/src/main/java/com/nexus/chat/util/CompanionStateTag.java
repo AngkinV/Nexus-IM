@@ -37,6 +37,9 @@ public final class CompanionStateTag {
     /** A marker longer than this is not a marker; stop holding text back for it. */
     private static final int MAX_TAG = 400;
 
+    /** Reserved key in the stored state JSON: the reply it belongs to was cut short. */
+    private static final String PARTIAL_KEY = "_partial";
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Pattern LOOSE_PAIR =
             Pattern.compile("(mood|motion|doing|gesture)\\s*[\"']?\\s*[:=：]\\s*[\"'“]?([^\"'”,，|}\\n]+)");
@@ -82,11 +85,32 @@ public final class CompanionStateTag {
     }
 
     public static String toJson(State state) {
-        if (state == null || state.isEmpty()) return null;
+        return toJson(state, false);
+    }
+
+    /**
+     * The stored form of a reply's state. A reply that was cut short carries the
+     * reserved {@link #PARTIAL_KEY} next to whatever state it reported; the key is
+     * not a state field, so {@link #fromJson} and {@link #render} never see it.
+     */
+    public static String toJson(State state, boolean partial) {
+        Map<String, Object> out = new LinkedHashMap<>(state == null ? Map.of() : state.toMap());
+        if (partial) out.put(PARTIAL_KEY, true);
+        if (out.isEmpty()) return null;
         try {
-            return MAPPER.writeValueAsString(state.toMap());
+            return MAPPER.writeValueAsString(out);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    /** Whether a stored state marks its reply as cut short. */
+    public static boolean isPartial(String json) {
+        if (json == null || json.isBlank()) return false;
+        try {
+            return MAPPER.readTree(json).path(PARTIAL_KEY).asBoolean(false);
+        } catch (Exception e) {
+            return false;
         }
     }
 

@@ -2,6 +2,35 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { companionAPI } from '@/services/api'
 import { API_BASE_URL } from '@/services/runtimeConfig'
+import { retryAtOf } from '@/stores/agentProviders'
+
+// Only a positive routing diagnostic for *our* endpoint permits a second POST.
+// In particular a model/alias 404, an SSE error, or an ambiguous proxy 405 does not.
+function missingStreamRoute(response, body) {
+    if (![404, 405].includes(response.status) || response.redirected || body?.modelError || body?.code) return false
+    const path = new URL(`${API_BASE_URL}/companion/messages/stream`).pathname
+    if (response.url && new URL(response.url).pathname !== path) return false
+    if (body?.path !== path || Number(body.status) !== response.status) return false
+    const message = body.message || body.detail || ''
+    if (response.status === 404) {
+        return body.error === 'Not Found' && message.includes(path.slice(1)) &&
+            /^(No static resource |No (?:handler|mapping) (?:found )?for )/i.test(message)
+    }
+    const allow = response.headers.get('Allow')
+    return body.error === 'Method Not Allowed' &&
+        (/method ['"]?POST['"]? (?:is )?not supported/i.test(message) || (!!allow && !/\bPOST\b/i.test(allow)))
+}
+
+function modelFailure(data, headers, status) {
+    const error = data?.modelError || (data?.code && data?.summary ? data : null) ||
+        (status === 429 ? { code: 'RATE_LIMITED', httpStatus: 429 } : null)
+    if (!error) return null
+    const header = headers?.get?.('Retry-After') ?? headers?.['retry-after']
+    let seconds = error.retryAfterSeconds
+    if (seconds == null && header) seconds = /^\d+$/.test(header) ? Number(header) : Math.ceil((Date.parse(header) - Date.now()) / 1000)
+    return seconds != null && Number.isFinite(Number(seconds))
+        ? { ...error, retryAfterSeconds: Math.max(0, Number(seconds)) } : error
+}
 
 export const useCompanionStore = defineStore('companion', () => {
     const roles = ref([])
@@ -203,8 +232,7 @@ export const useCompanionStore = defineStore('companion', () => {
                 // at a character must not start an evening with them.
                 fetchActiveSession(userId, roleId),
                 // Past evenings label the conversation's dividers.
-                fetchSessionHistory(userId, roleId),
-                fetchModelStatus(userId)
+                fetchSessionHistory(userId, roleId)
             ])
         } finally {
             if (isCurrent(roleId)) isLoadingRoleData.value = false
@@ -217,6 +245,12 @@ export const useCompanionStore = defineStore('companion', () => {
             const response = await companionAPI.getConversation(roleId, userId)
             if (!canApplyHistory(roleId, revision)) return
             const stored = response.data || []
+            // A half reply left by a model failure is the end of history: tie it to the
+            // line it answers, so sending that line again replaces it as a live retry does.
+            const half = stored.at(-1), asked = stored.at(-2)
+            if (half?.partial === true && half.senderType !== 'user' && asked?.senderType === 'user') {
+                stored[stored.length - 2] = { ...asked, partialId: half.id }
+            }
             // A send in flight owns its optimistic rows; keep them at the end —
             // except a line the server has already filed, which it now shows
             // itself, and anything that belongs to another character.
@@ -312,6 +346,11 @@ export const useCompanionStore = defineStore('companion', () => {
             : null
         if (!existing) return pushUserRow(roleId, content, clientMsgId)
         existing.failed = false
+        delete existing.modelError
+        delete existing.retryAt
+        // A user-initiated retry replaces this interrupted attempt, never its user line.
+        if (existing.partialId != null) dropRows(existing.partialId)
+        delete existing.partialId
         return existing
     }
 
@@ -359,6 +398,25 @@ export const useCompanionStore = defineStore('companion', () => {
         if (kept) kept.failed = true
     }
 
+    // A model failure is part of the exchange, not a new chat message or a
+    // successful reply. Prefer the persisted partial, retaining delivered deltas
+    // if the terminal frame has no roleMessage.
+    const settleModelFailure = (roleId, row, live, data, modelError) => {
+        const clientMsgId = row.clientMsgId
+        const text = data?.roleMessage?.content || live?.content
+        const partial = !!data?.partial || !!text
+        const roleMessage = text ? {
+            ...(data?.roleMessage || live), content: text, live: false, pending: false, partial: true, fallback: false
+        } : null
+        const userMessage = {
+            ...row, ...data?.userMessage, clientMsgId, pending: !data?.userMessage, failed: true, modelError,
+            partialId: roleMessage?.id, retryAt: retryAtOf(modelError)
+        }
+        const result = { ...data, userMessage, roleMessage, fallback: false, modelError, partial, clientMsgId }
+        settleExchange(roleId, result, row.id, live?.id)
+        return result
+    }
+
     /**
      * Plain (non-streaming) send. Used only when the server has no stream
      * endpoint. Resolves to the exchange, or null when the send failed.
@@ -371,6 +429,8 @@ export const useCompanionStore = defineStore('companion', () => {
         try {
             const response = await companionAPI.sendMessage(roleId, userId, content, sceneKey, clientId)
             const data = response.data
+            const failure = modelFailure(data, response.headers, response.status)
+            if (failure) return settleModelFailure(roleId, row, null, data, failure)
             if (!data?.roleMessage) {
                 markFailed(roleId, row)
                 return null
@@ -378,7 +438,9 @@ export const useCompanionStore = defineStore('companion', () => {
             settleExchange(roleId, data, row.id)
             return data
         } catch (error) {
-            console.error('Send companion message failed:', error)
+            const response = error.response
+            const failure = modelFailure(response?.data, response?.headers, response?.status)
+            if (failure) return settleModelFailure(roleId, row, null, response?.data, failure)
             markFailed(roleId, row)
             return null
         } finally {
@@ -390,6 +452,7 @@ export const useCompanionStore = defineStore('companion', () => {
      * Streaming send. The reply grows in place while the server writes it.
      *
      * Resolves to one of:
+     *   { modelError, partial, clientMsgId, ... }  a terminal model failure
      *   { roleMessage, ... }   the settled exchange
      *   { unsupported: true }  the server has no stream endpoint — and therefore
      *                          did nothing; the only case where the caller may
@@ -432,6 +495,8 @@ export const useCompanionStore = defineStore('companion', () => {
         if (isCurrent(roleId)) liveState.value = null
         let settled = null
         let serverError = false
+        let failure = null
+        let responseHeaders
 
         const handle = (frame) => {
             const event = parseStreamFrame(frame)
@@ -466,10 +531,10 @@ export const useCompanionStore = defineStore('companion', () => {
                     const at = messages.value.findIndex(m => m.id === row.id)
                     messages.value.splice(at < 0 ? messages.value.length : at, 0, event.data)
                 }
-            } else if (event.name === 'done') {
+            } else if (event.name === 'done' || event.name === 'error') {
                 settled = event.data
-            } else if (event.name === 'error') {
-                serverError = true
+                failure = modelFailure(settled, responseHeaders)
+                serverError = event.name === 'error'
             }
         }
 
@@ -484,12 +549,16 @@ export const useCompanionStore = defineStore('companion', () => {
                 }
             )
 
-            // No such endpoint: the request never reached the conversation code.
-            if (response.status === 404 || response.status === 405) {
-                if (isCurrent(roleId)) dropRows(live.id)
-                return { unsupported: true, clientMsgId: clientId }
-            }
-            if (!response.ok || !response.body) {
+            responseHeaders = response.headers
+            if (!response.ok || response.headers.get('content-type')?.includes('json')) {
+                const body = await response.json().catch(() => null)
+                abort.signal.throwIfAborted()
+                const error = modelFailure(body, response.headers, response.status)
+                if (error) return settleModelFailure(roleId, row, live, body, error)
+                if (missingStreamRoute(response, body)) {
+                    if (isCurrent(roleId)) dropRows(live.id)
+                    return { unsupported: true, clientMsgId: clientId }
+                }
                 markFailed(roleId, row, live.id)
                 return null
             }
@@ -497,17 +566,23 @@ export const useCompanionStore = defineStore('companion', () => {
             const reader = response.body.getReader()
             const decoder = new TextDecoder('utf-8')
             let buffer = ''
-            while (true) {
-                const { value, done } = await reader.read()
-                if (done) break
-                buffer += decoder.decode(value, { stream: true })
-                let frameEnd
-                while ((frameEnd = buffer.indexOf('\n\n')) !== -1) {
-                    handle(buffer.slice(0, frameEnd))
-                    buffer = buffer.slice(frameEnd + 2)
+            try {
+                while (!settled && !serverError) {
+                    const { value, done } = await reader.read()
+                    abort.signal.throwIfAborted()
+                    if (done) break
+                    buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+                    let frameEnd
+                    while (!settled && !serverError && (frameEnd = buffer.indexOf('\n\n')) !== -1) {
+                        handle(buffer.slice(0, frameEnd))
+                        buffer = buffer.slice(frameEnd + 2)
+                    }
                 }
+                if (!settled && !serverError && buffer.trim()) handle(buffer)
+            } finally {
+                await reader.cancel().catch(() => {})
+                reader.releaseLock()
             }
-            if (buffer.trim()) handle(buffer)
         } catch (error) {
             if (abort.signal.aborted) {
                 // Stopped by the user. Keep what she had said so far on screen.
@@ -540,6 +615,7 @@ export const useCompanionStore = defineStore('companion', () => {
             }
         }
 
+        if (failure) return settleModelFailure(roleId, row, live, settled, failure)
         if (serverError || !settled?.roleMessage) {
             markFailed(roleId, row, live.id)
             return null

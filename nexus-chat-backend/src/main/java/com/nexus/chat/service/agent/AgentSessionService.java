@@ -97,7 +97,7 @@ public class AgentSessionService {
                 .toList();
     }
 
-    private AgentSession mustOwn(Long userId, String sessionId) {
+    public AgentSession mustOwn(Long userId, String sessionId) {
         AgentSession entity = repository.findBySessionId(sessionId)
                 .orElseThrow(() -> new AgentException(AgentErrorCode.AGENT_SESSION_40401, "session not found"));
         if (!entity.getUserId().equals(userId)) {

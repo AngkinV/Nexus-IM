@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import { createPinia, setActivePinia } from 'pinia'
+import { watch } from 'vue'
 
 let server, useCompanionStore, api, store
 const originalStorage = globalThis.localStorage
@@ -207,6 +208,94 @@ test('failed reopening keeps the conversation removed', async () => {
   assert.equal(store.isRoleBusy(1), false)
 })
 
+const limited = { code: 'RATE_LIMITED', summary: 'Channel quota exhausted', retryAfterSeconds: 35 }
+const frame = (name, data) => `event: ${name}\r\ndata: ${JSON.stringify(data)}\r\n\r\n`
+
+test('typed terminal error retains streamed text and client id without accepting a fallback or resending', async t => {
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (_, options) => {
+    requests.push(JSON.parse(options.body))
+    const body = requests.length === 1
+      ? frame('delta', 'half a line') + frame('done', { userMessage: { id: 42, senderType: 'user', content: 'hello' }, modelError: limited, partial: true })
+      : frame('done', { userMessage: { id: 42, senderType: 'user', content: 'hello', clientMsgId: 'msg-1' }, roleMessage: { id: 43, senderType: 'role', content: 'finished' } })
+    return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } })
+  })
+  api.sendMessage = () => assert.fail('no plain resend')
+  const failure = await store.sendMessageStream(7, 1, 'hello', null, 'msg-1')
+  assert.deepEqual(failure.modelError, limited)
+  assert.equal(failure.clientMsgId, 'msg-1')
+  assert.equal(failure.partial, true)
+  assert.equal(requests.length, 1)
+  const row = store.messages.find(m => m.senderType === 'user')
+  assert.equal(row.clientMsgId, 'msg-1')
+  assert.deepEqual(row.modelError, limited)
+  assert.equal(row.failed, true)
+  assert.equal(store.messages.at(-1).content, 'half a line')
+  assert.equal(store.messages.at(-1).live, false)
+  assert.equal(store.isSending, false)
+  await store.sendMessageStream(7, 1, row.content, null, row.clientMsgId)
+  assert.deepEqual(requests.map(r => r.clientMsgId), ['msg-1', 'msg-1'])
+  assert.deepEqual(store.messages.slice(1).map(m => m.content), ['hello', 'finished'])
+})
+
+test('a typed error outranks a roleMessage in both plain and stream exchanges', async t => {
+  const result = { modelError: limited, partial: true, roleMessage: { id: 24, senderType: 'role', content: 'saved partial' } }
+  api.sendMessage = async () => ({ data: result })
+  const plain = await store.sendMessage(7, 1, 'a', null, 'plain')
+  assert.deepEqual(plain.modelError, limited)
+  assert.ok(store.messages.find(m => m.clientMsgId === 'plain' && m.failed))
+  assert.equal(store.messages.at(-1).content, 'saved partial')
+  t.mock.method(globalThis, 'fetch', async () => new Response(frame('error', { modelError: limited })))
+  const streamed = await store.sendMessageStream(7, 1, 'b', null, 'stream')
+  assert.deepEqual(streamed.modelError, limited)
+  assert.equal(streamed.clientMsgId, 'stream')
+})
+
+test('404/405 model failures and ambiguous errors never authorize a plain resend; a missing internal route does', async t => {
+  const path = '/api/companion/messages/stream'
+  let response
+  t.mock.method(globalThis, 'fetch', async () => response)
+  for (const status of [404, 405]) {
+    response = Response.json({ modelError: { code: 'MODEL_NOT_FOUND', summary: 'Unknown upstream alias' } }, { status, headers: { 'Retry-After': '12' } })
+    const result = await store.sendMessageStream(7, 1, 'hello')
+    assert.equal(result.modelError.code, 'MODEL_NOT_FOUND')
+    assert.equal(result.modelError.retryAfterSeconds, 12)
+    assert.ok(!result.unsupported)
+    response = Response.json({ status, message: 'model unavailable' }, { status })
+    assert.ok(!(await store.sendMessageStream(7, 1, 'hello'))?.unsupported)
+    const routeError = { path, status, error: status === 404 ? 'Not Found' : 'Method Not Allowed' }
+    response = Response.json(routeError, { status })
+    assert.ok(!(await store.sendMessageStream(7, 1, 'hello'))?.unsupported)
+    response = Response.json({ ...routeError, message: status === 404 ? `No static resource ${path.slice(1)}.` : "Request method 'POST' is not supported" }, { status })
+    const missing = await store.sendMessageStream(7, 1, 'hello', null, `missing-${status}`)
+    assert.deepEqual(missing, { unsupported: true, clientMsgId: `missing-${status}` })
+  }
+})
+
+test('cancelling a live turn is not a model failure and retains its partial text', async t => {
+  let signal
+  const started = deferred()
+  t.mock.method(globalThis, 'fetch', async (_, options) => {
+    signal = options.signal
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(frame('delta', 'already spoken')))
+        signal.addEventListener('abort', () => controller.error(signal.reason))
+      }
+    }))
+  })
+  const unwatch = watch(() => store.speaking, speaking => { if (speaking) started.resolve() }, { flush: 'sync' })
+  const request = store.sendMessageStream(7, 1, 'hello', null, 'stop-1')
+  await started.promise
+  unwatch()
+  store.stopStreaming()
+  assert.deepEqual(await request, { stopped: true, clientMsgId: 'stop-1' })
+  assert.equal(store.messages.at(-1).content, 'already spoken')
+  assert.equal(store.messages.at(-1).stopped, true)
+  assert.ok(!store.messages.at(-1).modelError)
+  assert.equal(store.isSending, false)
+})
+
 test('opening and closing sessions block clear and release their busy state', async () => {
   const opening = deferred()
   api.openSession = () => opening.promise
@@ -225,4 +314,37 @@ test('opening and closing sessions block clear and release their busy state', as
   await close
   assert.equal(store.activeSession.id, 42)
   assert.equal(store.isRoleBusy(1), false)
+})
+
+test('a stored half reply is shown as partial and its user line can be sent again', async t => {
+  const asked = { id: 42, senderType: 'user', content: 'hello', clientMsgId: 'msg-1' }
+  api.getConversation = async () => ({ data: [asked, { id: 43, senderType: 'role', content: 'half a', partial: true }] })
+  await store.fetchConversation(7, 1)
+  assert.equal(store.messages[0].partialId, 43)
+  assert.equal(store.messages[1].partial, true)
+  t.mock.method(globalThis, 'fetch', async () => new Response(
+    frame('done', { userMessage: asked, roleMessage: { id: 44, senderType: 'role', content: 'finished' } }),
+    { headers: { 'Content-Type': 'text/event-stream' } }))
+  await store.sendMessageStream(7, 1, 'hello', null, 'msg-1')
+  assert.deepEqual(store.messages.map(m => m.id), [42, 44])
+
+  // Without the field nothing is marked, whatever the order of the rows.
+  const plain = [asked, { id: 43, senderType: 'role', content: 'whole' }]
+  api.getConversation = async () => ({ data: plain })
+  await store.fetchConversation(7, 1)
+  assert.deepEqual(store.messages, plain)
+  api.getConversation = async () => ({ data: [{ id: 43, senderType: 'role', content: 'half a', partial: true }, asked] })
+  await store.fetchConversation(7, 1)
+  assert.equal(store.messages.some(m => 'partialId' in m), false)
+})
+
+test('a rate-limited line carries the wait the backend gave, and none otherwise', async t => {
+  let error = limited
+  t.mock.method(globalThis, 'fetch', async () => new Response(frame('error', { modelError: error })))
+  await store.sendMessageStream(7, 1, 'a', null, 'wait')
+  const waiting = store.messages.find(m => m.clientMsgId === 'wait').retryAt - Date.now()
+  assert.ok(waiting > 34000 && waiting <= 35000)
+  error = { code: 'RATE_LIMIT', summary: 'slow down' }
+  await store.sendMessageStream(7, 1, 'b', null, 'free')
+  assert.equal(store.messages.find(m => m.clientMsgId === 'free').retryAt, null)
 })

@@ -1,5 +1,6 @@
 package com.nexus.chat.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -19,8 +20,10 @@ public class CompanionChatResponse {
     private String sceneKey;
     /** Which memories were put in front of the model for this reply. */
     private java.util.List<Long> memoryIds;
-    /** True when the client aborted mid-reply and only the part streamed so far was kept. */
+    /** A reader abort or a model failure interrupted this reply. */
     private Boolean partial;
+    /** Safe structured gateway error, separate from the role's words. */
+    private JsonNode modelError;
 
     public CompanionChatResponse(CompanionMessageDTO userMessage, CompanionMessageDTO roleMessage,
                                  Boolean fallback, CompanionStatusDTO status) {

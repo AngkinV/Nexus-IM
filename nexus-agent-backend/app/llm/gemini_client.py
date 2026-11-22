@@ -1,19 +1,62 @@
-"""Google Gemini adapter.
+"""Google Gemini adapter (google-genai SDK).
 
-Uses the google-generativeai SDK. Like Anthropic, Gemini has its own message and
-tool-call shape; this adapter normalizes both directions.
-
-Requires: ``pip install google-generativeai``  (soft dependency).
+Each call builds its own client: the previous SDK configured the API key and
+endpoint process-wide, so two users' concurrent requests could cross over.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 from typing import Any, AsyncIterator
 
-from .base import LLMChunk, LLMClient, LLMToolCall, LLMUsage, ProviderConfig
+from .base import LLMChunk, LLMClient, LLMError, LLMToolCall, LLMUsage, ModelTransport, classify_error, error_chunks
 
 log = logging.getLogger(__name__)
+
+_FINISH = {"STOP": "stop", "MAX_TOKENS": "length", "SAFETY": "content_filter", "RECITATION": "content_filter",
+           "BLOCKLIST": "content_filter", "PROHIBITED_CONTENT": "content_filter", "SPII": "content_filter"}
+
+
+def _to_gemini(messages: list[dict[str, Any]], types: Any) -> tuple[str, list[Any]]:
+    system: list[str] = []
+    contents: list[Any] = []
+    for m in messages:
+        role = m.get("role")
+        text = m.get("content") or ""
+        if role == "system":
+            system.append(text)
+        elif role == "user":
+            contents.append(types.Content(role="user", parts=[types.Part(text=text)]))
+        elif role == "assistant":
+            parts = [types.Part(text=text)] if text else []
+            for call in m.get("tool_calls") or []:
+                function = call["function"]
+                signature = call.get("signature")
+                parts.append(types.Part(
+                    function_call=types.FunctionCall(
+                        name=function["name"], args=json.loads(function["arguments"] or "{}")),
+                    # Gemini rejects a replayed function call that lost its thought signature.
+                    thought_signature=base64.b64decode(signature) if signature else None,
+                ))
+            if parts:
+                contents.append(types.Content(role="model", parts=parts))
+        elif role == "tool":
+            try:
+                response = json.loads(text)
+            except ValueError:
+                response = None
+            if not isinstance(response, dict):
+                response = {"content": text}
+            part = types.Part(function_response=types.FunctionResponse(
+                name=m.get("name", "unknown"), response=response))
+            previous = contents[-1] if contents else None
+            if previous is not None and previous.role == "user" and previous.parts[0].function_response:
+                previous.parts.append(part)
+            else:
+                contents.append(types.Content(role="user", parts=[part]))
+    return "\n\n".join(system), contents
 
 
 class GeminiClient(LLMClient):
@@ -28,116 +71,105 @@ class GeminiClient(LLMClient):
         timeout_sec: int = 30,
     ) -> AsyncIterator[LLMChunk]:
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
         except ImportError:
-            yield LLMChunk(kind="error", text="未安装 google-generativeai，请运行 pip install google-generativeai")
-            yield LLMChunk(kind="finish", finish_reason="error")
+            for chunk in error_chunks(LLMError("DEPENDENCY", "google-genai SDK is not installed")):
+                yield chunk
             return
 
-        # cfg.base_url (normalized to the API root by the Java gateway) must be
-        # honored, otherwise a proxy endpoint silently falls back to Google.
-        if self.cfg.base_url:
-            genai.configure(
-                api_key=self.cfg.api_key,
-                client_options={"api_endpoint": self.cfg.base_url},
-            )
-        else:
-            genai.configure(api_key=self.cfg.api_key)
-
-        # Translate messages → Gemini's "contents" + system_instruction
-        system_text = "\n\n".join(m.get("content", "") for m in messages if m.get("role") == "system")
-        contents: list[dict[str, Any]] = []
-        for m in messages:
-            role = m.get("role")
-            if role == "system":
-                continue
-            if role == "user":
-                contents.append({"role": "user", "parts": [{"text": m.get("content", "")}]})
-            elif role == "assistant":
-                contents.append({"role": "model", "parts": [{"text": m.get("content", "")}]})
-            elif role == "tool":
-                contents.append({
-                    "role": "function",
-                    "parts": [{
-                        "function_response": {
-                            "name": m.get("name", "unknown"),
-                            "response": {"content": m.get("content", "")},
-                        }
-                    }],
-                })
-
-        gemini_tools = None
+        system, contents = _to_gemini(messages, types)
+        config: dict[str, Any] = {"temperature": temperature, "max_output_tokens": max_tokens}
+        if system:
+            config["system_instruction"] = system
         if tools:
-            gemini_tools = [{
-                "function_declarations": [
-                    {
-                        "name": t["function"]["name"],
-                        "description": t["function"].get("description", ""),
-                        "parameters": t["function"].get("parameters", {"type": "object", "properties": {}}),
-                    }
-                    for t in tools
-                ]
-            }]
+            config["tools"] = [types.Tool(function_declarations=[
+                types.FunctionDeclaration(
+                    name=t["function"]["name"],
+                    description=t["function"].get("description", ""),
+                    parameters_json_schema=t["function"].get("parameters", {"type": "object", "properties": {}}),
+                ) for t in tools
+            ])]
+            config["tool_config"] = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(
+                mode="ANY" if tool_choice == "required" else "AUTO"))
+            # The agent graph executes tools; the SDK must not call anything itself.
+            config["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
 
-        model = genai.GenerativeModel(
-            model_name=self.cfg.model,
-            system_instruction=system_text or None,
-            tools=gemini_tools,
-            generation_config={
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
-            },
-        )
-
+        client = genai.Client(api_key=self.cfg.api_key, http_options=types.HttpOptions(
+            # cfg.base_url (normalized to the API root by the Java gateway) must be
+            # honored, otherwise a proxy endpoint silently falls back to Google.
+            base_url=self.cfg.base_url or None,
+            client_args={'trust_env': False, 'follow_redirects': False},
+            async_client_args={'transport': ModelTransport(), 'follow_redirects': False, 'trust_env': False},
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ))
+        stream = None
+        calls: list[LLMToolCall] = []
+        usage: Any = None
+        finish_name: str | None = None
+        error: LLMError | None = None
         try:
-            response = await asyncio.wait_for(
-                model.generate_content_async(contents),
-                timeout=timeout_sec,
-            )
-        except asyncio.TimeoutError:
-            yield LLMChunk(kind="error", text=f"model call timeout after {timeout_sec}s")
-            yield LLMChunk(kind="finish", finish_reason="timeout")
+            try:
+                stream = await asyncio.wait_for(
+                    client.aio.models.generate_content_stream(
+                        model=self.cfg.model, contents=contents,
+                        config=types.GenerateContentConfig(**config)),
+                    timeout=timeout_sec,
+                )
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(stream.__anext__(), timeout=timeout_sec)
+                    except StopAsyncIteration:
+                        break
+                    if chunk.usage_metadata:
+                        usage = chunk.usage_metadata
+                    for candidate in chunk.candidates or []:
+                        if candidate.finish_reason:
+                            finish_name = getattr(candidate.finish_reason, "name", str(candidate.finish_reason))
+                        for part in (candidate.content.parts if candidate.content else None) or []:
+                            if part.function_call and part.function_call.name:
+                                call = part.function_call
+                                calls.append(LLMToolCall(
+                                    id=call.id or f"gem_{len(calls)}_{call.name}",
+                                    name=call.name,
+                                    arguments=dict(call.args or {}),
+                                    signature=(base64.b64encode(part.thought_signature).decode("ascii")
+                                               if part.thought_signature else None),
+                                ))
+                            elif part.text:
+                                yield LLMChunk(kind="reasoning" if part.thought else "text", text=part.text)
+            except asyncio.TimeoutError:
+                error = LLMError("TIMEOUT", f"model stream idle timeout after {timeout_sec}s")
+            except Exception as exc:
+                error = classify_error(exc, self.cfg)
+                log.warning("Gemini stream failed: code=%s http=%s", error.code, error.http_status)
+        finally:
+            if stream is not None:
+                await stream.aclose()
+            try:
+                await client.aio.aclose()
+            finally:
+                client.close()
+
+        if error is None and finish_name is None:
+            error = LLMError("INCOMPLETE", "model stream ended without a finish reason")
+        elif error is None and finish_name not in _FINISH:
+            error = LLMError("UPSTREAM", f"model stopped abnormally: {finish_name}", upstream_code=finish_name)
+
+        if usage is not None:
+            yield LLMChunk(kind="usage", usage=LLMUsage(
+                input_tokens=usage.prompt_token_count or 0,
+                output_tokens=usage.candidates_token_count or 0,
+                total_tokens=usage.total_token_count or 0,
+            ))
+        if error is not None:
+            for chunk in error_chunks(error):
+                yield chunk
             return
-        except Exception as exc:
-            log.warning("gemini call failed: %s", exc)
-            yield LLMChunk(kind="error", text=f"Gemini 调用失败：{exc}")
-            yield LLMChunk(kind="finish", finish_reason="error")
-            return
-
-        had_tool = False
-        text_parts: list[str] = []
-        try:
-            for cand in response.candidates or []:
-                for part in cand.content.parts:
-                    fn_call = getattr(part, "function_call", None)
-                    if fn_call and fn_call.name:
-                        had_tool = True
-                        yield LLMChunk(
-                            kind="tool_call",
-                            tool_call=LLMToolCall(
-                                id=f"gem_{fn_call.name}",
-                                name=fn_call.name,
-                                arguments=dict(fn_call.args or {}),
-                            ),
-                            raw=fn_call,
-                        )
-                    elif getattr(part, "text", None):
-                        text_parts.append(part.text)
-        except Exception as exc:
-            log.warning("gemini response parse failed: %s", exc)
-
-        if not had_tool and text_parts:
-            yield LLMChunk(kind="text", text="".join(text_parts))
-
-        usage = getattr(response, "usage_metadata", None)
-        if usage:
-            yield LLMChunk(
-                kind="usage",
-                usage=LLMUsage(
-                    input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
-                    output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
-                    total_tokens=getattr(usage, "total_token_count", 0) or 0,
-                ),
-            )
-
-        yield LLMChunk(kind="finish", finish_reason="stop")
+        finish = _FINISH[finish_name]
+        if finish == "stop":
+            for call in calls:
+                yield LLMChunk(kind="tool_call", tool_call=call)
+            if calls:
+                finish = "tool_calls"
+        yield LLMChunk(kind="finish", finish_reason=finish)

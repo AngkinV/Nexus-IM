@@ -19,6 +19,22 @@ _SANDBOX = tempfile.mkdtemp(prefix="nexus-agent-tests-")
 os.chdir(_SANDBOX)
 atexit.register(shutil.rmtree, _SANDBOX, ignore_errors=True)
 
+# Tests never reach the network; a developer's proxy settings must not change
+# how the HTTP clients under test are built.
+for _name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+    os.environ.pop(_name, None)
+    os.environ.pop(_name.lower(), None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_tool_catalog():
+    """The tool catalog is cached per process; one test's fake server must not leak into the next."""
+    from app import mcp_tools
+
+    mcp_tools.reset_catalog()
+    yield
+    mcp_tools.reset_catalog()
+
 
 def pytest_collection_modifyitems(config, items):
     for item in items:

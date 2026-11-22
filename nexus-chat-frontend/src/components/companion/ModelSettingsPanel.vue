@@ -12,136 +12,38 @@
           <h3>{{ $t('companion.modelSettings.title') }}</h3>
           <span class="ms-version">v2.7</span>
         </div>
-        <button class="ms-icon-btn" type="button" :title="$t('common.close')" @click="close">
+        <button class="ms-icon-btn" type="button" :aria-label="$t('common.close')" :title="$t('common.close')" @click="close">
           <span class="material-symbols-outlined">close</span>
         </button>
       </header>
 
       <div class="ms-body">
-        <!-- ── Model list ─────────────────────────────────────────────── -->
         <section class="ms-section">
           <div class="ms-section-head">
-            <span class="ms-label">
-              <span class="material-symbols-outlined">smart_toy</span>
-              <span>{{ $t('companion.modelSettings.baseModel') }}</span>
-            </span>
-            <span class="ms-hint">{{ $t('companion.modelSettings.hotReload') }}</span>
+            <span class="ms-label">{{ $t('companion.modelSettings.channel') }}</span>
+            <button class="ms-btn" type="button" @click="accountSettings = true">{{ $t('agent.providers.manage') }}</button>
           </div>
-
-          <div class="ms-cards">
-            <button
-              v-for="option in modelOptions"
-              :key="option.id"
-              class="ms-card"
-              :class="{ 'is-active': option.id === selectedProviderId }"
-              type="button"
-              @click="selectedProviderId = option.id"
-            >
-              <div class="ms-card-main">
-                <div class="ms-card-icon" :class="{ 'is-active': option.id === selectedProviderId }">
-                  <span class="material-symbols-outlined">{{ option.icon }}</span>
-                </div>
-                <div class="ms-card-text">
-                  <div class="ms-card-title">
-                    <span class="ms-card-name">{{ option.name }}</span>
-                    <span v-if="option.tag" class="ms-tag">{{ option.tag }}</span>
-                  </div>
-                  <p class="ms-card-desc">{{ option.desc }}</p>
-                  <div class="ms-card-meta">
-                    <span v-if="option.model">{{ option.model }}</span>
-                    <span v-if="option.model && option.kind">·</span>
-                    <span v-if="option.kind">{{ option.kind }}</span>
-                  </div>
-                </div>
-              </div>
-              <div class="ms-card-state">
-                <span class="ms-dot" :class="{ 'is-on': option.id === selectedProviderId }"></span>
-              </div>
+          <div class="ms-cards" role="group" :aria-label="$t('companion.modelSettings.channel')">
+            <button v-for="p in providersStore.chatProviders" :key="p.id" type="button" class="ms-card"
+              :class="{ 'is-active': p.id === draft.credentialId }" :aria-pressed="p.id === draft.credentialId"
+              :disabled="busy" @click="chooseChannel(p.id)">
+              <span class="ms-card-title">
+                <span class="ms-card-icon" :class="{ 'is-active': p.id === draft.credentialId }" aria-hidden="true"><span class="material-symbols-outlined">smart_toy</span></span>
+                <span class="ms-card-name">{{ p.displayName || p.provider }}</span>
+                <span v-if="p.isDefault" class="ms-tag">{{ $t('agent.providers.default') }}</span>
+              </span>
+              <span class="ms-card-state" aria-hidden="true"><span class="ms-dot" :class="{ 'is-on': p.id === draft.credentialId }"></span></span>
             </button>
-
-            <p v-if="!modelOptions.length" class="ms-empty">
-              {{ $t('companion.modelSettings.noProvider') }}
-            </p>
+            <p v-if="!loading && !providersStore.chatProviders.length" class="ms-empty">{{ $t('companion.modelSettings.noProvider') }}</p>
           </div>
         </section>
 
-        <!-- ── Endpoint config ────────────────────────────────────────── -->
         <section class="ms-section">
-          <div class="ms-section-head">
-            <span class="ms-label">
-              <span class="material-symbols-outlined">settings_ethernet</span>
-              <span>{{ $t('companion.modelSettings.endpointConfig') }}</span>
-            </span>
-            <button class="ms-link" type="button" @click="endpointOpen = !endpointOpen">
-              <span>{{ endpointOpen ? $t('companion.modelSettings.collapse') : $t('companion.modelSettings.expand') }}</span>
-              <span class="material-symbols-outlined">{{ endpointOpen ? 'expand_less' : 'expand_more' }}</span>
-            </button>
-          </div>
-
-          <div v-if="endpointOpen" class="ms-endpoint">
-            <!-- Base URL + ping -->
-            <div class="ms-field">
-              <div class="ms-field-head">
-                <label>
-                  <span class="material-symbols-outlined">link</span>
-                  <span>{{ $t('companion.modelSettings.baseUrl') }}</span>
-                </label>
-                <span class="ms-mono ms-muted">{{ pingLabel }}</span>
-              </div>
-              <div class="ms-row">
-                <input v-model="endpoint" class="ms-input" type="text" placeholder="https://api.example.com/v1" />
-                <button class="ms-btn" type="button" :disabled="testing" @click="testConnection">
-                  <span class="material-symbols-outlined" :class="{ 'ms-spin': testing }">
-                    {{ testing ? 'progress_activity' : 'network_ping' }}
-                  </span>
-                  <span>{{ testing ? $t('companion.modelSettings.testing') : $t('companion.modelSettings.test') }}</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- API key -->
-            <div class="ms-field">
-              <div class="ms-field-head">
-                <label>
-                  <span class="material-symbols-outlined">key</span>
-                  <span>{{ $t('companion.modelSettings.apiKey') }}</span>
-                </label>
-                <span class="ms-mono ms-muted">
-                  {{ hasStoredKey ? $t('companion.modelSettings.keyStored') : $t('companion.modelSettings.keyOptional') }}
-                </span>
-              </div>
-              <div class="ms-row ms-row--tight">
-                <input
-                  v-model="apiKey"
-                  class="ms-input"
-                  :type="keyVisible ? 'text' : 'password'"
-                  :placeholder="$t('companion.modelSettings.apiKeyPlaceholder')"
-                  autocomplete="off"
-                />
-                <button class="ms-icon-btn" type="button" @click="keyVisible = !keyVisible">
-                  <span class="material-symbols-outlined">{{ keyVisible ? 'visibility_off' : 'visibility' }}</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Model identifier -->
-            <div class="ms-field">
-              <div class="ms-field-head">
-                <label>
-                  <span class="material-symbols-outlined">developer_board</span>
-                  <span>{{ $t('companion.modelSettings.modelId') }}</span>
-                </label>
-                <span class="ms-mono ms-muted">{{ $t('companion.modelSettings.modelIdHint') }}</span>
-              </div>
-              <div class="ms-row">
-                <input v-model="modelName" class="ms-input" type="text" placeholder="gpt-4o-mini" />
-                <select v-model="modelName" class="ms-select">
-                  <option value="" disabled>{{ $t('companion.modelSettings.presets') }}</option>
-                  <option v-for="preset in presets" :key="preset.value" :value="preset.value">{{ preset.label }}</option>
-                </select>
-              </div>
-            </div>
-          </div>
+          <span class="ms-label">{{ $t('companion.modelSettings.modelId') }}</span>
+          <ProviderModelPicker v-model="draft.modelName" :provider-id="channel?.id" :label="$t('companion.modelSettings.modelId')"
+            :disabled="busy || !channel" :unavailable-hint="$t('companion.modelSettings.chooseChannel')" />
+          <p v-if="!draft.modelName && channel?.defaultModel" class="ms-field-note">{{ $t('companion.modelSettings.inheritModel', { model: channel.defaultModel }) }}</p>
+          <label class="ms-slider-label"><input v-model="draft.enabled" type="checkbox" :disabled="busy" /> {{ $t('companion.modelSettings.enableBinding') }}</label>
         </section>
 
         <!-- ── Inference dynamics ─────────────────────────────────────── -->
@@ -160,9 +62,9 @@
                 <span class="material-symbols-outlined">thermostat</span>
                 <span>{{ $t('companion.modelSettings.temperature') }}</span>
               </span>
-              <span class="ms-mono ms-accent">{{ temperature.toFixed(2) }}</span>
+              <span class="ms-mono ms-accent">{{ draft.temperature.toFixed(2) }}</span>
             </div>
-            <input v-model.number="temperature" type="range" min="0.1" max="1.5" step="0.05" />
+            <input v-model.number="draft.temperature" :aria-label="$t('companion.modelSettings.temperature')" :disabled="busy" type="range" min="0.1" max="1.5" step="0.05" />
             <div class="ms-slider-scale">
               <span>{{ $t('companion.modelSettings.tempLow') }}</span>
               <span>{{ $t('companion.modelSettings.tempMid') }}</span>
@@ -176,9 +78,9 @@
                 <span class="material-symbols-outlined">shield_lock</span>
                 <span>{{ $t('companion.modelSettings.personaLock') }}</span>
               </span>
-              <span class="ms-mono ms-accent">{{ personaLock }}%</span>
+              <span class="ms-mono ms-accent">{{ draft.personaLock }}%</span>
             </div>
-            <input v-model.number="personaLock" type="range" min="50" max="100" step="1" />
+            <input v-model.number="draft.personaLock" :aria-label="$t('companion.modelSettings.personaLock')" :disabled="busy" type="range" min="50" max="100" step="1" />
             <div class="ms-slider-scale">
               <span>{{ $t('companion.modelSettings.lockLow') }}</span>
               <span>{{ $t('companion.modelSettings.lockMid') }}</span>
@@ -194,7 +96,8 @@
               </span>
               <p class="ms-field-note">{{ $t('companion.modelSettings.contextNote') }}</p>
             </div>
-            <select v-model.number="contextHorizon" class="ms-select">
+            <select v-model.number="draft.contextHorizon" class="ms-select" :aria-label="$t('companion.modelSettings.contextHorizon')" :disabled="busy">
+              <option v-if="![128000, 64000, 32000].includes(draft.contextHorizon)" :value="draft.contextHorizon">{{ draft.contextHorizon }}</option>
               <option :value="128000">{{ $t('companion.modelSettings.horizon128') }}</option>
               <option :value="64000">{{ $t('companion.modelSettings.horizon64') }}</option>
               <option :value="32000">{{ $t('companion.modelSettings.horizon32') }}</option>
@@ -203,33 +106,42 @@
         </section>
 
         <!-- Status: what the channel actually is right now. -->
-        <p v-if="statusNote" class="ms-status" :class="{ 'is-bad': statusBad }">{{ statusNote }}</p>
+        <p v-if="statusNote" role="status" class="ms-status" :class="{ 'is-bad': !status?.usable }">{{ statusNote }}</p>
+        <div class="ms-row">
+          <button class="ms-btn" type="button" :disabled="!canTest" :title="$t('agent.providers.testHint')" @click="testConnection">
+            {{ $t(testing ? 'companion.modelSettings.testing' : 'agent.providers.test') }}
+          </button>
+          <span class="ms-field-note" role="status">{{ dirty ? $t('agent.providers.testHint') : probeNote }}</span>
+        </div>
       </div>
 
       <footer class="ms-foot">
-        <button class="ms-btn ms-btn--ghost" type="button" @click="resetDefaults">
+        <button class="ms-btn ms-btn--ghost" type="button" :disabled="busy" @click="Object.assign(draft, samplingDefaults)">
           <span class="material-symbols-outlined">restart_alt</span>
           <span>{{ $t('companion.modelSettings.reset') }}</span>
         </button>
         <div class="ms-foot-right">
           <button class="ms-btn" type="button" @click="close">{{ $t('common.cancel') }}</button>
-          <button class="ms-btn ms-btn--primary" type="button" :disabled="saving" @click="save">
+          <button class="ms-btn ms-btn--primary" type="button" :disabled="!canSave" @click="save">
             <span class="material-symbols-outlined">check</span>
-            <span>{{ saving ? $t('common.saving') : $t('companion.modelSettings.saveApply') }}</span>
+            <span>{{ saving ? $t('common.loading') : $t('companion.modelSettings.saveApply') }}</span>
           </button>
         </div>
       </footer>
     </div>
   </div>
+  <AgentProviderSettings v-if="open" v-model:visible="accountSettings" />
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useCompanionStore } from '@/stores/companion'
 import { useAgentProvidersStore } from '@/stores/agentProviders'
 import { useUserStore } from '@/stores/user'
+import AgentProviderSettings from '@/components/agent/AgentProviderSettings.vue'
+import ProviderModelPicker from '@/components/agent/ProviderModelPicker.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false }
@@ -241,56 +153,37 @@ const companionStore = useCompanionStore()
 const providersStore = useAgentProvidersStore()
 const userStore = useUserStore()
 
-const selectedProviderId = ref(null)
-const endpoint = ref('')
-const apiKey = ref('')
-const keyVisible = ref(false)
-const modelName = ref('')
-const endpointOpen = ref(false)
-const temperature = ref(0.85)
-const personaLock = ref(92)
-const contextHorizon = ref(128000)
-const saving = ref(false)
-const testing = ref(false)
-const pingState = ref('idle') // idle | ok | fail
-const pingDetail = ref('')
+const accountSettings = ref(false)
+const samplingDefaults = { temperature: 0.85, personaLock: 92, contextHorizon: 128000 }
+function bindingFrom(s = {}) {
+  return {
+    credentialId: s.credentialId ?? null,
+    modelName: Object.hasOwn(s, 'explicitModelName') ? (s.explicitModelName || '') : (s.borrowed ? '' : s.modelName ?? ''), enabled: s.enabled ?? true,
+    temperature: s.temperature ?? samplingDefaults.temperature,
+    personaLock: s.personaLock ?? samplingDefaults.personaLock,
+    contextHorizon: s.contextHorizon ?? samplingDefaults.contextHorizon
+  }
+}
+const draft = ref(bindingFrom())
 const status = ref(null)
-
-const presets = computed(() => [
-  { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
-  { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
-  { value: 'deepseek-chat', label: 'DeepSeek Chat' },
-  { value: 'qwen2.5:72b-instruct', label: 'Qwen 2.5 72B' }
-])
-
-// The account's chat providers, read live. No invented models: if the user has
-// configured none, the list is empty and says so.
-const modelOptions = computed(() =>
-  (providersStore.providers || [])
-    .filter((p) => !p.purpose || p.purpose === 'chat')
-    .map((p) => ({
-      id: p.id,
-      name: p.displayName || p.provider,
-      icon: 'smart_toy',
-      tag: p.isDefault ? t('companion.modelSettings.defaultTag') : '',
-      desc: p.hasApiKey ? t('companion.modelSettings.providerReady') : t('companion.modelSettings.providerNoKey'),
-      model: p.defaultModel || '',
-      kind: p.baseUrl || ''
-    }))
-)
-
-const hasStoredKey = computed(() => !!status.value?.hasApiKey)
-
-const pingLabel = computed(() => {
-  if (testing.value) return t('companion.modelSettings.testing')
-  if (pingState.value === 'ok') return t('companion.modelSettings.pingOk')
-  if (pingState.value === 'fail') return t('companion.modelSettings.pingFail')
-  return t('companion.modelSettings.pingIdle')
-})
+const original = ref(null)
+const probeNote = ref('')
+const loading = ref(false), saving = ref(false), testing = ref(false)
+const busy = computed(() => loading.value || saving.value || testing.value)
+const channel = computed(() => providersStore.chatProviders.find(p => p.id === draft.value.credentialId))
+const dirty = computed(() => !!original.value && Object.keys(original.value).some(k => draft.value[k] !== original.value[k]))
+const effectiveModel = computed(() => draft.value.modelName.trim() || channel.value?.defaultModel || '')
+const incompatible = computed(() => providersStore.getModelsForProvider(channel.value?.id)
+  .find(m => m.id === effectiveModel.value)?.chat === false)
+const canSave = computed(() => !!status.value && !busy.value && channel.value && effectiveModel.value && !incompatible.value)
+const canTest = computed(() => canSave.value && !dirty.value && draft.value.enabled && status.value.usable)
+let generation = 0
 
 const statusNote = computed(() => {
   const s = status.value
-  if (!s) return ''
+  if (loading.value) return t('common.loading')
+  if (!s) return t('companion.modelSettings.missingUnknown')
+  if (s.enabled === false) return t('common.disabled')
   if (s.usable) {
     return s.borrowed
       ? t('companion.modelSettings.usingDefault', { model: s.modelName || '—' })
@@ -298,136 +191,81 @@ const statusNote = computed(() => {
   }
   const map = {
     no_binding: t('companion.modelSettings.missingBinding'),
+    no_model: t('companion.modelSettings.noModel'),
     no_endpoint: t('companion.modelSettings.missingEndpoint'),
     no_credential: t('companion.modelSettings.missingCredential'),
-    no_api_key: t('companion.modelSettings.missingKey')
+    no_api_key: t('companion.modelSettings.missingKey'),
+    endpoint_mismatch: t('modelError.endpoint_mismatch'),
+    no_provider: t('modelError.no_provider'),
+    unreadable_api_key: t('modelError.unreadable_api_key')
   }
   return map[s.missing] || t('companion.modelSettings.missingUnknown')
 })
 
-const statusBad = computed(() => !!status.value && !status.value.usable)
-
-function close() {
-  emit('update:open', false)
+function chooseChannel(id) {
+  if (id === draft.value.credentialId) return
+  draft.value.credentialId = id
+  draft.value.modelName = ''
 }
 
-async function loadStatus() {
-  const roleId = companionStore.activeRoleId
-  const userId = userStore.currentUser?.id
-  if (!roleId || !userId) return
-  status.value = await companionStore.fetchModelChannel(userId, roleId)
-}
+function close() { emit('update:open', false) }
 
-onMounted(async () => {
-  await providersStore.fetchAll()
-  const def = providersStore.providers.find((p) => p.isDefault && (!p.purpose || p.purpose === 'chat'))
-    || providersStore.providers.find((p) => !p.purpose || p.purpose === 'chat')
-  if (def) {
-    selectedProviderId.value = def.id
-    endpoint.value = def.baseUrl || ''
-    modelName.value = def.defaultModel || ''
-  }
-  await loadStatus()
-})
-
-// Every time the panel opens, re-read the real channel — it may have changed
-// in the AI assistant's own settings.
-watch(() => props.open, async (isOpen) => {
-  if (!isOpen) return
-  pingState.value = 'idle'
-  pingDetail.value = ''
-  await providersStore.fetchAll()
-  await loadStatus()
-})
-
-watch(selectedProviderId, (id) => {
-  const p = providersStore.providers.find((x) => x.id === id)
-  if (!p) return
-  if (p.baseUrl) endpoint.value = p.baseUrl
-  if (p.defaultModel) modelName.value = p.defaultModel
-})
+// Never let a previous role, account, or opening of this panel populate a new draft.
+watch([() => props.open, () => userStore.currentUser?.id, () => companionStore.activeRoleId],
+  async ([open, userId, roleId], _, onCleanup) => {
+    const version = ++generation
+    onCleanup(() => { ++generation })
+    accountSettings.value = false
+    loading.value = saving.value = testing.value = false
+    probeNote.value = ''
+    status.value = original.value = null
+    draft.value = bindingFrom()
+    if (!open || !roleId || !userId) return
+    loading.value = true
+    const [description] = await Promise.all([companionStore.fetchModelChannel(userId, roleId), providersStore.fetchAll()])
+    if (version !== generation) return
+    status.value = description
+    if (description) {
+      draft.value = bindingFrom(description)
+      original.value = { ...draft.value }
+    }
+    loading.value = false
+  }, { immediate: true, flush: 'sync' })
 
 async function testConnection() {
-  const roleId = companionStore.activeRoleId
-  const userId = userStore.currentUser?.id
-  if (!roleId || !userId) return
+  if (!canTest.value) return
+  const version = generation
   testing.value = true
-  pingState.value = 'idle'
   try {
-    // Save first: the probe runs against stored state, so an unsaved URL would
-    // test the old one and lie.
-    await persistBinding()
-    const result = await companionStore.testModelChannel(userId, roleId)
-    if (result?.ok) {
-      pingState.value = 'ok'
-      pingDetail.value = result.url || ''
-    } else {
-      pingState.value = 'fail'
-      pingDetail.value = result?.error || result?.missing || ''
-    }
-    await loadStatus()
+    const result = await companionStore.testModelChannel(userStore.currentUser.id, companionStore.activeRoleId)
+    if (version !== generation) return
+    const error = result?.error || result?.modelError
+    probeNote.value = result?.ok ? t('companion.modelSettings.pingOk') : [
+      t('companion.modelSettings.pingFail'), error?.code, error?.summary || (typeof error === 'string' && error) || result?.missing,
+      error?.retryAfterSeconds != null && t('companion.session.retryAfter', { seconds: error.retryAfterSeconds })
+    ].filter(Boolean).join(' · ')
   } finally {
-    testing.value = false
+    if (version === generation) testing.value = false
   }
-}
-
-async function persistBinding() {
-  const roleId = companionStore.activeRoleId
-  const userId = userStore.currentUser?.id
-  if (!roleId || !userId) return
-  const provider = providersStore.providers.find((p) => p.id === selectedProviderId.value)
-  await companionStore.bindModel(userId, roleId, {
-    provider: provider?.provider || 'openai-compatible',
-    modelName: modelName.value.trim(),
-    endpoint: endpoint.value.trim(),
-    temperature: temperature.value,
-    personaLock: personaLock.value,
-    contextHorizon: contextHorizon.value
-  })
 }
 
 async function save() {
-  const roleId = companionStore.activeRoleId
-  const userId = userStore.currentUser?.id
-  if (!roleId || !userId) return
+  if (!canSave.value) return
+  const version = generation
   saving.value = true
   try {
-    // A key typed here is stored against the selected provider, so the tavern
-    // and the AI assistant share one credential.
-    if (apiKey.value.trim() && selectedProviderId.value) {
-      const provider = providersStore.providers.find((p) => p.id === selectedProviderId.value)
-      if (provider) {
-        // Same credential the AI assistant uses: upsert on (provider, purpose).
-        // A blank key here would clear it, so only the key is passed through.
-        await providersStore.upsert({
-          provider: provider.provider,
-          purpose: provider.purpose || 'chat',
-          displayName: provider.displayName,
-          baseUrl: provider.baseUrl,
-          defaultModel: provider.defaultModel,
-          apiKey: apiKey.value.trim(),
-          makeDefault: !!provider.isDefault
-        })
-      }
-      apiKey.value = ''
-      await providersStore.fetchAll()
-    }
-    await persistBinding()
-    await loadStatus()
+    await companionStore.bindModel(userStore.currentUser.id, companionStore.activeRoleId, {
+      ...draft.value, modelName: draft.value.modelName.trim()
+    })
+    if (version !== generation) return
     ElMessage.success(t('common.savedSuccess'))
     emit('saved')
     close()
   } catch (err) {
-    ElMessage.error(err?.message || t('common.operationFailed'))
+    if (version === generation) ElMessage.error(err?.response?.data?.message || err?.message || t('common.operationFailed'))
   } finally {
-    saving.value = false
+    if (version === generation) saving.value = false
   }
-}
-
-function resetDefaults() {
-  temperature.value = 0.85
-  personaLock.value = 92
-  contextHorizon.value = 128000
 }
 </script>
 

@@ -136,30 +136,8 @@
           <span class="material-symbols-outlined">key</span>
           <span>{{ $t('companion.modelCredential') }}</span>
         </div>
-        <div class="role-field">
-          <label>{{ $t('companion.apiKey') }}</label>
-          <input v-model="apiKey" class="role-input" type="password" placeholder="sk-..." autocomplete="off" />
-        </div>
-        <div class="role-field">
-          <label>{{ $t('companion.endpoint') }}</label>
-          <input v-model="endpoint" class="role-input" type="text" placeholder="https://api.example.com" />
-        </div>
-        <div class="role-field">
-          <label>{{ $t('companion.modelName') }}</label>
-          <input v-model="modelName" class="role-input" type="text" placeholder="gpt-3.5-turbo" />
-        </div>
-        <div class="role-actions">
-          <button class="role-btn role-btn--primary" type="button" @click="saveCredential">
-            {{ $t('companion.saveKey') }}
-          </button>
-          <button class="role-btn" type="button" @click="bindModel">
-            {{ $t('companion.bindModel') }}
-          </button>
-        </div>
-        <p v-if="modelStatus" class="role-help">
-          {{ $t('companion.keyStatus') }}: {{ modelStatus.status }}
-          <span v-if="modelStatus.maskedKey">({{ modelStatus.maskedKey }})</span>
-        </p>
+        <button class="role-btn" type="button" @click="modelPanelOpen = true">{{ $t('companion.modelSettings.trigger') }}</button>
+        <ModelSettingsPanel v-model:open="modelPanelOpen" />
       </section>
     </template>
   </div>
@@ -173,17 +151,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
 import { companionAPI } from '@/services/api'
+import ModelSettingsPanel from './ModelSettingsPanel.vue'
 
 const { t } = useI18n()
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
-const { roles, activeRoleId, activeRole, modelStatus } = storeToRefs(companionStore)
+const { roles, activeRoleId, activeRole } = storeToRefs(companionStore)
 
 const roleModelUrl = ref('')
 const roleModelType = ref('vrm')
-const apiKey = ref('')
-const endpoint = ref('')
-const modelName = ref('')
+const modelPanelOpen = ref(false)
 const localMotions = ref([])
 const uploadedModels = ref([])
 const activeMotionKey = ref('walk')
@@ -198,7 +175,7 @@ const userId = () => userStore.currentUser?.id
 onMounted(async () => {
   if (!userId()) return
   await companionStore.ensureInitialized(userId())
-  await Promise.all([loadMotions(), loadModels(), companionStore.fetchModelStatus(userId())])
+  await Promise.all([loadMotions(), loadModels()])
   syncRoleModel()
 })
 
@@ -376,25 +353,6 @@ async function removeMotion(motion) {
   }
 }
 
-async function saveCredential() {
-  if (!apiKey.value.trim()) return
-  await companionStore.saveCredential(userId(), {
-    provider: 'openai-compatible',
-    apiKey: apiKey.value.trim()
-  })
-  apiKey.value = ''
-  ElMessage.success(t('common.savedSuccess'))
-}
-
-async function bindModel() {
-  if (!activeRoleId.value) return
-  await companionStore.bindModel(userId(), activeRoleId.value, {
-    provider: 'openai-compatible',
-    modelName: modelName.value.trim(),
-    endpoint: endpoint.value.trim()
-  })
-  ElMessage.success(t('common.savedSuccess'))
-}
 </script>
 
 <style scoped>

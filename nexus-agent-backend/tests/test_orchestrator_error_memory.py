@@ -30,10 +30,10 @@ class _FakeMemory:
     def __init__(self):
         self.turns: list[tuple[str, str]] = []
 
-    def recent(self, *a, **kw):
+    async def recent(self, *a, **kw):
         return []
 
-    def append(self, user_id, session_id, role, text):
+    async def append(self, user_id, session_id, role, text, **kwargs):
         self.turns.append((role, text))
 
 
@@ -41,6 +41,7 @@ class _FakeToolExecutor:
     def __init__(self, *_a, **_kw): pass
     async def __aenter__(self): return self
     async def __aexit__(self, *exc): return False
+    async def schemas(self): return []
     async def execute(self, name, args):
         return {}, 1
 
@@ -156,24 +157,13 @@ async def test_error_without_any_text_reports_failure(monkeypatch, fake_memory):
     assert fake_memory.turns == [("user", "hi")]
 
 
-async def test_langgraph_engine_error_turn_stays_out_of_memory(monkeypatch, fake_memory):
-    from app import orchestrator_langgraph as og
-
-    monkeypatch.setattr(og, "ToolExecutor", _FakeToolExecutor)
-    monkeypatch.setattr(
-        og, "_resolve_provider_config",
-        lambda provider: ProviderConfig(name="openai", base_url=None,
-                                        model="m", api_key="sk-test"),
-    )
-    monkeypatch.setattr(og, "get_memory", lambda: fake_memory)
+async def test_error_chunk_turn_stays_out_of_memory(monkeypatch, fake_memory):
     _install_client(monkeypatch, [
         LLMChunk(kind="text", text="部分回答"),
         LLMChunk(kind="error", text="provider exploded"),
         LLMChunk(kind="finish", finish_reason="error"),
     ])
-    monkeypatch.setattr(og, "build_client", lambda cfg: orchestrator.build_client(cfg))
-
-    events = [e async for e in og.run_agent(_req())]
+    events = [e async for e in orchestrator.run_agent(_req())]
     names = [e.name for e in events]
     assert "error" in names
     done = next(e for e in events if e.name == "done")

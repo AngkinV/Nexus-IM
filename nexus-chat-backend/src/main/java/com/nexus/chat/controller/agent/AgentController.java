@@ -23,6 +23,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import com.nexus.chat.service.agent.AgentRunService;
+import com.nexus.chat.service.agent.AgentWorkspaceService;
+import com.nexus.chat.service.agent.SseRecordingOutputStream;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.time.OffsetDateTime;
@@ -39,6 +43,8 @@ public class AgentController {
     private final MessageRepository messageRepository;
     private final AgentMemoryService agentMemoryService;
     private final AgentSessionService agentSessionService;
+    private final AgentRunService agentRunService;
+    private final AgentWorkspaceService agentWorkspaceService;
 
     @PostMapping("/sessions")
     public ResponseEntity<AgentCommonResponse<Map<String, Object>>> createSession(
@@ -83,6 +89,10 @@ public class AgentController {
             HttpServletRequest httpRequest
     ) {
         Long userId = requireUserId(httpRequest);
+        agentSessionService.mustOwn(userId, sessionId);
+        agentGatewayService.purgeRuns(userId, ensureRequestId(httpRequest), sessionId);
+        agentRunService.deleteSession(userId, sessionId);
+        agentWorkspaceService.deleteSession(userId, sessionId);
         agentSessionService.delete(userId, sessionId);
         return ResponseEntity.ok(AgentCommonResponse.ok(ensureRequestId(httpRequest), Map.of("deleted", true)));
     }
@@ -106,10 +116,11 @@ public class AgentController {
         Long userId = requireUserId(httpRequest);
         String username = getUsername(httpRequest);
         String requestId = ensureRequestId(httpRequest);
+        agentSessionService.mustOwn(userId, sessionId);
+        requireOwnedRetry(userId, sessionId, request);
         String traceId = "tr_" + UUID.randomUUID().toString().replace("-", "");
         checkChatMembershipIfPresent(userId, request.getChatContext() != null ? request.getChatContext().getChatId() : null);
         agentSessionService.touchAndAutoTitle(userId, sessionId, request.getInput());
-        agentMemoryService.appendShortTermMessage(userId, sessionId, "user", request.getInput());
 
         Map<String, Object> raw = agentGatewayService.invokeNonStream(userId, username, traceId, sessionId, request);
         Map<String, Object> result = (Map<String, Object>) raw.getOrDefault("result", Map.of());
@@ -119,7 +130,6 @@ public class AgentController {
         data.setOperationType(request.getOperationType());
         data.setFinishReason((String) result.getOrDefault("finishReason", "stop"));
         data.setRaw(raw);
-        agentMemoryService.appendShortTermMessage(userId, sessionId, "assistant", data.getAnswer());
 
         Object toolCallsObj = result.get("toolCalls");
         if (toolCallsObj instanceof List<?> list) {
@@ -162,6 +172,16 @@ public class AgentController {
                 ? "tr_" + UUID.randomUUID().toString().replace("-", "")
                 : clientTraceId;
         checkChatMembershipIfPresent(userId, request.getChatContext() != null ? request.getChatContext().getChatId() : null);
+        agentSessionService.mustOwn(userId, sessionId);
+        requireOwnedRetry(userId, sessionId, request);
+        if (request.getRunId() == null || request.getRunId().isBlank()) {
+            request.setRunId("run_" + UUID.randomUUID().toString().replace("-", ""));
+        }
+        if (request.getAttachmentIds() != null && !request.getAttachmentIds().isEmpty()) {
+            request.setResolvedAttachments(
+                    agentWorkspaceService.resolveAttachments(userId, sessionId, request.getAttachmentIds()));
+        }
+        agentRunService.begin(userId, sessionId, request.getRunId(), request);
         // Auto-title from the first user message + bump updated_at; the Python orchestrator
         // is responsible for actually appending this turn to short-term memory.
         agentSessionService.touchAndAutoTitle(userId, sessionId, request.getInput());
@@ -177,8 +197,71 @@ public class AgentController {
         httpResponse.setHeader("X-Trace-Id", traceId);
 
         OutputStream out = httpResponse.getOutputStream();
-        agentGatewayService.streamPythonRaw(userId, username, traceId, sessionId, request, out);
-        out.flush();
+        try {
+            agentGatewayService.streamPythonRaw(userId, username, traceId, sessionId, request,
+                    new SseRecordingOutputStream(out, (name, data) -> { },
+                            agentRunService, userId, sessionId, request.getRunId()));
+            out.flush();
+        } finally {
+            // Even a disconnect ends the run: what was recorded is what happened.
+            agentRunService.finish(userId, sessionId, request.getRunId());
+        }
+    }
+
+    @GetMapping("/sessions/{sessionId}/runs")
+    public ResponseEntity<AgentCommonResponse<Map<String, Object>>> listRuns(
+            @PathVariable String sessionId, HttpServletRequest httpRequest) {
+        Long userId = requireUserId(httpRequest);
+        agentSessionService.mustOwn(userId, sessionId);
+        return ResponseEntity.ok(AgentCommonResponse.ok(ensureRequestId(httpRequest),
+                Map.of("runs", agentRunService.list(userId, sessionId))));
+    }
+
+    @GetMapping("/sessions/{sessionId}/runs/pending")
+    public ResponseEntity<AgentCommonResponse<Map<String, Object>>> pendingRuns(
+            @PathVariable String sessionId, HttpServletRequest httpRequest) {
+        Long userId = requireUserId(httpRequest);
+        agentSessionService.mustOwn(userId, sessionId);
+        String traceId = ensureRequestId(httpRequest);
+        return ResponseEntity.ok(AgentCommonResponse.ok(traceId,
+                agentGatewayService.pendingRuns(userId, traceId, sessionId)));
+    }
+
+    @PostMapping(value = "/sessions/{sessionId}/runs/{runId}/resume/stream", produces = "text/event-stream")
+    public void resumeStream(@PathVariable String sessionId, @PathVariable String runId,
+            @Valid @RequestBody AgentSessionAndChatDtos.ResumeRequest request,
+            HttpServletRequest httpRequest, HttpServletResponse httpResponse) throws IOException {
+        Long userId = requireUserId(httpRequest);
+        agentSessionService.mustOwn(userId, sessionId);
+        if (!runId.matches("[A-Za-z0-9_-]{8,64}")) {
+            throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, "Invalid run id");
+        }
+        String traceId = "tr_" + UUID.randomUUID().toString().replace("-", "");
+        httpResponse.setContentType("text/event-stream;charset=UTF-8");
+        httpResponse.setHeader("Cache-Control", "no-cache, no-transform");
+        httpResponse.setHeader("X-Accel-Buffering", "no");
+        httpResponse.setHeader("X-Trace-Id", traceId);
+        boolean owned = agentRunService.list(userId, sessionId).stream()
+                .anyMatch(run -> runId.equals(run.get("runId")));
+        OutputStream out = httpResponse.getOutputStream();
+        if (!owned) {
+            // A checkpoint from before run records existed: it has no record to extend.
+            agentGatewayService.resumePythonRaw(userId, getUsername(httpRequest), traceId, sessionId,
+                    runId, request.getProviderId(), out);
+            out.flush();
+            return;
+        }
+        boolean finished = "done".equals(String.valueOf(agentRunService.resume(userId, sessionId, runId, traceId).get("status")));
+        try {
+            agentGatewayService.resumePythonRaw(userId, getUsername(httpRequest), traceId, sessionId,
+                    runId, request.getProviderId(),
+                    new SseRecordingOutputStream(out, (name, data) -> { },
+                            agentRunService, userId, sessionId, runId));
+            out.flush();
+        } finally {
+            // A finished run that was only handed back must keep its recorded outcome.
+            if (!finished) agentRunService.finish(userId, sessionId, runId);
+        }
     }
 
     @DeleteMapping("/sessions/{sessionId}/memory")
@@ -187,6 +270,10 @@ public class AgentController {
             HttpServletRequest httpRequest
     ) {
         Long userId = requireUserId(httpRequest);
+        agentSessionService.mustOwn(userId, sessionId);
+        agentGatewayService.purgeRuns(userId, ensureRequestId(httpRequest), sessionId);
+        agentRunService.deleteSession(userId, sessionId);
+        agentWorkspaceService.deleteSession(userId, sessionId);
         agentMemoryService.clearShortTerm(userId, sessionId);
         return ResponseEntity.ok(AgentCommonResponse.ok(ensureRequestId(httpRequest), Map.of("cleared", true)));
     }
@@ -338,6 +425,16 @@ public class AgentController {
         }
         if (!chatMemberRepository.existsByChatIdAndUserId(chatId, userId)) {
             throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "No permission for this chat", Map.of("chatId", chatId));
+        }
+    }
+
+    /** A retry may only name a run of this session; otherwise it would be a new question. */
+    private void requireOwnedRetry(Long userId, String sessionId, AgentSessionAndChatDtos.SessionChatRequest request) {
+        if (request.getRetryOfRunId() == null) return;
+        boolean owned = agentRunService.list(userId, sessionId).stream()
+                .anyMatch(run -> request.getRetryOfRunId().equals(run.get("runId")));
+        if (!owned) {
+            throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, "The run being retried does not belong to this session");
         }
     }
 

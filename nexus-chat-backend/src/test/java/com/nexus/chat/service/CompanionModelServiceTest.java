@@ -1,234 +1,198 @@
 package com.nexus.chat.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nexus.chat.model.CompanionMessage;
 import com.nexus.chat.model.CompanionModelBinding;
+import com.nexus.chat.model.CompanionRole;
 import com.nexus.chat.model.ModelCredential;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterEach;
+import com.nexus.chat.service.agent.AgentProviderService.ResolvedProvider;
+import com.nexus.chat.service.agent.PythonModelGateway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.mock.http.client.MockClientHttpRequest;
-import org.springframework.mock.http.client.MockClientHttpResponse;
 
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.SequenceInputStream;
-import java.net.InetSocketAddress;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
+/** At the gateway boundary: no supplier, socket, environment credential or database. */
 class CompanionModelServiceTest {
-
-    private static final String DONE = "data: [DONE]\n\n";
-    private final CountDownLatch responseSent = new CountDownLatch(1);
-    private final CountDownLatch releaseResponse = new CountDownLatch(1);
-    private final ExecutorService serverExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService clientExecutor = Executors.newSingleThreadExecutor();
-    private final CompanionCryptoService crypto = new CompanionCryptoService("local-stream-test");
-    private final CompanionModelBinding binding = new CompanionModelBinding();
+    private static final long OWNER = 7;
+    private static final String BASE = "https://fixture.invalid/custom-root/";
+    private static final String STATE = "<state>{\"mood\":\"warm\"}</state>\n";
+    private final PythonModelGateway gateway = mock(PythonModelGateway.class);
+    private final CompanionCryptoService crypto = mock(CompanionCryptoService.class);
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final CompanionModelService service = new CompanionModelService(crypto, gateway, 23, 1777);
     private final ModelCredential credential = new ModelCredential();
-    private HttpServer server;
-    private CompanionModelService service;
+    private final CompanionModelBinding binding = new CompanionModelBinding();
+    private final CompanionRole role = new CompanionRole();
+    private final CompanionMessage user = new CompanionMessage();
 
-    @BeforeEach
-    void setUp() throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.setExecutor(serverExecutor);
-        server.start();
-        binding.setEndpoint("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
-        binding.setModelName("local-test-model");
-        credential.setApiKeyEncrypted(crypto.encrypt("local-test-key"));
-        service = new CompanionModelService(crypto, new RestTemplateBuilder(), 10, 1200);
+    @BeforeEach void setup() {
+        role.setName("旅人");
+        binding.setUserId(OWNER);
+        binding.setProvider("gemini");
+        binding.setModelName("role-model");
+        binding.setTemperature(.65);
+        credential.setId(42L);
+        credential.setUserId(OWNER);
+        credential.setProvider("gemini");
+        credential.setDisplayName("Fixture channel");
+        credential.setBaseUrl(BASE);
+        credential.setDefaultModel("channel-model");
+        credential.setApiKeyEncrypted("test-ciphertext");
+        when(crypto.decrypt("test-ciphertext")).thenReturn("test-key");
+        user.setSenderType(CompanionMessage.SenderType.user);
+        user.setContent("你好。");
     }
 
-    @AfterEach
-    void tearDown() throws InterruptedException {
-        // Always unblock the handler, including when a bounded Future.get fails.
-        releaseResponse.countDown();
-        if (server != null) server.stop(0);
-        serverExecutor.shutdownNow();
-        clientExecutor.shutdownNow();
-        assertTrue(serverExecutor.awaitTermination(3, TimeUnit.SECONDS));
-        assertTrue(clientExecutor.awaitTermination(3, TimeUnit.SECONDS));
+    @Test void blockingReplyUsesCredentialOwnerStoredChannelRolePromptAndSampling() {
+        when(gateway.complete(eq(OWNER), eq(cfg("role-model")), argThat(messages ->
+                messages.size() == 2 && messages.get(0).get("content").contains("你是旅人")
+                        && messages.get(0).get("content").contains("<state>")
+                        && messages.get(1).equals(Map.of("role", "user", "content", "你好。"))),
+                eq(.65), eq(1777), eq(23))).thenReturn(envelope(STATE + "坐吧。"));
+        var result = service.generateReply(context(), List.of(user), binding, credential);
+        assertTrue(result.success());
+        assertEquals(STATE + "坐吧。", result.content());
+        assertNull(result.error());
     }
 
-    @Test
-    void streamsContentInOrderAndSkipsNonContentEvents() {
-        respond(200, ": heartbeat\n\nevent: message\n\ndata:   \n\n"
-                + "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"
-                + "data: not-json\n\n"
-                + delta("你好，")
-                + "data: {\"choices\":[{\"delta\":{\"content\":null}}]}\n\n"
-                + delta("") + delta("请坐。")
-                + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
-                + "data: {\"choices\":[],\"usage\":{\"completion_tokens\":4}}\n\n"
-                + DONE);
-        List<String> received = new ArrayList<>();
-
-        assertEquals("你好，请坐。", stream(received::add));
-        assertEquals(List.of("你好，", "请坐。"), received);
+    @ParameterizedTest @ValueSource(strings = {"", "   ", "<state>{\"mood\":\"warm\"}</state>\n"})
+    void probeRequiresVisibleTextEvenWithSuccessfulCompletion(String raw) {
+        probeResult(raw);
+        var reply = service.probe(context(), List.of(user), binding, credential);
+        assertFalse(reply.success());
+        assertEquals("EMPTY_CONTENT", reply.error().path("code").asText());
     }
 
-    @Test
-    void ignoresContentAfterDone() {
-        respond(200, delta("已完成") + "data:[DONE]  \r\n\r\n" + delta("不能追加"));
-        List<String> received = new ArrayList<>();
-
-        assertEquals("已完成", stream(received::add));
-        assertEquals(List.of("已完成"), received);
+    @Test void probeUsesRoleReplyParametersAndReturnsOnlyVisibleText() {
+        probeResult(STATE + "坐吧。");
+        var reply = service.probe(context(), List.of(user), binding, credential);
+        assertTrue(reply.success());
+        assertEquals("坐吧。", reply.content());
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"", "你好"})
-    void returnsAtDoneWithoutWaitingForResponseToClose(String content) throws Exception {
-        holdOpen((content.isEmpty() ? "" : delta(content)) + DONE);
-        List<String> received = new ArrayList<>();
-        Future<String> reply = clientExecutor.submit(() -> stream(received::add));
-
-        assertTrue(responseSent.await(3, TimeUnit.SECONDS), "server did not flush DONE");
-        // The handler cannot close until tearDown releases it. This deadline is
-        // shorter than the service's 10s minimum socket read timeout.
-        assertEquals(content.isEmpty() ? null : content, reply.get(3, TimeUnit.SECONDS));
-        assertEquals(content.isEmpty() ? List.of() : List.of(content), received);
-        assertEquals(1L, releaseResponse.getCount());
+    @Test void missingStoredModelFailsWithoutGuessingOrCallingPython() {
+        binding.setModelName("   ");
+        credential.setDefaultModel(null);
+        var result = service.generateReply(context(), List.of(user), binding, credential);
+        assertFalse(result.success());
+        assertNotNull(result.error());
+        verifyNoInteractions(gateway);
     }
 
-    @Test
-    void preservesPartialContentWhenEofArrivesWithoutDone() {
-        respond(200, delta("半句话") + "data: {\"choices\":[{\"delta\":{\"content\":\"未完成");
-        List<String> received = new ArrayList<>();
-
-        assertEquals("半句话", stream(received::add));
-        assertEquals(List.of("半句话"), received);
+    @Test void noRoleOverrideUsesOnlyTheSavedModelOnTheSameChannel() {
+        binding.setModelName(null);
+        when(gateway.complete(eq(OWNER), eq(cfg("channel-model")), anyList(), eq(.65), eq(1777), eq(23)))
+                .thenReturn(envelope("来了。"));
+        assertEquals("来了。", service.generateReply(context(), List.of(user), binding, credential).content());
     }
 
-    @Test
-    void returnsNullWhenStreamEndsWithoutContent() {
-        respond(200, ": heartbeat\n\ndata: invalid-json\n\n" + delta(""));
-        List<String> received = new ArrayList<>();
-
-        assertNull(stream(received::add));
-        assertTrue(received.isEmpty());
+    @Test void keylessLocalChannelDoesNotBorrowAnotherCredential() {
+        binding.setProvider("ollama");
+        credential.setProvider("ollama");
+        credential.setApiKeyEncrypted(null);
+        when(gateway.complete(eq(OWNER), argThat(c -> c.provider().equals("ollama") && c.apiKeyPlain() == null),
+                anyList(), anyDouble(), anyInt(), anyInt())).thenReturn(envelope("你好"));
+        assertTrue(service.generateReply(context(), List.of(user), binding, credential).success());
+        verifyNoInteractions(crypto);
     }
 
-    @ParameterizedTest
-    @ValueSource(ints = {401, 500})
-    void returnsNullOnHttpErrorWithoutDeliveringDeltas(int status) {
-        respond(status, "{\"error\":{\"message\":\"local test failure\"}}");
-        List<String> received = new ArrayList<>();
-
-        assertNull(stream(received::add));
-        assertTrue(received.isEmpty());
+    @Test void nonStopResponseCannotBeTreatedAsCompleted() {
+        var raw = mapper.createObjectNode().put("text", "partial").put("finishReason", "length");
+        var outcome = CompanionModelService.ModelReply.from(raw);
+        assertFalse(outcome.success());
+        assertTrue(outcome.partial());
     }
 
-    @ParameterizedTest
-    @MethodSource("callbackFailures")
-    void callbackFailureStopsReadingAndKeepsAlreadyAppendedContent(RuntimeException failure) throws Exception {
-        holdOpen(delta("第一段") + delta("第二段") + delta("不能读取"));
-        List<String> received = new ArrayList<>();
-        Future<String> reply = clientExecutor.submit(() -> stream(piece -> {
-            received.add(piece);
-            if (received.size() == 2) throw failure;
-        }));
-
-        assertTrue(responseSent.await(3, TimeUnit.SECONDS));
-        // The delta that triggered the callback failure is already appended.
-        assertEquals("第一段第二段", reply.get(3, TimeUnit.SECONDS));
-        assertEquals(List.of("第一段", "第二段"), received);
+    @Test void aMismatchedBindingCannotConstructACallEvenIfPassedToModelServiceDirectly() {
+        binding.setEndpoint("https://old.invalid/root");
+        assertFalse(service.generateReply(context(), List.of(user), binding, credential).success());
+        binding.setEndpoint(null);
+        binding.setProvider("other");
+        assertFalse(service.generateReply(context(), List.of(user), binding, credential).success());
+        verifyNoInteractions(gateway);
     }
 
-    static Stream<RuntimeException> callbackFailures() {
-        return Stream.of(new CompanionModelService.ReaderGone(), new IllegalStateException("callback failed"));
+    @Test void preservesTypedErrorAndAlreadyStreamedDeltasWithoutCallingCompletionAgain() {
+        var rate = mapper.createObjectNode().put("code", "RATE_LIMIT").put("summary", "wait")
+                .put("httpStatus", 429).put("upstreamCode", "slow_down").put("retryAfterSeconds", 5);
+        when(gateway.stream(eq(OWNER), eq(cfg("role-model")), anyList(), eq(.65), eq(1777), eq(23), any()))
+                .thenAnswer(inv -> {
+                    Consumer<String> out = inv.getArgument(6);
+                    out.accept(STATE);
+                    out.accept("半句");
+                    return mapper.createObjectNode().put("text", STATE + "半句").put("finishReason", "error")
+                            .put("partial", true).set("error", rate);
+                });
+        var deltas = new ArrayList<String>();
+        var reply = service.streamReply(context(), List.of(user), binding, credential, deltas::add);
+        assertEquals(List.of(STATE, "半句"), deltas);
+        assertEquals(STATE + "半句", reply.content());
+        assertTrue(reply.partial());
+        assertFalse(reply.success());
+        assertEquals(rate, reply.error());
+        verify(gateway, never()).complete(anyLong(), any(), anyList(), anyDouble(), anyInt(), anyInt());
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"", "保留这段"})
-    void ioFailureKeepsPartialContentOrReturnsNullAndClosesBody(String content) {
-        // A deterministic transport failure, rather than relying on how a JDK
-        // HTTP client interprets a prematurely closed TCP connection.
-        InputStream prefix = new ByteArrayInputStream(
-                (content.isEmpty() ? "" : delta(content)).getBytes(StandardCharsets.UTF_8));
-        CountDownLatch bodyClosed = new CountDownLatch(1);
-        InputStream brokenBody = new SequenceInputStream(prefix, new InputStream() {
-            @Override
-            public int read() throws IOException {
-                throw new IOException("connection interrupted");
-            }
-
-            @Override
-            public void close() {
-                bodyClosed.countDown();
-            }
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void callbackExceptionUnwindsTheStreamImmediately(boolean readerGone) {
+        RuntimeException failure = readerGone ? new CompanionModelService.ReaderGone() : new IllegalStateException("consumer");
+        int[] delivered = {0};
+        when(gateway.stream(anyLong(), any(), anyList(), anyDouble(), anyInt(), anyInt(), any())).thenAnswer(inv -> {
+            Consumer<String> out = inv.getArgument(6);
+            out.accept("第一段");
+            out.accept("第二段");
+            fail("callback must abort the read, not be treated as a model error");
+            return null;
         });
-        MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.POST,
-                URI.create(binding.getEndpoint() + "/chat/completions"));
-        request.setResponse(new MockClientHttpResponse(brokenBody, HttpStatus.OK));
-        service = new CompanionModelService(crypto,
-                new RestTemplateBuilder().requestFactory(settings -> (uri, method) -> request), 10, 1200);
-        List<String> received = new ArrayList<>();
-
-        assertEquals(content.isEmpty() ? null : content, stream(received::add));
-        assertEquals(content.isEmpty() ? List.of() : List.of(content), received);
-        assertEquals(0L, bodyClosed.getCount(), "response body must be closed on failure");
+        assertSame(failure, assertThrows(RuntimeException.class, () -> service.streamReply(
+                context(), List.of(user), binding, credential, piece -> {
+                    if (++delivered[0] == 2) throw failure;
+                })));
+        assertEquals(2, delivered[0]);
     }
 
-    private String stream(Consumer<String> onDelta) {
-        return service.streamReply(CompanionPromptBuilder.Context.bare(null, null), List.of(),
-                binding, credential, onDelta);
+    @Test void voiceClosingAndGuestUseTheSameChannelAndKeepTheirExistingFormats() {
+        when(gateway.complete(eq(OWNER), eq(cfg("role-model")), anyList(), eq(.9), eq(400), eq(23)))
+                .thenReturn(envelope("（我想留下。）"));
+        when(gateway.complete(eq(OWNER), eq(cfg("role-model")), anyList(), eq(.8), eq(300), eq(8)))
+                .thenReturn(envelope("再见。===他们在雨中道别。"));
+        when(gateway.complete(eq(OWNER), eq(cfg("role-model")), anyList(), eq(.95), eq(400), eq(8)))
+                .thenReturn(envelope("名字：木叶\n性格：坦诚\n语气：短句\n开场：你好。"));
+        assertEquals("（我想留下。）", service.generateInnerVoice(role, List.of(user), binding, credential, null, 20).content());
+        assertEquals(new CompanionModelService.ClosingReply("再见。", "他们在雨中道别。"),
+                service.generateClosing(role, List.of(user), binding, credential, "late-rain"));
+        var guest = service.generateRole(binding, credential, "empty-bar");
+        assertEquals("木叶", guest.name());
+        assertEquals("你好。", guest.greeting());
     }
 
-    private static String delta(String content) {
-        return "data: {\"choices\":[{\"delta\":{\"content\":\"" + content + "\"}}]}\n\n";
+    private void probeResult(String content) {
+        when(gateway.complete(eq(OWNER), eq(cfg("role-model")), argThat(messages ->
+                messages.get(0).get("content").contains("<state>")
+                        && messages.get(1).equals(Map.of("role", "user", "content", "你好。"))),
+                eq(.65), eq(1777), eq(23))).thenReturn(envelope(content));
     }
 
-    private void handle(HttpHandler handler) {
-        server.createContext("/v1/chat/completions", exchange -> {
-            try (exchange) {
-                exchange.getRequestBody().readAllBytes();
-                handler.handle(exchange);
-            }
-        });
+    private JsonNode envelope(String text) {
+        return mapper.createObjectNode().put("text", text).put("finishReason", "stop").put("partial", false).putNull("error");
     }
 
-    private void respond(int status, String body) {
-        handle(exchange -> send(exchange, status, body));
+    private ResolvedProvider cfg(String model) {
+        return new ResolvedProvider(42L, "gemini", "Fixture channel", BASE, model, "test-key");
     }
 
-    private void holdOpen(String body) {
-        handle(exchange -> {
-            send(exchange, 200, body);
-            responseSent.countDown();
-            try {
-                releaseResponse.await();
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        });
-    }
-
-    private static void send(HttpExchange exchange, int status, String body) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=UTF-8");
-        exchange.sendResponseHeaders(status, 0);
-        exchange.getResponseBody().write(body.getBytes(StandardCharsets.UTF_8));
-        exchange.getResponseBody().flush();
+    private CompanionPromptBuilder.Context context() {
+        return new CompanionPromptBuilder.Context(role, "empty-bar", 95, null, null, List.of(), true);
     }
 }
