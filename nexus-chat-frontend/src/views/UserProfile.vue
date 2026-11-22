@@ -148,8 +148,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { goBack as returnToSource, mainLocation } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
@@ -193,7 +194,7 @@ const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726
 
 // Computed properties
 const userId = computed(() => Number(props.id) || Number(route.params.id))
-const isSelf = computed(() => userId.value === userStore.currentUser?.id)
+const isSelf = computed(() => userStore.currentUser?.id != null && userId.value === Number(userStore.currentUser.id))
 const isOnline = computed(() => userProfile.value?.isOnline)
 const showOnlineStatus = computed(() => userProfile.value?.showOnlineStatus !== false)
 
@@ -208,73 +209,50 @@ const coverStyle = computed(() => {
   return {}
 })
 
-// Load user profile
+// A reused /user/:id component must not return or fill data for an older ID.
+let profileVersion = 0, profileAlive = true
+onBeforeUnmount(() => { profileAlive = false; profileVersion += 1 })
 const loadProfile = async () => {
+  const version = ++profileVersion, path = route.path
+  const targetId = userId.value, viewerId = userStore.currentUser?.id
+  const current = () => profileAlive && profileVersion === version && route.path === path &&
+    userId.value === targetId && userStore.currentUser?.id === viewerId
   loading.value = true
+  userProfile.value = null
   try {
-    const viewerId = userStore.currentUser?.id
-
-    // If viewing self, redirect to /profile
-    if (isSelf.value) {
-      router.replace('/profile')
-      return
-    }
-
-    // Get user profile (with privacy filtering)
-    const response = await userAPI.getUserProfileForViewer(userId.value, viewerId)
+    if (isSelf.value) { await router.replace('/profile'); return }
+    const response = await userAPI.getUserProfileForViewer(targetId, viewerId)
+    if (!current()) return
+    const quiet = promise => promise.then(result => result.data).catch(() => null)
+    const [contact, blocked, mutual, links, stats] = await Promise.all([
+      quiet(contactAPI.checkIsContact(viewerId, targetId)),
+      quiet(contactAPI.checkBlocked(viewerId, targetId)),
+      quiet(contactAPI.getMutualContacts(viewerId, targetId)),
+      quiet(userAPI.getSocialLinks(targetId)), quiet(userAPI.getUserStats(targetId))
+    ])
+    if (!current()) return
     userProfile.value = response.data
-
-    // Check if already a contact
-    try {
-      const contactCheck = await contactAPI.checkIsContact(viewerId, userId.value)
-      isContact.value = contactCheck.data
-    } catch (e) {
-      isContact.value = false
-    }
-
-    // Check if blocked
-    try {
-      const blockCheck = await contactAPI.checkBlocked(viewerId, userId.value)
-      isBlocked.value = blockCheck.data?.isBlocked || false
-    } catch (e) {
-      isBlocked.value = false
-    }
-
-    // Get mutual contacts
-    try {
-      const mutualResponse = await contactAPI.getMutualContacts(viewerId, userId.value)
-      mutualContacts.value = mutualResponse.data || []
-    } catch (e) {
-      mutualContacts.value = []
-    }
-
-    // Get social links
-    try {
-      const linksResponse = await userAPI.getSocialLinks(userId.value)
-      socialLinks.value = linksResponse.data || {}
-    } catch (e) {
-      socialLinks.value = {}
-    }
-
-    // Get user stats (contacts count, groups count)
-    try {
-      const statsResponse = await userAPI.getUserStats(userId.value)
-      userStats.value = statsResponse.data
-    } catch (e) {
-      userStats.value = null
-    }
-
+    isContact.value = contact === true
+    isBlocked.value = blocked?.isBlocked === true
+    mutualContacts.value = mutual || []
+    socialLinks.value = links || {}
+    userStats.value = stats
   } catch (error) {
+    if (!current()) return
     console.error('Failed to load user profile:', error)
-    ElMessage.error('Failed to load user profile')
-    router.back()
+    ElMessage.error(t('common.failed'))
+    await returnToSource(router)
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 
 // Go back
-const goBack = () => router.back()
+const goBack = () => returnToSource(router)
+watch(() => userStore.currentUser?.id, () => {
+  profileVersion += 1
+  if (profileAlive && route.name === 'UserProfile' && userStore.currentUser?.id) loadProfile()
+}, { flush: 'sync' })
 
 // Add contact
 const addContact = async () => {
@@ -336,17 +314,18 @@ const unblockUser = async () => {
 
 // Start chat
 const startChat = async () => {
+  const version = profileVersion, path = route.path, viewerId = userStore.currentUser?.id, targetId = userId.value
+  const current = () => profileAlive && profileVersion === version && route.path === path &&
+    userStore.currentUser?.id === viewerId && userId.value === targetId
   try {
-    // Create or get direct chat
-    const response = await chatAPI.createDirectChat(userStore.currentUser.id, userId.value)
-    const chat = response.data
-
-    // Set active chat and navigate
-    chatStore.setActiveChat(chat)
-    router.push('/main')
+    const response = await chatAPI.createDirectChat(viewerId, targetId)
+    if (!current()) return
+    chatStore.setActiveChat(response.data)
+    await router.push(mainLocation('chats'))
   } catch (error) {
+    if (!current()) return
     console.error('Failed to start chat:', error)
-    ElMessage.error('Failed to start chat')
+    ElMessage.error(t('common.failed'))
   }
 }
 

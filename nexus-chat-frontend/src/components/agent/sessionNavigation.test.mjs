@@ -6,12 +6,13 @@ import en from '../../locales/en.json' with { type: 'json' }
 import { createPinia } from 'pinia'
 import { createServer } from 'vite'
 import { createRenderer, nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 // Mount the real shell, history and palette without starting WebGL, a browser or a backend.
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const components = /\/(Main|LeftPanel|AgentSessionList|CommandPalette)\.vue$/
 const storage = new Map()
-let vite, Main, i18n, agentAPI, useAgentStore, useChatStore, useKnowledgeStore, dialogs, app, body
+let vite, Main, i18n, agentAPI, useAgentStore, useChatStore, useKnowledgeStore, dialogs, app, body, createAuthNavigationGuard
 const load = path => vite.ssrLoadModule(path)
 before(async () => {
   globalThis.localStorage = { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) }
@@ -38,6 +39,7 @@ before(async () => {
   ;({ useChatStore } = await load('/src/stores/chat.js'))
   ;({ useKnowledgeStore } = await load('/src/stores/knowledge.js'))
   ;({ ElMessageBox: dialogs } = await load('element-plus'))
+  ;({ createAuthNavigationGuard } = await load('/src/router/navigation.js'))
 })
 after(() => vite?.close())
 afterEach(() => app?.unmount())
@@ -82,11 +84,29 @@ async function key(key, modifiers = { ctrlKey: true }, claimed = false) {
 const reply = data => ({ data: { code: 'OK', data } })
 async function mount(width = 1440) {
   storage.clear()
+  storage.set('token', 'workbench-test-token')
   globalThis.window = Object.assign(new EventTarget(), { innerWidth: width })
   body = new Host('body')
   globalThis.document = { activeElement: null, body }
   const pinia = createPinia()
-  app = renderer.createApp(Main).use(pinia).use(i18n)
+  // Main derives its module from the route: mirror the app's route names/meta
+  // on memory history (no browser here) and keep the real auth guard.
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', redirect: '/login' },
+      { path: '/login', name: 'Login', component: { render: () => null } },
+      { path: '/setup', name: 'Setup', component: { render: () => null }, meta: { requiresAuth: true } },
+      { path: '/main', name: 'Main', component: Main, meta: { requiresAuth: true } },
+      { path: '/settings', name: 'Settings', component: { render: () => null }, meta: { requiresAuth: true } },
+      { path: '/profile', name: 'Profile', component: { render: () => null }, meta: { requiresAuth: true } },
+      { path: '/user/:id', name: 'UserProfile', component: { render: () => null }, meta: { requiresAuth: true }, props: true }
+    ]
+  })
+  router.beforeEach(createAuthNavigationGuard(router))
+  app = renderer.createApp(Main).use(pinia).use(i18n).use(router)
+  await router.push('/main')
+  await router.isReady()
   for (const name of ['el-dropdown', 'el-dropdown-menu', 'el-dropdown-item']) app.component(name, { render: () => null })
   const agent = useAgentStore(pinia), chat = useChatStore(pinia)
   const sessions = [
