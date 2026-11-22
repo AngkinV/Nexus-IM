@@ -39,7 +39,8 @@
 
         <button 
           class="submit-btn" 
-          :disabled="!nickname"
+          :disabled="!nickname.trim() || saving"
+          :aria-busy="saving"
           @click="completeSetup"
         >
           {{ $t('auth.startMessaging') }}
@@ -50,12 +51,28 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
+import { useUserStore } from '@/stores/user'
+import { userAPI } from '@/services/api'
+import { mainLocation } from '@/router/navigation'
 
 const router = useRouter()
+const route = useRoute()
+const userStore = useUserStore()
+const { t } = useI18n()
 const nickname = ref('')
 const avatarUrl = ref(null)
+const saving = ref(false)
+let alive = true
+onBeforeUnmount(() => { alive = false })
+onMounted(() => {
+  if (!userStore.currentUser) userStore.loadUserFromStorage()
+  nickname.value = userStore.currentUser?.nickname || ''
+  avatarUrl.value = userStore.currentUser?.avatar || null
+})
 const fileInput = ref(null)
 
 const avatarStyle = computed(() => {
@@ -84,29 +101,30 @@ const handleFileChange = (event) => {
   }
 }
 
-const completeSetup = () => {
-  if (!nickname.value) return
-
-  // Save user info
-  const user = {
-    id: Date.now().toString(),
-    name: nickname.value,
-    avatar: avatarUrl.value,
-    createdAt: new Date().toISOString()
+const completeSetup = async () => {
+  const name = nickname.value.trim(), id = userStore.currentUser?.id
+  const token = localStorage.getItem('token'), avatar = avatarUrl.value
+  if (saving.value || !name) return
+  if (!id || !token || token.startsWith('mock-token-')) {
+    await router.replace({ name: 'Login', query: { redirect: '/setup' } })
+    return
   }
-  
-  localStorage.setItem('user', JSON.stringify(user))
-  
-  // If we came from login (which sets token), we can go to main
-  // If no token, we might need to handle that, but assuming flow is Login -> Setup -> Main
-  // Or just Setup -> Main if it's a local-first app as per some requirements
-  
-  // For now, ensure we have a token or mock one if this is a standalone setup
-  if (!localStorage.getItem('token')) {
-    localStorage.setItem('token', 'mock-token-' + Date.now())
+  const current = () => alive && route.name === 'Setup' && userStore.currentUser?.id === id && localStorage.getItem('token') === token
+  saving.value = true
+  try {
+    if (avatar?.startsWith('data:image/')) {
+      await userAPI.uploadAvatar(id, avatar)
+      if (!current()) return
+    }
+    await userAPI.updateProfile(id, { nickname: name })
+    if (!current()) return
+    await userStore.loadUserProfile()
+    if (current()) await router.replace(mainLocation('chats'))
+  } catch {
+    if (current()) ElMessage.error(t('common.failed'))
+  } finally {
+    if (current()) saving.value = false
   }
-
-  router.push('/main')
 }
 </script>
 

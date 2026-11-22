@@ -236,6 +236,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { goBack as returnToSource } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { useContactStore } from '@/stores/contact'
@@ -369,7 +370,7 @@ const getActivityText = (type) => {
   return key ? t(`profile.${key}`) : t('profile.activityRecorded')
 }
 
-const goBack = () => router.back()
+const goBack = () => returnToSource(router)
 
 const handleProfileUpdated = () => loadProfileData()
 

@@ -11,9 +11,9 @@
         <!-- macOS draws its own traffic lights over the frameless window; this
              spacer keeps the back pill clear of them. Mirrors NavRail's 78px. -->
         <div v-if="isMac" class="traffic-spacer" :style="{ width: `${72 * 100 / settings.zoomPercent}px` }" aria-hidden="true"></div>
-        <button type="button" class="back-pill" :title="t('settings.backToChat')" @click="goBack">
+        <button type="button" class="back-pill" :title="t('common.back')" @click="goBack">
           <span class="material-symbols-outlined">arrow_back</span>
-          <span>{{ t('settings.backToChat') }}</span>
+          <span>{{ t('common.back') }}</span>
           <kbd>ESC</kbd>
         </button>
       </div>
@@ -789,6 +789,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { goBack as returnToSource, canGoBackOnEscape, hasBlockingOverlay } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -1288,33 +1289,32 @@ const resetDefaults = async () => {
 
 const handleLogout = async () => {
   await userStore.logout()
-  router.push('/login')
+  router.replace('/login')
 }
 
-// "Back" must always lead somewhere: when settings was opened directly (a
-// reload, a deep link) there is no in-app history entry to go back to.
-const goBack = () => {
-  if (window.history.state?.back) router.back()
-  else router.replace('/')
-}
+const goBack = () => returnToSource(router)
 
 /* ── Keyboard: ESC back, ⌘K focus search ────────────────── */
 const onKeydown = (event) => {
+  if (event.defaultPrevented || event.isComposing || hasBlockingOverlay()) return
   const mod = event.metaKey || event.ctrlKey
   if (mod && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     searchInput.value?.focus()
     return
   }
-  if (event.key !== 'Escape' || event.defaultPrevented) return
-  // ESC belongs to whatever is open on top (a confirm dialog, the model panel).
-  if (document.querySelector('.el-overlay:not([style*="display: none"])')) return
-  if (document.activeElement === searchInput.value) {
+  if (event.key === 'Escape' && document.activeElement === searchInput.value) {
+    event.preventDefault()
+    event.stopPropagation()
     if (searchQuery.value) searchQuery.value = ''
-    else searchInput.value.blur()
+    else searchInput.value?.blur()
     return
   }
-  goBack()
+  if (canGoBackOnEscape(event)) {
+    event.preventDefault()
+    event.stopPropagation()
+    goBack()
+  }
 }
 
 watch(() => userStore.currentUser?.id, () => { if (!disposed) void loadPrivacy() })

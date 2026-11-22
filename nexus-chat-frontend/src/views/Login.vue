@@ -186,7 +186,8 @@
 
 <script setup>
 import { ref, computed, reactive, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { loginDestination } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { authAPI } from '@/services/api'
@@ -196,6 +197,7 @@ import { fileAPI } from '@/services/api'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 
 const isLoginMode = ref(true)
@@ -313,7 +315,7 @@ const handleLogin = async () => {
   loading.value = true
   try {
     await userStore.login(loginForm.usernameOrEmail, loginForm.password)
-    router.push('/main')
+    if (route.name === 'Login') await router.replace(loginDestination(router, route.query))
   } catch (error) {
     ElMessage.error(error || t('auth.loginFailed'))
   } finally {
@@ -365,7 +367,7 @@ const handleRegister = async () => {
       avatarUrl: uploadedAvatarUrl,  // 使用上传后的 URL 而不是 base64
       verificationCode: registerForm.verificationCode
     })
-    router.push('/main')
+    if (route.name === 'Login') await router.replace(loginDestination(router, route.query))
     ElMessage.success(t('auth.registerSuccess') || 'Registration successful')
   } catch (error) {
     ElMessage.error(error || t('auth.registerFailed'))

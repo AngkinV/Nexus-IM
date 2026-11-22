@@ -66,6 +66,8 @@
 
 <script setup>
 import { ref, provide, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { mainLocation, readMainState, goBackToMain, hasBlockingOverlay, createNavigationIntent } from '@/router/navigation'
 import NavRail from '@/components/layout/NavRail.vue'
 import TopBar from '@/components/layout/TopBar.vue'
 import LeftPanel from '@/components/layout/LeftPanel.vue'
@@ -103,7 +105,13 @@ const settings = useSettingsStore()
 const agentStore = useAgentStore()
 const tavernEntrance = useTavernEntrance()
 const { t } = useI18n()
-const activeView = ref('chats')
+const route = useRoute()
+const router = useRouter()
+let mainAlive = true
+const navigationIntent = createNavigationIntent()
+onUnmounted(() => { mainAlive = false; navigationIntent.invalidate() })
+// The existing /main route carries its module; a remount must not reset it.
+const activeView = computed(() => readMainState(route.query).view)
 const width = ref(window.innerWidth)
 const isMobile = computed(() => width.value <= 768)
 const handleResize = () => { width.value = window.innerWidth }
@@ -156,20 +164,24 @@ const openRoleChat = () => setActiveView('companion')
 // door. Where you were before you walked in is remembered and restored; falling
 // back to the chat list only when there is nothing to return to (a cold start
 // straight into the tavern, e.g. from a deep link).
-const viewBeforeTavern = ref(null)
+const viewBeforeTavern = ref(readMainState(route.query).returnView)
 // The conversation that was open when the user walked into the tavern. Entering
 // clears the active chat (the tavern draws its own canvas), so without this the
 // chat list comes back with nothing selected.
 const chatBeforeTavern = ref(null)
 
-const closeRoleChat = () => {
-  const previous = viewBeforeTavern.value
-  const previousChat = chatBeforeTavern.value
+const closeRoleChat = async () => {
+  const state = readMainState(route.query)
+  const previous = state.returnView || viewBeforeTavern.value
+  const chatId = state.returnChat || chatBeforeTavern.value?.id
+  const userId = userStore.currentUser?.id
+  const target = previous && previous !== 'companion' ? previous : 'chats'
+  // Back consumes this context instead of pushing a tavern/chat return loop.
+  await goBackToMain(router, target, route.query)
   viewBeforeTavern.value = null
   chatBeforeTavern.value = null
-  const target = previous && previous !== 'companion' ? previous : 'chats'
-  setActiveView(target)
-  // Restore the conversation the user was reading, once the shell is back.
+  if (!mainAlive || route.name !== 'Main' || activeView.value !== target || userStore.currentUser?.id !== userId) return
+  const previousChat = chatStore.sortedChats.find(chat => String(chat.id) === String(chatId))
   if (previousChat && target === 'chats') chatStore.setActiveChat(previousChat)
 }
 const paletteOpen = ref(false)
@@ -182,16 +194,30 @@ const tavernMood = ref('idle')
 const activateAssistantChat = () => {
   chatStore.setActiveChat(chatStore.sortedChats.find(c => c.id === AI_ASSISTANT_CHAT_ID))
 }
-const applyActiveView = (view) => {
-  activeView.value = view
+const applyViewEffects = (view) => {
   if (view === 'companion' || (view === 'ai' && isMobile.value)) {
-    // On phones the AI list must be reachable even when coming from an open chat.
     chatStore.clearActiveChat()
   } else if (view === 'ai') activateAssistantChat()
 }
+const applyActiveView = (view, replace = false) => {
+  if (!mainAlive || route.name !== 'Main') return Promise.resolve()
+  const location = mainLocation(view, route.query, {
+    view: viewBeforeTavern.value, chatId: chatBeforeTavern.value?.id
+  })
+  if (router.resolve(location).fullPath === route.fullPath) {
+    applyViewEffects(view)
+    return Promise.resolve()
+  }
+  return router[replace ? 'replace' : 'push'](location)
+}
+watch(activeView, view => { if (route.name === 'Main') applyViewEffects(view) }, { flush: 'sync' })
+onMounted(() => applyViewEffects(activeView.value))
 
 const setActiveView = (view) => {
+  if (!mainAlive || route.name !== 'Main') return
   if (view === 'companion') {
+    if (activeView.value !== 'companion' && tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) return
+    const intent = navigationIntent.capture()
     // Remember where we came from, so the back arrow can return there. Only the
     // first step in counts: navigating around inside the tavern must not
     // overwrite the place we are eventually returning to.
@@ -199,10 +225,15 @@ const setActiveView = (view) => {
       viewBeforeTavern.value = activeView.value
       chatBeforeTavern.value = chatStore.activeChat || null
     }
-    enterTavern(() => applyActiveView('companion'))
+    const userId = userStore.currentUser?.id
+    enterTavern(() => {
+      if (mainAlive && navigationIntent.current(intent) && route.name === 'Main' && userStore.currentUser?.id === userId) applyActiveView('companion')
+    })
     return
   }
-  applyActiveView(view)
+  navigationIntent.invalidate()
+  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) tavernEntrance.cancel()
+  return applyActiveView(view)
 }
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
@@ -253,8 +284,9 @@ const openPalette = () => {
   paletteOpen.value = true
 }
 
-const openAiAssistant = () => {
-  activeView.value = 'ai'
+const openAiAssistant = async () => {
+  await setActiveView('ai')
+  // The mobile view effect clears the active chat; this entry must still open the conversation.
   activateAssistantChat()
 }
 
@@ -351,7 +383,7 @@ const handleCollapseKey = (event) => {
 // Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
 const handleGlobalKeydown = (event) => {
   // Bubble on window: document capture (e.g. artifact tabs 1–3) gets first refusal.
-  if (event.defaultPrevented || event.isComposing) return
+  if (event.defaultPrevented || event.isComposing || hasBlockingOverlay()) return
   handleCollapseKey(event)
   const mod = event.metaKey || event.ctrlKey
   if (!mod) return
@@ -411,25 +443,45 @@ provide('creatingAgentSession', creatingAgentSession)
 // its create-group dialog (the dialog instance lives inside LeftPanel).
 const createGroupSignal = ref(0)
 provide('createGroupSignal', createGroupSignal)
-const requestCreateGroup = () => {
-  setActiveView('groups')
-  createGroupSignal.value += 1
+const requestCreateGroup = async () => {
+  await setActiveView('groups')
+  if (mainAlive && route.name === 'Main' && activeView.value === 'groups') createGroupSignal.value += 1
 }
 provide('requestCreateGroup', requestCreateGroup)
 
 // Which contact / group the directory panes have selected. The middle pane
 // shows that record's detail card (Prism c2 / c3); null keeps the old view.
-const selectedContactId = ref(null)
-const selectedGroupId = ref(null)
+const selectedContactId = ref(readMainState(route.query).contactId)
+const selectedGroupId = ref(readMainState(route.query).groupId)
 provide('selectedContactId', selectedContactId)
 provide('selectedGroupId', selectedGroupId)
+watch(() => route.fullPath, () => {
+  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE && (route.name !== 'Main' || activeView.value !== 'companion')) {
+    navigationIntent.invalidate()
+    tavernEntrance.cancel()
+  }
+  if (route.name !== 'Main') return
+  const state = readMainState(route.query)
+  selectedContactId.value = state.contactId
+  selectedGroupId.value = state.groupId
+}, { flush: 'sync' })
+watch([selectedContactId, selectedGroupId], ([contactId, groupId]) => {
+  if (!mainAlive || route.name !== 'Main') return
+  const query = { ...route.query }
+  if (contactId) query.contactId = String(contactId)
+  else delete query.contactId
+  if (groupId) query.groupId = String(groupId)
+  else delete query.groupId
+  const location = { name: 'Main', query }
+  if (router.resolve(location).fullPath !== route.fullPath) router.replace(location)
+})
 
 // "Add contact" (nav-rail button on the contacts pane) uses the same counter.
 const addContactSignal = ref(0)
 provide('addContactSignal', addContactSignal)
-provide('requestAddContact', () => {
-  setActiveView('contacts')
-  addContactSignal.value += 1
+provide('requestAddContact', async () => {
+  await setActiveView('contacts')
+  if (mainAlive && route.name === 'Main' && activeView.value === 'contacts') addContactSignal.value += 1
 })
 
 // Same pattern for the chat header's search button: the search dialog lives
