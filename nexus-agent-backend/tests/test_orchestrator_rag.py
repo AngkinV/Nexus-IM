@@ -41,23 +41,29 @@ class _FakeToolExecutor:
     async def schemas(self):
         return []
 
-    async def execute(self, name, args):
+    async def execute(self, name, args, *, call_id=None):
         return {"chatId": args.get("chat_id"), "messages": []}, 5
 
 
 def _req(text="你好", op="ASSISTANT_CHAT", chat_id=None):
+    from scope_support import make_scope, next_run_id
     return InvokeRequest(
         traceId="tr_rag_int",
         actor=Actor(userId=42, username="alice"),
         session=Session(sessionId="s_rag", operationType=op),
         input=InputPayload(text=text, chatId=chat_id),
         options=Options(),
+        runId=(run_id := next_run_id("run_rag")),
+        scope=make_scope(42, session_id="s_rag", run_id=run_id,
+                         chats=[chat_id] if chat_id is not None else []),
     )
 
 
 @pytest.fixture(autouse=True)
 def _patch_tools(monkeypatch):
+    from scope_support import install_scope_authority
     monkeypatch.setattr(orchestrator, "ToolExecutor", _FakeToolExecutor)
+    install_scope_authority(monkeypatch, [orchestrator])
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +86,7 @@ def _isolate_pending_writes():
 async def test_retrieve_called_with_user_text_and_user_id(monkeypatch):
     seen: dict = {}
 
-    async def _fake_retrieve(user_id, query, top_k=None, *, provider=None):
+    async def _fake_retrieve(user_id, query, top_k=None, *, provider=None, scope=None):
         seen["user_id"] = user_id
         seen["query"] = query
         seen["top_k"] = top_k

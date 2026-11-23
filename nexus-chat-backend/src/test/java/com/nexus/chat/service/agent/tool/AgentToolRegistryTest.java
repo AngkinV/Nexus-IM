@@ -51,7 +51,8 @@ class AgentToolRegistryTest {
     }
 
     private final SampleTools sample = new SampleTools();
-    private final AgentToolRegistry registry = new AgentToolRegistry(List.of(AgentToolFixture.create().service(), sample));
+    private final AgentToolFixture fixture = AgentToolFixture.create();
+    private final AgentToolRegistry registry = new AgentToolRegistry(List.of(fixture.service(), sample));
 
     private SyncToolSpecification spec(String name) {
         return registry.specifications().stream().filter(s -> s.tool().name().equals(name)).findFirst().orElseThrow();
@@ -63,7 +64,9 @@ class AgentToolRegistryTest {
     }
 
     private McpSchema.CallToolResult call(String tool, Map<String, Object> context, Map<String, Object> arguments) {
-        return spec(tool).callHandler().apply(McpTransportContext.create(context),
+        var scoped=new LinkedHashMap<String,Object>(context);
+        try { var header=fixture.scopeHeader(Long.parseLong(String.valueOf(context.get(AgentToolRegistry.CTX_ACTOR)))); if(header!=null) scoped.put(AgentToolRegistry.CTX_SCOPE,header); } catch(NumberFormatException ignored) { }
+        return spec(tool).callHandler().apply(McpTransportContext.create(scoped),
                 new McpSchema.CallToolRequest(tool, arguments, null));
     }
 
@@ -190,7 +193,7 @@ class AgentToolRegistryTest {
     @Test
     void serviceFailuresMapToCodesAndInternalDetailsStayInside() throws Exception {
         assertToolError("FORBIDDEN", call("get_recent_messages", Map.of(AgentToolRegistry.CTX_ACTOR, "8"), Map.of("chat_id", 5)));
-        assertToolError("NOT_FOUND", call("get_user_profile", Map.of(AgentToolRegistry.CTX_ACTOR, "7"), Map.of("user_id", 404)));
+        assertToolError("FORBIDDEN", call("get_user_profile", Map.of(AgentToolRegistry.CTX_ACTOR, "7"), Map.of("user_id", 404)));
         assertToolError("BAD_ARG", call("find_user_by_username", Map.of(AgentToolRegistry.CTX_ACTOR, "7"), Map.of("username", "@")));
 
         McpSchema.CallToolResult boom = call("boom_sample", Map.of(AgentToolRegistry.CTX_ACTOR, "7"), Map.of());

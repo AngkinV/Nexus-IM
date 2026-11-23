@@ -15,6 +15,7 @@ class AgentRunResumeTest {
     private void interrupt() {
         AgentRunService service = store.runService();
         service.begin(7L, SID, RUN, AgentRunServiceTest.request());
+        store.grant(service, RUN);
         service.record(7L, SID, RUN, "reasoning", Map.of("text", "old reasoning"));
         service.record(7L, SID, RUN, "delta", Map.of("text", "partial"));
         service.finish(7L, SID, RUN);
@@ -53,6 +54,7 @@ class AgentRunResumeTest {
     void aFinishedRunHandsItsResultBackWithoutBecomingActiveAgain() {
         AgentRunService service = store.runService();
         service.begin(7L, SID, RUN, AgentRunServiceTest.request());
+        store.grant(service, RUN);
         service.record(7L, SID, RUN, "delta", Map.of("text", "complete answer"));
         service.record(7L, SID, RUN, "done", Map.of("finishReason", "stop"));
         service.finish(7L, SID, RUN);

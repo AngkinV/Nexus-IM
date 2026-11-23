@@ -50,42 +50,65 @@ def _isolate(tmp_path: Path, monkeypatch):
     # Patch the module-local reference that memory_rag actually calls.
     monkeypatch.setattr(memory_rag, "get_embeddings", lambda **kw: _DetEmbedding())
 
+    # No live Java authority here: accept exactly the synthetic scope these tests issue.
+    async def _validate(self, scope, tool=None):
+        from app.scope import ScopeDenied
+        if scope is None:
+            raise ScopeDenied()
+        return scope
+    monkeypatch.setattr(memory_rag.ScopeClient, "validate", _validate)
+
     yield
 
     vs.reset_for_testing()
     emb_mod.reset_cache()
 
 
+def scope_for(user_id: int, session_id: str = "s1", run_id: str = "run_001"):
+    """A synthetic, internally consistent grant for one (user, session) partition.
+
+    The RAG layer now requires a scope, and its partition key comes from that scope:
+    two different users must not share a partition even with the same session id.
+    """
+    from app.scope import AuthorizedScope, scope_hash
+    data = dict(schemaVersion=1, grantId=f"g_{user_id}_{session_id}", actorUserId=user_id,
+                sessionId=session_id, runId=run_id, bindingVersion=1, authorizationVersion=1,
+                sessionGeneration=1, chatIds=[], contactUserIds=[],
+                timeRange=dict(fromInclusive=None, toExclusive=None, timeZone="Asia/Shanghai"))
+    data["scopeKey"] = scope_hash(data)
+    return AuthorizedScope.model_validate(data)
+
+
 async def test_same_run_upserts_one_memory_chunk():
-    first = await memory_rag.write(1, "s1", "项目讨论", "确定交付日期", run_id="run_001")
-    second = await memory_rag.write(1, "s1", "项目讨论", "确定交付日期", run_id="run_001")
+    first = await memory_rag.write(1, "s1", "项目讨论", "确定交付日期", run_id="run_001", scope=scope_for(1, 's1'))
+    second = await memory_rag.write(1, "s1", "项目讨论", "确定交付日期", run_id="run_001", scope=scope_for(1, 's1'))
     assert first == second
     assert vs.get_chroma_client().get_collection(vs.MEMORY_COLLECTION).count() == 1
 
 
 async def test_write_returns_chunk_id_on_success():
-    cid = await memory_rag.write(1, "s1", "你好", "你好我是 AI")
+    cid = await memory_rag.write(1, "s1", "你好", "你好我是 AI", scope=scope_for(1, 's1'))
     assert cid is not None
     assert cid.startswith("mem_")
 
 
 async def test_retrieve_finds_recently_written_content():
-    await memory_rag.write(1, "s1", "讨论项目报价单", "已收到将整理")
-    results = await memory_rag.retrieve(1, "讨论项目报价单")
+    await memory_rag.write(1, "s1", "讨论项目报价单", "已收到将整理", scope=scope_for(1, 's1'))
+    results = await memory_rag.retrieve(1, "讨论项目报价单", scope=scope_for(1))
     assert len(results) >= 1
     assert "讨论项目报价单" in results[0]
 
 
 async def test_retrieve_isolates_users():
-    await memory_rag.write(1, "s1", "alice 私人内容", "记下了 alice")
-    await memory_rag.write(2, "s2", "bob 私人内容", "记下了 bob")
+    await memory_rag.write(1, "s1", "alice 私人内容", "记下了 alice", scope=scope_for(1, 's1'))
+    await memory_rag.write(2, "s2", "bob 私人内容", "记下了 bob", scope=scope_for(2, 's2'))
 
-    user2_results = await memory_rag.retrieve(2, "私人内容")
+    user2_results = await memory_rag.retrieve(2, "私人内容", scope=scope_for(2))
     assert all("alice" not in r for r in user2_results)
 
 
 async def test_skip_when_text_too_short():
-    cid = await memory_rag.write(1, "s1", "a", "b")  # combined far below min_chars=5
+    cid = await memory_rag.write(1, "s1", "a", "b", scope=scope_for(1, 's1'))  # combined far below min_chars=5
     assert cid is None
 
 
@@ -93,33 +116,33 @@ async def test_skip_when_disabled(monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "memory_rag_enabled", False)
 
-    cid = await memory_rag.write(1, "s1", "long enough text here", "long answer here")
+    cid = await memory_rag.write(1, "s1", "long enough text here", "long answer here", scope=scope_for(1, 's1'))
     assert cid is None
-    results = await memory_rag.retrieve(1, "anything")
+    results = await memory_rag.retrieve(1, "anything", scope=scope_for(1))
     assert results == []
 
 
 async def test_top_k_caps_results():
     for i in range(5):
-        await memory_rag.write(1, "s1", f"chunk number {i}", f"answer for {i}")
-    results = await memory_rag.retrieve(1, "chunk number", top_k=2)
+        await memory_rag.write(1, "s1", f"chunk number {i}", f"answer for {i}", scope=scope_for(1, 's1'))
+    results = await memory_rag.retrieve(1, "chunk number", top_k=2, scope=scope_for(1))
     assert len(results) <= 2
 
 
 async def test_degrades_when_embeddings_unavailable(monkeypatch):
     monkeypatch.setattr(memory_rag, "get_embeddings", lambda **kw: None)
 
-    cid = await memory_rag.write(1, "s1", "hello world", "hi there")
+    cid = await memory_rag.write(1, "s1", "hello world", "hi there", scope=scope_for(1, 's1'))
     assert cid is None
 
-    results = await memory_rag.retrieve(1, "hello")
+    results = await memory_rag.retrieve(1, "hello", scope=scope_for(1))
     assert results == []
 
 
 async def test_empty_query_returns_empty():
-    await memory_rag.write(1, "s1", "some content", "some reply")
-    assert await memory_rag.retrieve(1, "") == []
-    assert await memory_rag.retrieve(1, "   ") == []
+    await memory_rag.write(1, "s1", "some content", "some reply", scope=scope_for(1, 's1'))
+    assert await memory_rag.retrieve(1, "", scope=scope_for(1)) == []
+    assert await memory_rag.retrieve(1, "   ", scope=scope_for(1)) == []
 
 
 async def test_metadata_includes_trace_id():
@@ -127,7 +150,7 @@ async def test_metadata_includes_trace_id():
     operators can correlate vector-store entries with request logs."""
     cid = await memory_rag.write(
         1, "s1", "hello world here", "hi there friend", trace_id="tr_abc123"
-    )
+    , scope=scope_for(1, 's1'))
     assert cid is not None
 
     # Inspect the underlying ChromaDB collection directly.

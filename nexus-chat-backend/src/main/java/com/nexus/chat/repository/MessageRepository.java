@@ -15,6 +15,13 @@ import java.util.Optional;
 @Repository
 public interface MessageRepository extends JpaRepository<Message, Long> {
 
+    interface ScopeAttribution { Long getChatId(); LocalDateTime getCreatedAt(); }
+    @Query("select m.chatId as chatId, m.createdAt as createdAt from Message m where m.id = :id")
+    Optional<ScopeAttribution> findScopeAttribution(@Param("id") Long id);
+
+    @Query("select m from Message m where m.chatId = :chatId and (:from is null or m.createdAt >= :from) and (:to is null or m.createdAt < :to) order by m.createdAt desc, m.id desc")
+    Page<Message> findScopedMessages(@Param("chatId") Long chatId, @Param("from") LocalDateTime from, @Param("to") LocalDateTime to, Pageable pageable);
+
     Page<Message> findByChatIdOrderByCreatedAtDesc(Long chatId, Pageable pageable);
 
     Page<Message> findByChatId(Long chatId, Pageable pageable);

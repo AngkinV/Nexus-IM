@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import { createPinia, setActivePinia } from 'pinia'
 
-let server, useAgentStore, api, store, requests
+let server, useAgentStore, api, store, requests, useAgentWorkspaceStore, messageBox, originalConfirm, confirmations
 const storage = new Map()
 const originalStorage = globalThis.localStorage
 const originalFetch = globalThis.fetch
@@ -27,9 +27,15 @@ before(async () => {
   })
   ;({ useAgentStore } = await server.ssrLoadModule('/src/stores/agent.js'))
   ;({ agentAPI: api } = await server.ssrLoadModule('/src/services/agentApi.js'))
+  ;({ useAgentWorkspaceStore } = await server.ssrLoadModule('/src/stores/agentWorkspace.js'))
+  // agent.js resolves element-plus through Node's own module registry, which is a
+  // different instance from Vite's ssrLoadModule copy. Patch the one it actually uses.
+  ;({ ElMessageBox: messageBox } = await import('element-plus'))
+  originalConfirm = messageBox.confirm
 })
 
 after(async () => {
+  if (messageBox) messageBox.confirm = originalConfirm
   await server?.close()
   globalThis.localStorage = originalStorage
   globalThis.fetch = originalFetch
@@ -40,6 +46,10 @@ beforeEach(() => {
   storage.set('user', JSON.stringify({ id: 7, username: 'alice' }))
   storage.set('token', 'test-token')
   storage.set('agent.sessionId:7', 'session_001')
+  confirmations = []
+  messageBox.confirm = async (...args) => { confirmations.push(args); return 'confirm' }
+  api.scopeResources = async () => ok({ contacts: [], groups: [] })
+  api.getScope = async () => ok({ bindingVersion: 1, sessionGeneration: 1, selection: { targets: [], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } } })
   requests = []
   responses = []
   globalThis.fetch = async (url, options) => {
@@ -55,6 +65,7 @@ beforeEach(() => {
   api.listRuns = async () => ok([])
   api.sessionMessages = async () => ok({ messages: [] })
   api.pendingRuns = async () => ok({ runs: [] })
+  api.cancelRun = async (sid, runId) => ok({ runId, status: 'cancelled' })
 })
 
 test('failed turns keep the partial answer and separate diagnostic', async () => {
@@ -210,7 +221,7 @@ test('invalid options and a failed session create do not send the draft or appen
   assert.equal(store.lastError.code, 'SESSION'); assert.deepEqual(requests, [])
 })
 
-for (const [reason, status] of [['length', 'truncated'], ['max_iterations', 'truncated'], ['cancelled', 'cancelled'], ['timeout', 'timeout']]) {
+for (const [reason, status] of [['length', 'truncated'], ['max_iterations', 'truncated'], ['cancelled', 'cancelled'], ['timeout', 'interrupted'], ['content_filter', 'truncated']]) {
   test(`a ${reason} termination preserves partial text and reports ${status}`, async () => {
     responses.push(frames(['delta', { text: 'partial' }], ['done', { finishReason: reason }]))
     await store.sendMessage('question')
@@ -253,7 +264,7 @@ test('a slow cancelled stream cannot stop a new stream or write into the next se
   controller.enqueue(new TextEncoder().encode(frames(['delta', { text: 'second answer' }], stop))); controller.close()
   await next
   assert.equal(store.messages.at(-1).content, 'second answer')
-  assert.equal(store.messagesBySessionId.session_001.at(-1).status, 'cancelled')
+  assert.equal(store.messagesBySessionId.session_001.at(-1).status, 'interrupted') // detaching is not cancellation proof
 })
 
 test('obsolete session creation never redirects the new selection or submits the old draft', async () => {
@@ -411,7 +422,7 @@ test('a failed or cancelled persisted turn is not upgraded by a contradictory st
     { name: 'error', data: { code: 'TIMEOUT', message: 'timed out' } }, { name: 'done', data: { finishReason: 'timeout' } }
   ] }])
   await store.refreshActiveSession()
-  assert.equal(store.messages.at(-1).status, 'timeout'); assert.equal(store.messages.at(-1).finishReason, 'timeout')
+  assert.equal(store.messages.at(-1).status, 'interrupted'); assert.equal(store.messages.at(-1).finishReason, 'timeout')
 })
 
 test('previous session clear finishing after switching back cannot resurrect the cleared bubbles', async () => {
@@ -567,6 +578,337 @@ test('a run whose outcome expired is no longer offered', async () => {
   responses.push(frames(['meta', { runId: 'run_gone_001' }], ['delta', { text: '半句' }]))
   await store.sendMessage('查询')
   api.pendingRuns = async () => ok({ runs: [] })
+  api.cancelRun = async (sid, runId) => ok({ runId, status: 'cancelled' })
   await store.loadPendingRuns()
   assert.equal(store.messages.at(-1).resumable, false)
+})
+
+test('T1 explicit local errors do not fail successful synth; filter and timeout stay truthful', async () => {
+  responses.push(frames(
+    ['meta', { runId: 'run_t1_001', attemptId: 'a', sequence: 1 }],
+    ['error', { scope: 'agent', agentId: 'assistant', message: 'optional', sequence: 2, attemptId: 'a' }],
+    ['delta', { text: 'answer', sequence: 3, attemptId: 'a' }],
+    ['done', { finishReason: 'stop', sequence: 4, attemptId: 'a' }]
+  ))
+  const msg = await store.sendMessage('fixture')
+  assert.equal(msg.status, 'done')
+  assert.equal(msg.error, null)
+})
+
+test('T1 late old attempt cannot overwrite resumed answer or close stream', async () => {
+  responses.push(frames(
+    ['meta', { runId: 'run_t1_002', attemptId: 'old', sequence: 1 }],
+    ['delta', { text: 'old', attemptId: 'old', sequence: 2 }],
+    ['meta', { runId: 'run_t1_002', attemptId: 'new', resumed: true, sequence: 1 }],
+    ['delta', { text: 'new', attemptId: 'new', sequence: 2 }],
+    ['done', { finishReason: 'cancelled', attemptId: 'old', sequence: 3 }],
+    ['delta', { text: ' answer', attemptId: 'new', sequence: 3 }],
+    ['done', { finishReason: 'stop', attemptId: 'new', sequence: 4 }]
+  ))
+  const msg = await store.sendMessage('fixture')
+  assert.equal(msg.content, 'new answer')
+  assert.equal(msg.status, 'done')
+})
+
+test('T1 stop waits for release confirmation and drains authoritative usage footer', async () => {
+  let controller
+  responses.push(new ReadableStream({ start(c) { controller = c } }))
+  const release = Promise.withResolvers()
+  let cancels = 0
+  api.cancelRun = (sid, runId) => { cancels++; assert.equal(sid, 'session_001'); return release.promise }
+  const sending = store.sendMessage('fixture'); await nextTick()
+  const runId = store.messages.at(-1).runId
+  controller.enqueue(new TextEncoder().encode(frames(['meta', { runId, attemptId: 'a', sequence: 1 }])))
+  await nextTick()
+  const stopping = store.cancelStream()
+  assert.equal(store.messages.at(-1).status, 'stop_requested')
+  assert.equal(store.streaming, true)
+  assert.equal(cancels, 1)
+  controller.enqueue(new TextEncoder().encode(frames(
+    ['usage', { runId, attemptId: 'a', sequence: 2, modelCalls: 4, toolCallCount: 1,
+      inputTokens: null, outputTokens: null, totalTokens: null, usageReported: false, usageComplete: false }],
+    ['done', { runId, attemptId: 'a', sequence: 3, finishReason: 'cancelled', resumable: true }]
+  )))
+  controller.close()
+  release.resolve(ok({ runId, status: 'cancelled' }))
+  await Promise.all([sending, stopping])
+  assert.equal(store.messages.at(-1).status, 'cancelled')
+  assert.equal(store.messages.at(-1).modelCalls, 4)
+  assert.equal(store.messages.at(-1).usage.totalTokens, null)
+  assert.equal(store.messages.at(-1).resumable, true)
+})
+
+test('T1 not_active keeps completed result and cancellation failure cannot erase history', async () => {
+  let controller
+  responses.push(new ReadableStream({ start(c) { controller = c } }))
+  const sending = store.sendMessage('fixture'); await nextTick()
+  const runId = store.messages.at(-1).runId
+  api.cancelRun = async () => { throw new Error('release unavailable') }
+  await assert.rejects(store.clearConversation(), /release unavailable/)
+  assert.equal(store.messages.length, 2)
+  assert.equal(store.messages.at(-1).status, 'streaming')
+  api.cancelRun = async () => ok({ runId, status: 'not_active' })
+  const stopping = store.cancelStream()
+  controller.enqueue(new TextEncoder().encode(frames(['delta', { text: 'finished' }], ['done', { finishReason: 'stop' }])))
+  controller.close(); await Promise.all([sending, stopping])
+  assert.equal(store.messages.at(-1).status, 'done')
+  assert.equal(store.messages.at(-1).finishReason, 'stop')
+})
+
+test('T1 reload keeps same-numbered same-named frames of both attempts and one copy of a replayed frame', async () => {
+  const frame = (name, attemptId, sequence, data = {}) => [name, { runId: 'run_t1_reload', attemptId, sequence, at: sequence * 10, runtimeContractVersion: 1, ...data }]
+  const tool = (attemptId, sequence, status) => frame('tool_result', attemptId, sequence, { toolName: 'lookup', callId: 'same', status })
+  api.listRuns = async () => ok([{ runId: 'run_t1_reload', input: 'fixture', status: 'done', finishReason: 'stop', trace: events([
+    frame('meta', 'attempt_a', 1), frame('tool_call', 'attempt_a', 2, { toolName: 'lookup', callId: 'same' }), tool('attempt_a', 3, 'FAILED'),
+    frame('delta', 'attempt_a', 4, { text: 'old' }),
+    frame('error', 'attempt_a', 5, { scope: 'run', code: 'AGENT_MODEL_50202', message: 'first attempt failed' }),
+    frame('done', 'attempt_a', 6, { finishReason: 'error', resumable: true }),
+    frame('meta', 'attempt_b', 1, { resumed: true }), frame('tool_call', 'attempt_b', 2, { toolName: 'lookup', callId: 'same' }),
+    tool('attempt_b', 3, 'SUCCESS'), tool('attempt_b', 3, 'SUCCESS'),
+    frame('delta', 'attempt_b', 4, { text: 'new' }), frame('delta', 'attempt_b', 4, { text: 'new' }),
+    frame('done', 'attempt_b', 5, { finishReason: 'stop' })
+  ]) }])
+  await store.refreshActiveSession()
+  const answer = store.messages.at(-1)
+  const identity = kind => answer.trace.filter(e => e.kind === kind).map(e => [e.attemptId, e.sequence])
+  assert.deepEqual(identity('meta'), [['attempt_a', 1], ['attempt_b', 1]])
+  assert.deepEqual(answer.trace.filter(e => e.kind === 'tool').map(e => [e.attemptId, e.status]), [['attempt_a', 'FAILED'], ['attempt_b', 'SUCCESS']])
+  assert.equal(answer.content, 'new')
+  // The resumed attempt succeeded: the first attempt's run error stays in its trace, not on the run.
+  assert.equal(answer.status, 'done'); assert.equal(answer.error, null)
+  assert.equal(answer.trace.filter(e => e.kind === 'error').length, 1)
+})
+
+test('T1 reload after an analyst failed and the synthesis succeeded is still a success', async () => {
+  const frame = (name, sequence, data = {}) => [name, { runId: 'run_t1_role', attemptId: 'attempt_a', sequence, at: sequence, runtimeContractVersion: 1, ...data }]
+  api.listRuns = async () => ok([{ runId: 'run_t1_role', input: 'fixture', answer: 'joined', status: 'done', finishReason: 'stop', error: null, modelCalls: 4, trace: events([
+    frame('meta', 1), frame('stage', 2, { phase: 'model', status: 'start', agentId: 'doc', nodeId: 'collaboration-doc' }),
+    frame('error', 3, { scope: 'agent', agentId: 'doc', nodeId: 'collaboration-doc', code: 'AGENT_MODEL_50202', message: 'analyst quota' }),
+    frame('stage', 4, { phase: 'model', status: 'failed', agentId: 'doc', nodeId: 'collaboration-doc' }),
+    frame('delta', 5, { text: 'joined' }), frame('usage', 6, { modelCalls: 4, usageReported: false }), frame('done', 7, { finishReason: 'stop' })
+  ]) }])
+  await store.refreshActiveSession()
+  const answer = store.messages.at(-1)
+  assert.equal(answer.status, 'done'); assert.equal(answer.error, null); assert.equal(answer.content, 'joined')
+  assert.equal(answer.modelCalls, 4)
+  assert.equal(answer.trace.find(e => e.kind === 'error').agentId, 'doc')
+  const boot = freshStore(); await boot.hydrateActiveSession()
+  assert.equal(boot.messages.at(-1).status, 'done'); assert.equal(boot.messages.at(-1).error, null)
+})
+
+// T2 contract regressions: fixture dialog is an explicit action, never production auto-consent.
+test('T2 unconfirmed nonempty scope executes zero requests; edits clear consent', async () => {
+  const workspace = useAgentWorkspaceStore()
+  await workspace.loadScope(store.sessionId)
+  const scope = { targets: [{ type: 'group', id: 8 }], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } }
+  workspace.setScope(scope)
+  await assert.rejects(store.sendMessage('read'), /confirm/i)
+  assert.equal(requests.length, 0)
+  workspace.confirmScope(); workspace.setScope({ ...scope, targets: [{ type: 'contact', id: 8 }] })
+  await assert.rejects(store.sendMessage('read'), /confirm/i)
+  assert.equal(requests.length, 0)
+})
+test('T2 explicit empty scope ignores legacy chatId; retry and resume ask anew', async () => {
+  responses.push(frames(['meta', { runId: 'run_scope' }], ['delta', { text: 'partial' }]))
+  await store.sendMessage('ordinary task', { chatId: 999 })
+  assert.deepEqual(requests[0].body.scopeSelection.targets, [])
+  assert.equal(Object.hasOwn(requests[0].body, 'chatContext'), false)
+  const live = store.messages.at(-1)
+  responses.push(frames(['meta', { runId: 'run_scope', resumed: true }], stop))
+  await store.resumeMessage(live.id)
+  assert.equal(confirmations.length, 1)
+  assert.equal(requests[1].body.scopeConfirmed, true)
+  assert.equal(requests[1].body.expectedBindingVersion, 1)
+  responses.push(frames(stop)); await store.retryMessage(live.id)
+  assert.equal(confirmations.length, 2)
+  assert.equal(requests[2].body.scopeConfirmed, true)
+  assert.deepEqual(requests[2].body.scopeSelection, requests[0].body.scopeSelection)
+})
+
+test('first send preserves explicitly confirmed A, never adds B, and loads version 1', async () => {
+  store.sessionId = null
+  const workspace = useAgentWorkspaceStore()
+  workspace.select(null)
+  workspace.setScope({ targets: [{ type: 'contact', id: 'A' }], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } })
+  workspace.confirmScope()
+  responses.push(frames(['done', { finishReason: 'stop' }]))
+  await store.sendMessage('first')
+  assert.deepEqual(requests[0].body.scopeSelection.targets, [{ type: 'contact', id: 'A' }])
+  assert.equal(requests[0].body.scopeConfirmed, true)
+  assert.equal(requests[0].body.expectedBindingVersion, 1)
+})
+test('unconfirmed first send has no stream or session creation request', async () => {
+  store.sessionId = null
+  const workspace = useAgentWorkspaceStore(); workspace.select(null)
+  workspace.setScope({ targets: [{ type: 'contact', id: 'A' }], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } })
+  let creations = 0; api.createSession = async () => { creations++; return ok({ sessionId: 'new' }) }
+  await assert.rejects(store.sendMessage('first'), /confirm/i)
+  assert.equal(creations, 0); assert.equal(requests.length, 0)
+})
+test('empty first send explicitly confirms empty scope at actual version 1', async () => {
+  store.sessionId = null
+  useAgentWorkspaceStore().select(null)
+  responses.push(frames(['done', { finishReason: 'stop' }]))
+  await store.sendMessage('ordinary task')
+  assert.deepEqual(requests[0].body.scopeSelection.targets, [])
+  assert.equal(requests[0].body.scopeConfirmed, true)
+  assert.equal(requests[0].body.expectedBindingVersion, 1)
+})
+
+const receiptFixture = (runId, version = 2, extra = {}) => ({ schemaVersion: 1, grantId: 'grant_test', actorUserId: 7,
+  sessionId: 'session_001', runId, bindingVersion: 1, authorizationVersion: version, sessionGeneration: 1,
+  chatIds: [31], contactUserIds: [12], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' }, scopeKey: 'a'.repeat(64), ...extra })
+
+test('actual reducer and Java history/pending preserve v2 receipts, never local confirmation', async () => {
+  const workspace = useAgentWorkspaceStore()
+  await workspace.loadScope('session_001')
+  workspace.confirmScope()
+  assert.equal(store.messages.some(m => m.actualScope), false)
+  responses.push(frames(['meta', { runId: 'run_receipt', scope: receiptFixture('run_receipt') }],
+    ['meta', { runId: 'run_receipt', scope: receiptFixture('run_receipt', 1) }],
+    ['meta', { runId: 'run_receipt', scope: receiptFixture('run_receipt', 3, { actorUserId: 8 }) }],
+    ['meta', { runId: 'run_receipt', scope: receiptFixture('run_receipt', 3, { sessionId: 'other_session' }) }],
+    ['meta', { runId: 'run_receipt', scope: receiptFixture('other_run', 3) }],
+    ['done', { finishReason: 'stop' }]))
+  await store.sendMessage('receipt')
+  const message = store.messages.find(m => m.role === 'assistant')
+  assert.equal(message.actualScope.authorizationVersion, 2)
+  assert.deepEqual(message.actualScope.chatIds, [31])
+  api.listRuns = async () => ok([{ runId: 'run_receipt', status: 'done', scope: receiptFixture('run_receipt') }])
+  api.pendingRuns = async () => ok({ runs: [], finished: ['run_receipt'], finishedScopes: { run_receipt: receiptFixture('run_receipt') } })
+  await store.refreshActiveSession()
+  assert.deepEqual(store.messages.find(m => m.runId === 'run_receipt' && m.role === 'assistant').actualScope, message.actualScope)
+  api.pendingRuns = async () => ok({ runs: [{ runId: 'run_receipt', scope: receiptFixture('run_receipt', 1) }] })
+  await store.loadPendingRuns()
+  assert.equal(store.messages.find(m => m.role === 'assistant').actualScope.authorizationVersion, 2)
+  api.pendingRuns = async () => ok({ runs: [{ runId: 'run_receipt', scope: receiptFixture('run_receipt', 3, { scopeKey: 'invalid' }) }] })
+  await store.loadPendingRuns()
+  assert.equal(store.messages.find(m => m.role === 'assistant').actualScope.authorizationVersion, 2)
+  assert.equal(store.messages.find(m => m.role === 'assistant').scopeState, 'unknown')
+})
+
+const scopeSnapshot = () => ({ targets: [{ type: 'contact', id: 12 }],
+  timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } })
+async function cachePrivateSentinel() {
+  responses.push(frames(['meta', { runId: 'run_redacted', scope: receiptFixture('run_redacted') }],
+    ['delta', { text: 'B_PRIVATE_SENTINEL' }], ['reasoning', { text: 'B_PRIVATE_SENTINEL' }],
+    ['tool_call', { callId: 'b', toolName: 'lookup', args: { value: 'B_PRIVATE_SENTINEL' } }],
+    ['tool_result', { callId: 'b', toolName: 'lookup', status: 'SUCCESS', result: 'B_PRIVATE_SENTINEL' }],
+    ['sources', { items: [{ id: 'b', excerpt: 'B_PRIVATE_SENTINEL' }] }],
+    ['artifact', { artifact: { id: 'b', name: 'B_PRIVATE_SENTINEL' } }], ['done', { finishReason: 'stop' }]))
+  await store.sendMessage('original user question')
+  // Exercise top-level old-cache reasoning too, in addition to real reducer trace.
+  store.messages.at(-1).reasoning = 'B_PRIVATE_SENTINEL'
+  api.listRuns = async () => ok([{ runId: 'run_redacted', status: 'done', scope: receiptFixture('run_redacted'), scopeSelection: scopeSnapshot() }])
+  await store.refreshActiveSession()
+  assert.ok(storage.get('agent.sessionMessages:7').includes('B_PRIVATE_SENTINEL'))
+  const before = store.messages.at(-1)
+  assert.ok(before.trace.length); assert.ok(before.toolCalls.length)
+  assert.ok(before.sources.length); assert.ok(before.artifacts.length)
+}
+const unavailableRow = extra => ({ runId: 'run_redacted', sessionId: 'session_001', status: 'done',
+  scopeState: 'unavailable', scope: null, input: 'original user question',
+  scopeSelection: scopeSnapshot(), expectedBindingVersion: 3, ...extra })
+
+test('Java unavailable read view purges cached private B, persists redaction, and preserves real done/input/selection', async () => {
+  await cachePrivateSentinel()
+  api.listRuns = async () => ok([unavailableRow()])
+  // A historical checkpoint must not resurrect a revoked receipt.
+  api.pendingRuns = async () => ok({ runs: [], finished: ['run_redacted'], finishedScopes: { run_redacted: receiptFixture('run_redacted') } })
+  await store.refreshActiveSession()
+  const msg = store.messages.at(-1)
+  assert.equal(msg.status, 'done'); assert.equal(msg.error, null)
+  assert.equal(msg.scopeState, 'unavailable'); assert.equal(msg.receiptState, 'unknown'); assert.equal(msg.actualScope, null)
+  assert.equal(msg.content, ''); assert.equal(msg.reasoning, '')
+  for (const key of ['trace', 'toolCalls', 'sources', 'artifacts']) assert.deepEqual(msg[key], [])
+  assert.equal(msg.input, 'original user question'); assert.deepEqual(msg.scopeSelection, scopeSnapshot())
+  assert.equal(msg.expectedBindingVersion, 3)
+  assert.equal(store.messages[0].content, 'original user question')
+  assert.equal((JSON.stringify(store.messages).match(/B_PRIVATE_SENTINEL/g) || []).length, 0)
+  assert.equal((storage.get('agent.sessionMessages:7').match(/B_PRIVATE_SENTINEL/g) || []).length, 0)
+  const boot = freshStore()
+  assert.equal(boot.messages.at(-1).scopeState, 'unavailable')
+  assert.equal(boot.messages.at(-1).status, 'done')
+  responses.push(frames(['delta', { text: 'A_RETRY_RESULT' }], ['done', { finishReason: 'stop' }]))
+  await boot.retryMessage(boot.messages.at(-1).id)
+  assert.equal(confirmations.length, 1)
+  assert.deepEqual(requests.at(-1).body.scopeSelection, scopeSnapshot())
+})
+
+test('available nonempty A restores normally after B redaction', async () => {
+  await cachePrivateSentinel()
+  api.listRuns = async () => ok([unavailableRow()]); await store.refreshActiveSession()
+  api.listRuns = async () => ok([{ ...unavailableRow(), scopeState: 'available', scope: receiptFixture('run_redacted', 3),
+    answer: 'A_ALLOWED_RESULT', trace: [{ name: 'reasoning', data: { text: 'A_ALLOWED_REASONING' } }],
+    sources: [{ id: 'a', excerpt: 'A_ALLOWED_SOURCE' }], artifacts: [{ id: 'a', name: 'A_ALLOWED_ARTIFACT' }] }])
+  await store.refreshActiveSession()
+  const msg = store.messages.at(-1)
+  assert.equal(msg.content, 'A_ALLOWED_RESULT'); assert.equal(msg.status, 'done'); assert.equal(msg.error, null)
+  assert.equal(msg.scopeState, 'observed'); assert.ok(msg.trace.length)
+  assert.equal(msg.sources[0].excerpt, 'A_ALLOWED_SOURCE'); assert.equal(msg.artifacts[0].name, 'A_ALLOWED_ARTIFACT')
+  assert.equal(storage.get('agent.sessionMessages:7').includes('B_PRIVATE_SENTINEL'), false)
+})
+
+test('misbound unavailable rows cannot redact the current matching run ID', async () => {
+  await cachePrivateSentinel()
+  api.listRuns = async () => ok([unavailableRow({ actorUserId: 8 }), unavailableRow({ sessionId: 'other_session' })])
+  await store.refreshActiveSession()
+  assert.equal(store.messages.at(-1).content, 'B_PRIVATE_SENTINEL')
+  assert.ok(storage.get('agent.sessionMessages:7').includes('B_PRIVATE_SENTINEL'))
+})
+
+test('session and owner late unavailable replies cannot clear current private cache', async () => {
+  await cachePrivateSentinel()
+  const slow = Promise.withResolvers(); api.listRuns = () => slow.promise
+  const reading = store.refreshActiveSession()
+  api.listRuns = async () => ok([])
+  await store.switchSession('other_session')
+  responses.push(frames(['meta', { runId: 'run_redacted' }], ['delta', { text: 'CURRENT_SESSION_RESULT' }], ['done', { finishReason: 'stop' }]))
+  await store.sendMessage('current session input')
+  slow.resolve(ok([unavailableRow()])); await reading
+  assert.equal(store.messages.at(-1).content, 'CURRENT_SESSION_RESULT')
+  assert.ok(storage.get('agent.sessionMessages:7').includes('CURRENT_SESSION_RESULT'))
+  const ownerSlow = Promise.withResolvers(); api.listRuns = () => ownerSlow.promise
+  const oldRead = store.refreshActiveSession()
+  storage.set('user', '{"id":8}'); storage.set('token', 'token-eight')
+  storage.set('agent.sessionId:8', 'session_001')
+  const nextOwner = freshStore()
+  responses.push(frames(['meta', { runId: 'run_redacted' }], ['delta', { text: 'CURRENT_OWNER_RESULT' }], ['done', { finishReason: 'stop' }]))
+  await nextOwner.sendMessage('current owner input')
+  ownerSlow.resolve(ok([unavailableRow()])); await oldRead
+  assert.equal(nextOwner.messages.at(-1).content, 'CURRENT_OWNER_RESULT')
+  assert.ok(storage.get('agent.sessionMessages:8').includes('CURRENT_OWNER_RESULT'))
+})
+
+test('unavailable legacy run with no original selection cannot infer contact from an old receipt', async () => {
+  api.listRuns = async () => ok([{ ...unavailableRow(), scopeSelection: null }])
+  await store.refreshActiveSession()
+  const count = requests.length
+  await assert.rejects(store.retryMessage(store.messages.at(-1).id))
+  assert.equal(confirmations.length, 0); assert.equal(requests.length, count)
+  assert.equal(store.messages.at(-1).status, 'done')
+  assert.equal(store.messages.at(-1).error, null)
+})
+
+test('a selection confirmed after the binding was invalidated is sent as confirmed, not swapped for the saved binding', async () => {
+  const workspace = useAgentWorkspaceStore()
+  await workspace.loadScope('session_001')
+  workspace.invalidateScope() // what a cleared conversation or a refused turn leaves behind
+  const chosen = { targets: [{ type: 'group', id: 8 }], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } }
+  workspace.setScope(chosen); workspace.confirmScope()
+  responses.push(frames(stop))
+  await store.sendMessage('read the group')
+  assert.deepEqual(requests[0].body.scopeSelection.targets, [{ type: 'group', id: 8 }])
+  assert.equal(requests[0].body.scopeConfirmed, true)
+  assert.equal(requests[0].body.expectedBindingVersion, 1)
+})
+
+test('an unconfirmed selection is not sent as the empty saved binding after an invalidation', async () => {
+  const workspace = useAgentWorkspaceStore()
+  await workspace.loadScope('session_001')
+  workspace.invalidateScope()
+  workspace.setScope({ targets: [{ type: 'group', id: 8 }], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } })
+  await assert.rejects(store.sendMessage('read the group'), /confirm/i)
+  assert.equal(requests.length, 0)
+  assert.deepEqual(workspace.scopeSelection.targets, [{ type: 'group', id: 8 }])
 })

@@ -32,7 +32,8 @@ before(async () => {
       b.onResolve({ filter: /(?:@\/stores\/|abyssStage|^element-plus$)/ }, ({ path }) => ({ path, namespace: 'boundary' }))
       b.onLoad({ filter: /.*/, namespace: 'boundary' }, ({ path }) => {
         if (path.endsWith('abyssStage')) return { contents: 'export function mountAbyssStage() {}' }
-        if (path === 'element-plus') return { contents: 'export const ElMessage = {success(){},error(){}}, ElMessageBox = {confirm: () => globalThis.workbenchTestStores.confirm()}' }
+        // ElButton is the composer's MCP entry: a plain button is all the view contract needs of it.
+        if (path === 'element-plus') return { contents: 'import { h } from "vue"; export const ElMessage = {success(){},error(){}}, ElMessageBox = {confirm: () => globalThis.workbenchTestStores.confirm()}, ElButton = (props, { slots, attrs }) => h("button", { type: "button", ...attrs }, slots.default?.())', resolveDir: here }
         const name = path.split('/').at(-1)
         // The provider store also exports the reading of a backend model error; each test supplies it.
         const extra = name === 'agentProviders' ? ';export const describeModelError = error => globalThis.workbenchTestStores.describeModelError(error)' : ''
@@ -82,8 +83,16 @@ async function mount(messages = [], sessionId = 'session-one', describeModelErro
     }),
     async confirm() {},
     agentWorkspace: reactive({ attachments: [], tasks: [], async load(sid) { calls.push(['load', sid]) },
+      scopeSelection: { targets: [], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } },
+      scopeConfirmed: false, bindingVersion: 1, sessionGeneration: 1,
+      scopeResources: { contacts: [], groups: [] }, scopeError: '', scopeLoading: false,
+      async loadScope(sid) { calls.push(['loadScope', sid]) }, setScope() {}, confirmScope() {},
+      takeScope() { return { scopeSelection: this.scopeSelection, scopeConfirmed: true, expectedBindingVersion: 1 } },
+      invalidateScope() {}, async saveScope() {},
       async upload(sid, file) { calls.push(['upload', sid, file.name]); const a = { id: 'att-1', fileName: file.name }; this.attachments.push(a); return a },
-      async removeAttachment(sid, id) { calls.push(['delete', sid, id]) }, async updateTask(sid, id, status) { calls.push(['task', sid, id, status]) }
+      async removeAttachment(sid, id) { calls.push(['delete', sid, id]) }, async updateTask(sid, id, status) { calls.push(['task', sid, id, status]) },
+      // Switching the workspace session is not a data load; only load() records one.
+      select(sid) { this.sessionId = sid }
     }),
     agentProviders: reactive({ providers: [selected, { id: 9, purpose: 'embedding', defaultModel: 'vector-only' }],
       chatProviders: [selected], defaultProvider: selected, async fetchAll() {} }),
@@ -253,4 +262,29 @@ test('a clear confirmed after switching sessions clears nothing; the workspace f
   const same = await mount([message])
   await same.menu('more').props.onCommand('clear'); await same.paint()
   assert.deepEqual(same.calls.filter(c => c[0] === 'clear'), [['clear']])
+})
+
+
+test('trace receives its own actual run metadata and artifact preview uses the existing drawer', async () => {
+  const current = { ...message, input: 'Synthetic task request', scope: { chatIds: ['synthetic-chat'] } }
+  const v = await mount([current]); v.nodes('section')
+  const trace = v.widgets.AgentTrace
+  assert.equal(trace.props.run.runId, current.runId)
+  assert.equal(trace.props.run.input, current.input)
+  assert.deepEqual(trace.props.run.scope.chatIds, current.scope.chatIds)
+  trace.props.onPreview(current.artifacts[0]); await v.paint(); v.nodes('section')
+  assert.equal(v.widgets.AgentArtifactDrawer.props.artifact.id, current.artifacts[0].id)
+})
+
+test('workbench header uses the real trace verdict including partial rather than an old summary column', async () => {
+  const current = { ...message, status: 'done', error: null, trace: [{ kind: 'done', runId: 'run-two', attemptId: 'actual', finishReason: 'partial', sequence: 1 }] }
+  const v = await mount([current])
+  assert.match(v.text(), /Partially completed/)
+})
+
+test('local stop cannot advertise confirmed cancellation in the header or answer diagnostic', async () => {
+  const current = { ...message, status: 'cancelled', finishReason: 'cancelled', error: null, trace: [{ kind: 'done', local: true, runId: 'run-two', finishReason: 'cancelled' }] }
+  const v = await mount([current])
+  assert.match(v.text(), /Stop unconfirmed/)
+  assert.doesNotMatch(v.text(), /Cancelled/)
 })

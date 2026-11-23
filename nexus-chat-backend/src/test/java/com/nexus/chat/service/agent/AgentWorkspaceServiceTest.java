@@ -23,6 +23,7 @@ class AgentWorkspaceServiceTest {
     private static final String PATCH = "--- a/demo.txt\n+++ b/demo.txt\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n";
     private AgentWorkbenchTestStore store;
     private AgentRunService runs;
+    private com.nexus.chat.agent.AgentScopeTestDouble authority;
     private AgentGatewayService python;
     private AgentWorkspaceService service;
 
@@ -30,6 +31,9 @@ class AgentWorkspaceServiceTest {
     void setUp() throws Exception {
         store = new AgentWorkbenchTestStore();
         runs = store.runService();
+        // Artifact reads are authorized per run; these fixtures carry a real grant.
+        authority = new com.nexus.chat.agent.AgentScopeTestDouble();
+        org.springframework.test.util.ReflectionTestUtils.setField(runs, "scopes", authority.service());
         python = mock(AgentGatewayService.class);
         when(python.extractAttachment(eq(7L), anyString(), any(byte[].class))).thenAnswer(inv -> {
             byte[] bytes = inv.getArgument(2);
@@ -276,7 +280,12 @@ class AgentWorkspaceServiceTest {
 
     private void addArtifact(String id, String kind, String content) throws Exception {
         String runId = "run_" + id;
-        runs.begin(7L, "as_test", runId, request());
+        var request = request();
+        request.setScopeConfirmed(true);
+        request.setExpectedBindingVersion(1L);
+        runs.begin(7L, "as_test", runId, request);
+        // The run itself carries a real, currently-valid grant for this actor/session.
+        runs.replaceScope(7L, "as_test", runId, authority.grantFor(7L, "as_test", runId, 9L));
         Map<String, Object> canonical = new LinkedHashMap<>(artifact(id, kind, content));
         canonical.put("runId", runId);
         runs.record(7L, "as_test", runId, "artifact", Map.of("artifact", canonical));

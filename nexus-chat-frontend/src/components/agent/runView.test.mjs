@@ -13,8 +13,8 @@ test('counts actual model nodes and tools instead of pretending tools are agents
     model({ status: 'done', at: 90, ms: 50 })
   ]
   const view = buildRunView(trace, { live: false, elapsedMs: 95 })
-  assert.equal(view.summary.calls, 1)
-  assert.equal(view.summary.tools, 2)
+  assert.equal(view.summary.modelNodes, 1)
+  assert.equal(view.summary.toolNodes, 2)
   assert.equal(view.summary.agents, 1)
   assert.equal(view.summary.steps, 4)
   assert.equal(view.nodes.find(n => n.id === 'model-1').state, 'done')
@@ -83,7 +83,7 @@ test('token display uses provider usage and otherwise remains unknown', () => {
     { kind: 'usage', inputTokens: 10, outputTokens: 5, totalTokens: 15, usageReported: true, at: 90 }
   ], { live: false })
   assert.equal(view.summary.totalTokens, 15)
-  assert.equal(view.nodes[0].usage.totalTokens, 15)
+  assert.equal(view.nodes[0].usage.totalTokens, null) // Total was not reported for this node.
   assert.equal(buildRunView([{ kind: 'usage', inputTokens: 0, outputTokens: 0, totalTokens: 0, usageReported: false }], {}).summary.totalTokens, null)
 })
 
@@ -165,13 +165,13 @@ test('a replayed meta cannot redirect the next frame; sequence numbers are local
 test('unattributed native thoughts survive copy without creating agents, steps, or model calls', () => {
   const thought = { kind: 'reasoning', agentId: 'code', iteration: 2, text: 'unattributed' }
   const orphan = buildRunView([thought])
-  assert.deepEqual([orphan.summary.calls, orphan.summary.agents, orphan.summary.steps], [0, 0, 0])
+  assert.deepEqual([orphan.summary.modelNodes, orphan.summary.agents, orphan.summary.steps], [0, 0, 0])
   assert.equal(orphan.reasoning, 'unattributed')
   const trace = [model({ agentId: 'code', iteration: 2, nodeId: 'c' }), model({ agentId: 'code', iteration: 2, nodeId: 'd' }),
     model({ agentId: 'doc', iteration: 2, nodeId: 'e' }), thought, { ...thought, agentId: 'doc', text: 'document' }]
   const v = buildRunView(trace)
   assert.deepEqual(v.nodes.filter(n => n.kind === 'model').map(n => n.reasoning), ['', '', 'document'])
-  assert.equal(v.summary.calls, 3)
+  assert.equal(v.summary.modelNodes, 3)
   assert.match(formatTraceText(trace), /unattributed/)
 })
 
@@ -179,7 +179,7 @@ test('a fresh legacy start is not another delta for the previous call', () => {
   const start = model({ nodeId: undefined })
   const v = buildRunView([start, { ...start, status: 'done' }, start,
     { kind: 'reasoning', agentId: 'assistant', iteration: 1, text: 'not uniquely identified' }], { live: true })
-  assert.equal(v.summary.calls, 2)
+  assert.equal(v.summary.modelNodes, 2)
   assert.deepEqual(v.nodes.filter(n => n.kind === 'model').map(n => [n.state, n.reasoning]), [['done', ''], ['running', '']])
   assert.match(v.reasoning, /not uniquely identified/)
 })
@@ -219,7 +219,7 @@ test('a limited attempt stays limited after resume, not running or successfully 
 test('partial usage updates preserve previously reported components, including zero', () => {
   const v = buildRunView([model({ inputTokens: 0, usageReported: true }), model({ outputTokens: 3, status: 'done' }),
     { kind: 'usage', outputTokens: 4, usageReported: true }, { kind: 'usage', usageReported: false, inputTokens: 0 }])
-  assert.deepEqual(v.nodes[0].usage, { inputTokens: 0, outputTokens: 3, totalTokens: 3 })
+  assert.deepEqual(v.nodes[0].usage, { inputTokens: 0, outputTokens: 3, totalTokens: null })
   assert.deepEqual(v.usage, { inputTokens: null, outputTokens: 4, totalTokens: null })
 })
 
@@ -227,8 +227,11 @@ test('legacy completion facts remain readable without treating unknown stage out
   const v = buildRunView([{ kind: 'context', shortTerm: 2, recalled: 0 }, { kind: 'knowledge', chunks: null },
     { name: 'stage', data: { phase: 'web_search', nodeId: 'w', status: 'unreported' } }, { kind: 'mock' }])
   assert.deepEqual(v.nodes.map(n => n.kind), ['context', 'knowledge', 'web_search', 'mock'])
-  assert.equal(v.summary.finishedSteps, 1)
-  assert.equal(v.summary.calls, 0)
+  assert.equal(v.summary.finishedSteps, 0) // Counts alone are not a reported outcome.
+  assert.equal(v.summary.modelNodes, 0)
+  const reported = buildRunView([{ kind: 'context', status: 'done', shortTerm: 2, recalled: 0, ms: 4 },
+    { kind: 'knowledge', status: 'skipped', chunks: null }, { kind: 'attachments', status: 'done', count: 1 }])
+  assert.deepEqual(reported.nodes.map(n => n.state), ['done', 'skipped', 'done'])
 })
 
 test('a new partial usage report cannot borrow missing counts from a previous attempt', () => {
@@ -243,7 +246,7 @@ test('adjacent unattributed reasoning chunks remain verbatim and separate across
     { kind: 'reasoning', iteration: 2, text: 'linked' }, { kind: 'meta', traceId: 'second', resumed: true },
     { kind: 'reasoning', iteration: 2, text: 'retry' }])
   assert.equal(v.reasoning, 'unlinked\n\nretry')
-  assert.equal(v.summary.calls, 0)
+  assert.equal(v.summary.modelNodes, 0)
 })
 
 test('a turn that went on without tools shows that as a skipped step, not as a failure or a model role', () => {
@@ -257,14 +260,37 @@ test('a turn that went on without tools shows that as a skipped step, not as a f
   assert.equal(step.state, 'skipped')
   assert.equal(step.detail, 'tool service unavailable (timeout)')
   assert.equal(view.summary.status, 'done')
-  assert.equal(view.agents.length, 1)
+  assert.equal(view.agents.length, 0) // No agentId was reported; do not invent assistant.
 })
 
 test('an early end of the stream leaves the status the turn actually ended with', () => {
   const trace = [{ kind: 'error', transport: true, code: 'STREAM_INCOMPLETE', message: 'early EOF' }]
   assert.equal(buildRunView(trace, { status: 'interrupted', live: false }).summary.status, 'interrupted')
-  assert.equal(buildRunView(trace, { status: 'cancelled', live: false }).summary.status, 'cancelled')
+  assert.equal(buildRunView(trace, { status: 'cancelled', live: false }).summary.status, 'stop_requested') // No backend cancellation acknowledgement.
   // A real failure still wins over a summary that claims success.
   const failed = [{ kind: 'error', code: 'AGENT_MODEL_50202', message: 'upstream refused' }]
   assert.equal(buildRunView(failed, { status: 'stop', live: false }).summary.status, 'error')
+})
+
+test('T1 authoritative cumulative counters are independent of displayed nodes and unknown usage is not zero', () => {
+  const v = buildRunView([model(), { kind: 'usage', modelCalls: 4, toolCallCount: 2, reusedToolCallCount: 3,
+    inputTokens: null, outputTokens: null, totalTokens: null, usageReported: false, usageComplete: false }])
+  assert.equal(v.summary.calls, 4)
+  assert.equal(v.summary.tools, 2)
+  assert.equal(v.summary.reusedToolCallCount, 3)
+  assert.equal(v.summary.totalTokens, null)
+  assert.equal(v.summary.usageReported, false)
+})
+
+test('T1 explicit agent and transport errors do not poison successful run view', () => {
+  const v = buildRunView([model(), { kind: 'error', agentId: 'assistant', scope: 'agent', message: 'optional' },
+    { kind: 'error', scope: 'transport', message: 'wire' }, { kind: 'done', finishReason: 'stop' }])
+  assert.equal(v.summary.status, 'done')
+  assert.equal(v.summary.error, null)
+})
+
+test('T1 a trace without authoritative counters still knows its model nodes and reports the call count as unknown', () => {
+  const v = buildRunView([model(), model({ status: 'done' })], { live: false })
+  assert.equal(v.summary.modelNodes, 1)
+  assert.equal(v.summary.calls, null)
 })

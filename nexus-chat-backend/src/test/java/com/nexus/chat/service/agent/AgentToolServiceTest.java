@@ -33,15 +33,25 @@ class AgentToolServiceTest {
         assertEquals(code, assertThrows(AgentToolException.class, call).getCode());
     }
 
+    /** Out-of-scope resources are refused by the authority, which must precede any read. */
+    private static void assertScopeRefused(Executable call) {
+        var thrown = assertThrows(RuntimeException.class, call);
+        boolean denied = (thrown instanceof AgentException agentException
+                    && agentException.getCode() == AgentErrorCode.AGENT_AUTHZ_40301)
+                || (thrown instanceof org.springframework.web.server.ResponseStatusException statusException
+                    && statusException.getStatusCode().value() == 403);
+        assertTrue(denied, "expected a scope refusal, got " + thrown);
+    }
+
     private int pageSizeAskedFor() {
         ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
-        verify(fixture.messages(), atLeastOnce()).findByChatIdOrderByCreatedAtDesc(eq(CHAT), page.capture());
+        verify(fixture.messages(), atLeastOnce()).findScopedMessages(eq(CHAT), any(), any(), page.capture());
         return page.getValue().getPageSize();
     }
 
     @Test
     void aMemberReadsTheChatNewestFirst() {
-        Map<String, Object> body = tools.getRecentMessages(ALICE, CHAT, null);
+        Map<String, Object> body = fixture.inScope(ALICE, () -> tools.getRecentMessages(ALICE, CHAT, null));
 
         assertEquals(CHAT, body.get("chatId"));
         List<?> messages = (List<?>) body.get("messages");
@@ -58,19 +68,20 @@ class AgentToolServiceTest {
 
     @Test
     void theLimitIsCappedAndMustBePositive() {
-        tools.getRecentMessages(ALICE, CHAT, 5000);
+        fixture.inScope(ALICE, () -> tools.getRecentMessages(ALICE, CHAT, 5000));
         assertEquals(200, pageSizeAskedFor());
-        assertEquals(1, ((List<?>) tools.getRecentMessages(ALICE, CHAT, 1).get("messages")).size());
-        assertToolError(AgentToolException.Code.BAD_ARG, () -> tools.getRecentMessages(ALICE, CHAT, 0));
+        assertEquals(1, ((List<?>) fixture.inScope(ALICE, () -> tools.getRecentMessages(ALICE, CHAT, 1)).get("messages")).size());
+        assertToolError(AgentToolException.Code.BAD_ARG, () -> fixture.inScope(ALICE, () -> tools.getRecentMessages(ALICE, CHAT, 0)));
     }
 
     @Test
     void aNonMemberIsRefusedBeforeAnythingIsRead() {
-        assertForbidden(() -> tools.getRecentMessages(CAROL, CHAT, null));
-        assertForbidden(() -> tools.getChatProfile(CAROL, CHAT));
-        assertForbidden(() -> tools.getMessageById(CAROL, FIRST_MESSAGE));
+        // Carol has no grant for this chat, so the authority refuses before any read.
+        assertScopeRefused(() -> fixture.inScope(CAROL, () -> tools.getRecentMessages(CAROL, CHAT, null)));
+        assertScopeRefused(() -> fixture.inScope(CAROL, () -> tools.getChatProfile(CAROL, CHAT)));
+        assertScopeRefused(() -> fixture.inScope(CAROL, () -> tools.getMessageById(CAROL, FIRST_MESSAGE)));
 
-        verify(fixture.messages(), never()).findByChatIdOrderByCreatedAtDesc(anyLong(), any(Pageable.class));
+        verify(fixture.messages(), never()).findScopedMessages(anyLong(), any(), any(), any(Pageable.class));
         verify(fixture.chats(), never()).findById(anyLong());
         verify(fixture.members(), never()).findByChatId(anyLong());
     }
@@ -86,12 +97,12 @@ class AgentToolServiceTest {
 
     @Test
     void chatAndMessageLookupsAnswerForMembers() {
-        Map<String, Object> chat = tools.getChatProfile(BOB, CHAT);
+        Map<String, Object> chat = fixture.inScope(BOB, () -> tools.getChatProfile(BOB, CHAT));
         assertEquals("direct", chat.get("chatType"));
         assertEquals("", chat.get("chatName"));
         assertEquals(List.of(ALICE, BOB), chat.get("memberIds"));
 
-        Map<String, Object> message = tools.getMessageById(BOB, FIRST_MESSAGE);
+        Map<String, Object> message = fixture.inScope(BOB, () -> tools.getMessageById(BOB, FIRST_MESSAGE));
         assertEquals(CHAT, message.get("chatId"));
         assertEquals("alice", message.get("senderName"));
         assertEquals("hi bob", message.get("content"));
@@ -100,9 +111,11 @@ class AgentToolServiceTest {
     @Test
     void missingThingsAreNotFoundNotBadArguments() {
         when(fixture.members().existsByChatIdAndUserId(6L, ALICE)).thenReturn(true);
-        assertToolError(AgentToolException.Code.NOT_FOUND, () -> tools.getChatProfile(ALICE, 6L));
-        assertToolError(AgentToolException.Code.NOT_FOUND, () -> tools.getUserProfile(ALICE, 404L));
-        assertToolError(AgentToolException.Code.NOT_FOUND, () -> tools.getMessageById(ALICE, 999L));
+        assertScopeRefused(() -> fixture.inScope(ALICE, () -> tools.getChatProfile(ALICE, 6L)));
+        // A user outside the authorized contacts is refused by scope, not disclosed as missing.
+        assertScopeRefused(() -> fixture.inScope(ALICE, () -> tools.getUserProfile(ALICE, 404L)));
+        assertToolError(AgentToolException.Code.NOT_FOUND,
+                () -> fixture.inScope(ALICE, () -> tools.getMessageById(ALICE, 999L)));
         assertToolError(AgentToolException.Code.NOT_FOUND, () -> tools.findUserByUsername(ALICE, "ghost"));
         assertToolError(AgentToolException.Code.NOT_FOUND, () -> tools.findDirectChatWithUser(ALICE, "ghost"));
         assertToolError(AgentToolException.Code.NOT_FOUND, () -> tools.findDirectChatWithUser(ALICE, "carol"));
@@ -114,7 +127,7 @@ class AgentToolServiceTest {
         assertEquals(BOB, profile.get("userId"));
         assertEquals("bob", profile.get("username"));
         assertEquals(profile, tools.findUserByUsername(ALICE, "bob"));
-        assertEquals(profile, tools.getUserProfile(ALICE, BOB));
+        assertEquals(profile, fixture.inScope(ALICE, () -> tools.getUserProfile(ALICE, BOB)));
 
         Map<String, Object> direct = tools.findDirectChatWithUser(ALICE, "@bob");
         assertEquals(CHAT, direct.get("chatId"));
@@ -134,7 +147,8 @@ class AgentToolServiceTest {
         assertEquals(CHAT, row.get("chatId"));
         assertEquals("direct", row.get("type"));
         assertEquals("@bob", row.get("name"));
-        assertEquals("2026-11-20T09:31", row.get("lastMessageAt"));
+        // Discovery lists candidates only: no activity data for a chat that may be out of scope.
+        assertEquals(java.util.Set.of("chatId", "type", "name"), row.keySet());
         assertEquals("@alice", ((Map<?, ?>) ((List<?>) tools.listMyChats(BOB, null, null, null).get("chats")).get(0)).get("name"));
 
         assertEquals(List.of(), tools.listMyChats(CAROL, null, null, null).get("chats"));

@@ -61,7 +61,13 @@ class AgentMcpSecurityTest {
     @Import({SecurityConfig.class, JwtAuthenticationFilter.class, AgentMcpConfig.class, AgentToolRegistry.class,
             InternalAgentController.class, AgentExceptionHandler.class})
     static class App {
-        private final AgentToolFixture fixture = AgentToolFixture.create();
+        // One fixture instance shared by the beans and the test body.
+        static AgentToolFixture shared;
+        private final AgentToolFixture fixture;
+        App() {
+            this.fixture = AgentToolFixture.create();
+            shared = this.fixture;
+        }
 
         @Bean
         AgentToolService agentToolService() {
@@ -127,8 +133,12 @@ class AgentMcpSecurityTest {
 
         String call = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"get_recent_messages\",\"arguments\":{\"chat_id\":5}}}";
+        // A chat read needs the run's grant header, exactly as the agent sends it.
+        // The fixture's grant header is what the agent sends; a static app config holds it.
+        String scopeHeader = App.shared.scopeHeader(7L);
         JsonNode member = JSON.readTree(send("POST", AgentMcpConfig.MCP_PATH, call,
-                "Authorization", "Bearer fixture-internal-token", "X-Actor-User-Id", "7").body()).path("result");
+                "Authorization", "Bearer fixture-internal-token", "X-Actor-User-Id", "7",
+                "X-Agent-Scope", scopeHeader).body()).path("result");
         assertEquals(2, member.at("/structuredContent/messages").size(), member.toString());
 
         JsonNode stranger = JSON.readTree(send("POST", AgentMcpConfig.MCP_PATH, call,

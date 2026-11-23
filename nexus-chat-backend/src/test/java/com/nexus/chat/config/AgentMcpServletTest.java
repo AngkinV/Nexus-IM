@@ -51,6 +51,7 @@ class AgentMcpServletTest {
         request.setContentType("application/json");
         request.addHeader("Accept", "application/json, text/event-stream");
         headers.forEach(request::addHeader);
+        try { var header=fixture.scopeHeader(Long.parseLong(headers.getOrDefault("X-Actor-User-Id",""))); if(header!=null&&!headers.containsKey("X-Agent-Scope")) request.addHeader("X-Agent-Scope",header); } catch(NumberFormatException ignored) { }
         request.setContent(body.getBytes(StandardCharsets.UTF_8));
         MockHttpServletResponse response = new MockHttpServletResponse();
         transport.service(request, response);
@@ -139,9 +140,18 @@ class AgentMcpServletTest {
             arguments.put("chat_id", 5);
             arguments.put(forged, 7);
             JsonNode result = call("get_recent_messages", arguments, "8");
-            assertEquals("BAD_ARG", toolError(result).path("toolError").asText(), forged);
+            // Refused either by the schema (BAD_ARG) or, before any schema check, by the
+            // scope authority. What must never happen is a read performed as alice.
+            String code = toolError(result).path("toolError").asText();
+            assertTrue(List.of("BAD_ARG", "FORBIDDEN").contains(code), forged + " -> " + code);
             assertTrue(result.path("structuredContent").isMissingNode() || result.path("structuredContent").isNull());
         }
+
+        // With a legitimate grant, the smuggled identity field is rejected as a bad argument.
+        JsonNode withScope = rpc("tools/call", Map.of("name", "get_recent_messages",
+                "arguments", Map.of("chat_id", 5, "actorUserId", 7)),
+                Map.of("X-Actor-User-Id", "7", "X-Agent-Scope", fixture.scopeHeader(7L))).path("result");
+        assertEquals("BAD_ARG", toolError(withScope).path("toolError").asText());
 
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("name", "get_recent_messages");
@@ -165,7 +175,7 @@ class AgentMcpServletTest {
 
     @Test
     void notFoundAndBadArgumentsAreToolErrorsNotProtocolErrors() throws Exception {
-        assertEquals("NOT_FOUND", toolError(call("get_user_profile", Map.of("user_id", 404), "7")).path("toolError").asText());
+        assertEquals("FORBIDDEN", toolError(call("get_user_profile", Map.of("user_id", 404), "7")).path("toolError").asText());
         assertEquals("NOT_FOUND", toolError(call("find_direct_chat_with_user", Map.of("username", "carol"), "7")).path("toolError").asText());
         assertEquals("BAD_ARG", toolError(call("find_user_by_username", Map.of("username", "@"), "7")).path("toolError").asText());
         assertEquals("BAD_ARG", toolError(call("get_recent_messages", Map.of("chat_id", "5"), "7")).path("toolError").asText());
