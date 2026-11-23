@@ -1,3 +1,4 @@
+import { sameId } from '../utils/socialData.mjs'
 /**
  * Sync service for incremental (delta) synchronization.
  * Implements WeChat-style delta sync: fetch only what changed since last sync.
@@ -17,6 +18,11 @@ const syncService = {
    */
   async performDeltaSync(stores) {
     const results = { messages: 0, chats: 0, contacts: 0 }
+    const currentUserId = stores.userStore?.currentUser?.id
+    const identityToken = stores.contactStore.captureIdentityRevision()
+    const chatToken = stores.chatStore.captureChatRevision()
+    const current = () => sameId(currentUserId, stores.userStore?.currentUser?.id) && stores.contactStore.isIdentityRevisionCurrent(identityToken)
+    if (!current()) return results
 
     try {
       // Get last sync timestamps from IndexedDB
@@ -25,7 +31,7 @@ const syncService = {
       const lastContactSync = await offlineStore.getLastSyncTime('contacts')
 
       // Build the earliest timestamp to use as 'since' parameter
-      const timestamps = [lastMessageSync, lastChatSync, lastContactSync].filter(Boolean)
+      const timestamps = [lastMessageSync, lastChatSync, lastContactSync].filter(t => t && Number.isFinite(new Date(t).getTime()))
       const since = timestamps.length > 0
         ? new Date(Math.min(...timestamps.map(t => new Date(t).getTime()))).toISOString()
         : null
@@ -35,17 +41,19 @@ const syncService = {
         return results
       }
 
+      if (!current()) return results
       // Call delta sync endpoint
       const response = await apiClient.get('/sync/delta', {
         params: { since, types: 'messages,chats,contacts' }
       })
 
       const delta = response.data
-      const currentUserId = stores.userStore?.currentUser?.id ?? null
+      if (!current()) return results
 
       // Merge messages
       if (delta.messages && delta.messages.length > 0) {
         await offlineStore.saveMessages(delta.messages)
+        if (!current()) return results
         results.messages = delta.messages.length
 
         // Update Pinia store
@@ -64,22 +72,23 @@ const syncService = {
         results.chats = delta.chats.length
 
         if (stores.chatStore) {
-          stores.chatStore.mergeChats(delta.chats, currentUserId)
+          stores.chatStore.mergeChats(delta.chats, currentUserId, chatToken, identityToken)
         }
       }
 
       // Merge contacts
       if (delta.contacts && delta.contacts.length > 0) {
-        await offlineStore.saveContacts(delta.contacts)
         results.contacts = delta.contacts.length
 
         if (stores.contactStore) {
-          stores.contactStore.mergeContacts(delta.contacts)
+          stores.contactStore.mergeContacts(delta.contacts, identityToken)
         }
       }
 
       // Update sync timestamps
-      const now = new Date().toISOString()
+      if (!current()) return results
+      const now = delta.syncedAt || delta.serverTime
+      if (!now || !Number.isFinite(new Date(now).getTime())) return results
       await offlineStore.setLastSyncTime('messages', now)
       await offlineStore.setLastSyncTime('chats', now)
       await offlineStore.setLastSyncTime('contacts', now)
@@ -87,6 +96,7 @@ const syncService = {
       console.log(`[Sync] Delta sync complete: ${results.messages} messages, ${results.chats} chats, ${results.contacts} contacts`)
     } catch (error) {
       console.error('[Sync] Delta sync failed:', error)
+      throw error
     }
 
     return results
@@ -98,7 +108,7 @@ const syncService = {
    *
    * @param {Function} sendFn - WebSocket send function
    */
-  async flushPendingMessages(sendFn) {
+  async flushPendingMessages(sendFn, ownerId, isCurrent = () => true) {
     // If IndexedDB is unavailable (private mode, quota, corruption) there is
     // no offline outbox to flush — just return quietly instead of letting the
     // failure bubble up to Main.vue.
@@ -112,6 +122,8 @@ const syncService = {
     console.log(`[Sync] Flushing ${pending.length} pending messages`)
 
     for (const msg of pending) {
+      if (!isCurrent()) return
+      if (!sameId(msg.senderId, ownerId)) continue
       try {
         await sendFn({
           chatId: msg.chatId,
@@ -121,6 +133,7 @@ const syncService = {
           fileUrl: msg.fileUrl,
           clientMsgId: msg.clientMsgId
         })
+        if (!isCurrent()) return
         await offlineStore.markPendingAsSent(msg.id)
       } catch (error) {
         console.error('[Sync] Failed to flush pending message:', error)

@@ -1029,7 +1029,7 @@
     },
     "providers": {
       "title": "AI 模型设置",
-      "help": "为不同服务商分别配置 API Key、模型与基础地址；支持任意 OpenAI 兼容服务、Claude、Gemini。",
+      "help": "可以添加任意数量的服务商：官方接口、聚合平台、本机服务或自定义中转，各自保存地址、API Key 与默认模型。",
       "add": "新增服务商",
       "edit": "编辑",
       "default": "默认",
@@ -1057,11 +1057,8 @@
       "incompatible": "此模型不支持所选用途。",
       "noKey": "未填",
       "empty": "还没有配置任何服务商，点击「新增服务商」开始。",
-      "preset": "选择预设",
-      "fieldId": "Provider ID",
-      "fieldIdHint": "唯一标识，如 openai / deepseek-personal / ollama-local",
+      "preset": "服务商",
       "fieldDisplay": "显示名称",
-      "displayPlaceholder": "OpenAI 主账号",
       "fieldBaseUrl": "Base URL",
       "fieldModel": "默认模型",
       "fieldModelHint": "手动输入完整模型标识或别名",
@@ -1076,7 +1073,47 @@
       "colActions": "操作",
       "tabChat": "对话模型",
       "tabEmbedding": "向量 Embedding",
-      "embeddingHelp": "为知识库选择支持 /embeddings 的服务商；与对话模型独立配置。"
+      "embeddingHelp": "为知识库选择支持 /embeddings 的服务商；与对话模型独立配置。",
+      "searchChannels": "搜索名称、服务商、模型或地址",
+      "count": "共 {n} 个",
+      "countFiltered": "{shown} / {n} 个",
+      "noMatch": "没有匹配的服务商",
+      "searchVendors": "搜索服务商",
+      "customHint": "用于中转站、自建网关或列表里没有的服务商：填写它的地址，并选择它使用的接口协议。",
+      "channelId": "渠道标识：{id}（保存后不变）",
+      "fieldFormat": "接口协议",
+      "formatFixed": "该服务商的接口协议是固定的。",
+      "baseUrlHint": "填到版本路径为止，例如 https://api.example.com/v1，不要带 /chat/completions。",
+      "baseUrlRequired": "请填写 Base URL",
+      "keyOptionalHint": "本机服务不需要 API Key，可以留空。",
+      "keyNotNeeded": "无需密钥",
+      "format": {
+        "openai": "OpenAI 兼容",
+        "anthropic": "Anthropic",
+        "gemini": "Gemini"
+      },
+      "group": {
+        "official": "官方",
+        "aggregator": "聚合平台",
+        "local": "本机",
+        "custom": "自定义"
+      },
+      "status": {
+        "ok": "可用",
+        "invalid": "密钥无效",
+        "unknown": "未测试"
+      },
+      "switcher": {
+        "title": "切换模型",
+        "search": "搜索服务商或模型",
+        "none": "还没有可用的服务商",
+        "noMatch": "没有匹配的服务商",
+        "count": "{n} 个服务商",
+        "issue": {
+          "model": "未选择模型",
+          "key": "缺少 API Key"
+        }
+      }
     },
     "knowledge": {
       "title": "知识库管理",

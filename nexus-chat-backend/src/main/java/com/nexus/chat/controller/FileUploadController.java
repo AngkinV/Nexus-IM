@@ -2,6 +2,7 @@ package com.nexus.chat.controller;
 
 import com.nexus.chat.model.FileUpload;
 import com.nexus.chat.repository.FileUploadRepository;
+import com.nexus.chat.storage.UploadStorage;
 import com.nexus.chat.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,11 +37,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FileUploadController {
 
-    private static final String UPLOAD_DIR = "uploads/";
     private static final long MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
     private static final int EXPIRY_DAYS = 30;
 
     private final FileUploadRepository fileUploadRepository;
+    private final UploadStorage storage;
 
     /**
      * 单文件上传（小于5MB）
@@ -75,7 +76,7 @@ public class FileUploadController {
 
             // 创建按日期分类的目录
             String dateDir = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
-            File uploadDir = new File(UPLOAD_DIR + dateDir);
+            File uploadDir = storage.resolve(dateDir).toFile();
             if (!uploadDir.exists()) {
                 uploadDir.mkdirs();
             }
@@ -88,7 +89,7 @@ public class FileUploadController {
             String filePath = dateDir + "/" + storedName;
 
             // 保存文件
-            Path targetPath = Paths.get(UPLOAD_DIR + filePath);
+            Path targetPath = storage.resolve(filePath);
             Files.write(targetPath, file.getBytes());
 
             // 保存到数据库
@@ -137,7 +138,7 @@ public class FileUploadController {
 
         try {
             // 创建临时分片目录
-            File chunksDir = new File(UPLOAD_DIR + "chunks/" + fileId);
+            File chunksDir = storage.resolve("chunks/" + fileId).toFile();
             if (!chunksDir.exists()) {
                 chunksDir.mkdirs();
             }
@@ -153,7 +154,7 @@ public class FileUploadController {
             // 如果是最后一个分片，合并文件
             if (chunkIndex == totalChunks - 1) {
                 String dateDir = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
-                File uploadDir = new File(UPLOAD_DIR + dateDir);
+                File uploadDir = storage.resolve(dateDir).toFile();
                 if (!uploadDir.exists()) {
                     uploadDir.mkdirs();
                 }
@@ -163,10 +164,10 @@ public class FileUploadController {
                 String filePath = dateDir + "/" + storedName;
 
                 // 合并分片
-                mergeChunks(fileId, totalChunks, UPLOAD_DIR + filePath);
+                mergeChunks(fileId, totalChunks, storage.resolve(filePath));
 
                 // 计算合并后文件的MD5
-                byte[] fileBytes = Files.readAllBytes(Paths.get(UPLOAD_DIR + filePath));
+                byte[] fileBytes = Files.readAllBytes(storage.resolve(filePath));
                 String md5Hash = calculateMD5(fileBytes);
 
                 // 保存到数据库
@@ -233,7 +234,7 @@ public class FileUploadController {
         }
 
         try {
-            Path filePath = Paths.get(UPLOAD_DIR + file.getFilePath());
+            Path filePath = storage.resolve(file.getFilePath());
             Resource resource = new UrlResource(filePath.toUri());
 
             if (!resource.exists()) {
@@ -277,7 +278,7 @@ public class FileUploadController {
         }
 
         try {
-            Path filePath = Paths.get(UPLOAD_DIR + file.getFilePath());
+            Path filePath = storage.resolve(file.getFilePath());
             Resource resource = new UrlResource(filePath.toUri());
 
             if (!resource.exists()) {
@@ -360,11 +361,10 @@ public class FileUploadController {
         }
     }
 
-    private void mergeChunks(String fileId, int totalChunks, String targetPath) throws IOException {
-        Path mergedPath = Paths.get(targetPath);
+    private void mergeChunks(String fileId, int totalChunks, Path mergedPath) throws IOException {
 
         for (int i = 0; i < totalChunks; i++) {
-            Path chunkPath = Paths.get(UPLOAD_DIR + "chunks/" + fileId + "/chunk_" + i);
+            Path chunkPath = storage.resolve("chunks/" + fileId + "/chunk_" + i);
             byte[] chunkData = Files.readAllBytes(chunkPath);
             Files.write(mergedPath, chunkData,
                     java.nio.file.StandardOpenOption.CREATE,
@@ -372,7 +372,7 @@ public class FileUploadController {
         }
 
         // 删除临时分片目录
-        deleteDirectory(new File(UPLOAD_DIR + "chunks/" + fileId));
+        deleteDirectory(storage.resolve("chunks/" + fileId).toFile());
     }
 
     private void deleteDirectory(File directory) {

@@ -114,6 +114,42 @@ public class RedisCacheService {
                 .collect(Collectors.toSet());
     }
 
+    /** Atomic per-session leases. The online index survives key expiry so the sweeper
+     * can observe the final offline transition. No client-supplied session is accepted here. */
+    public Long updatePresenceLease(Long userId, String sessionId, String operation, long now) {
+        String script = "local before=redis.call('ZCARD',KEYS[1]); local last=redis.call('ZREVRANGE',KEYS[1],0,0,'WITHSCORES'); local live=redis.call('ZCOUNT',KEYS[1],'('..ARGV[1],'+inf'); " +
+                "redis.call('ZREMRANGEBYSCORE',KEYS[1],'-inf',ARGV[1]); " +
+                "if ARGV[3]=='refresh' then redis.call('ZADD',KEYS[1],ARGV[2],ARGV[4]); " +
+                "elseif ARGV[3]=='remove' then redis.call('ZREM',KEYS[1],ARGV[4]); end; " +
+                "local after=redis.call('ZCARD',KEYS[1]); " +
+                "if after>0 then redis.call('SADD',KEYS[2],ARGV[5]); " +
+                "else redis.call('DEL',KEYS[1]); redis.call('SREM',KEYS[2],ARGV[5]); " +
+                "end; if before>0 and (after==0 or live==0) then redis.call('SET',KEYS[3],string.format('%.0f',math.min(tonumber(ARGV[1]),tonumber(last[2])))); end; " +
+                "if live==0 and after>0 then return 1; end; " +
+                "if before>0 and after==0 then return -1; end; return 0;";
+        return stringRedisTemplate.execute(
+                new org.springframework.data.redis.core.script.DefaultRedisScript<>(script, Long.class),
+                List.of("presence:leases:" + userId, "presence:leased-users", "presence:last-seen:" + userId),
+                String.valueOf(now), String.valueOf(now + 90000), operation,
+                sessionId == null ? "" : sessionId, String.valueOf(userId));
+    }
+
+    public Boolean hasPresenceLease(Long userId, long now) {
+        Long count = stringRedisTemplate.opsForZSet().count("presence:leases:" + userId, now + 1, Double.POSITIVE_INFINITY);
+        return count == null ? null : count > 0;
+    }
+
+    public Set<Long> getLeasedUserIds() {
+        Set<String> ids = stringRedisTemplate.opsForSet().members("presence:leased-users");
+        return ids == null ? Collections.emptySet() : ids.stream().map(Long::valueOf).collect(Collectors.toSet());
+    }
+
+    public java.time.LocalDateTime getPresenceLastSeen(Long userId) {
+        String value = stringRedisTemplate.opsForValue().get("presence:last-seen:" + userId);
+        return value == null ? null : java.time.LocalDateTime.ofInstant(
+                java.time.Instant.ofEpochMilli(Long.parseLong(value)), java.time.ZoneOffset.UTC);
+    }
+
     // ==================== Online Time Accounting ====================
 
     /**

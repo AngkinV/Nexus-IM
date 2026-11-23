@@ -1,22 +1,8 @@
-// Each transition snapshots render quality when it starts. All frame loops
-// still honour the shared FPS and suspend settings.
-import { createFrameGate, scaledPixelRatio, isRenderSuspended, requestFrame, cancelFrame } from '../../utils/renderGovernor.js'
-/**
- * Tavern entrance scene: the picture that plays when the user walks into the tavern.
- *
- * A distant mountain range is drawn over the app as a line drawing, washed in ink and
- * then in colour; the finished sheet is crumpled into a paper ball and thrown away,
- * leaving the tavern, which the app switched to while the picture covered the screen.
- *
- * Everything is procedural (no image assets): Canvas 2D paints the picture, WebGL2
- * crumples it. Baking runs in small slices so it never blocks a frame.
- *
- * @param {HTMLCanvasElement} cv    2D canvas, fullscreen
- * @param {HTMLCanvasElement} glcv  WebGL canvas, fullscreen, stacked above `cv`
- * @param {{ onCommit?: () => void, onDone?: (reason: 'done' | 'skipped' | 'cancelled') => void }} hooks
- *   onCommit fires once the picture covers the app (0.62s): switch the view now.
- *   onDone fires when the stage is clear again.
- */
+import { createFrameGate, scaledPixelRatio, isRenderSuspended, requestFrame, cancelFrame, onRenderSuspendChange } from '../../utils/renderGovernor.js'
+import { createTavernEntranceMusic } from './tavernEntranceMusic.js'
+import { createEntranceClock, inkOrigin, smooth, entrancePhase } from './tavernEntranceGrowth.js'
+
+// HEAD mountain painter retained verbatim; entrance presentation and music share one transport.
 export function createTavernEntranceScene(cv, glcv, hooks = {}) {
   // ── Helpers ──────────────────────────────────────────────────────────────────
   const TAU = Math.PI * 2
@@ -933,27 +919,6 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
     wantCrease = '',
     fieldsQueued = false,
     disposed = false
-  const queue = []
-  let pumping = false,
-    budget = 6
-  function pump() {
-    if (disposed) {
-      queue.length = 0
-      pumping = false
-      return
-    }
-    const t0 = performance.now()
-    while (queue.length && performance.now() - t0 < budget) if (queue[0].next().done) queue.shift()
-    if (queue.length) setTimeout(pump, 0)
-    else pumping = false
-  }
-  function enqueue(gen) {
-    queue.push(gen)
-    if (!pumping) {
-      pumping = true
-      setTimeout(pump, 0)
-    }
-  }
   // Ridge shapes and washes are computed once, for both palettes. They are small and stay in memory.
   function* bakeFields() {
     for (const L of LAY) {
@@ -963,12 +928,6 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
     for (const L of LAY) {
       yield* L.far ? bakeFar(L) : bakeBody(L)
       yield
-    }
-  }
-  function prepare() {
-    if (!fieldsQueued && !disposed) {
-      fieldsQueued = true
-      enqueue(bakeFields())
     }
   }
   function measure() {
@@ -1315,11 +1274,11 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
     c.drawImage(pano.shore, 0, 0, Wpx, lt)
     c.globalAlpha = 1
   }
-  const smooth = (u) => {
+  const originalSmooth = (u) => {
     const v = clamp(u, 0, 1)
     return v * v * (3 - 2 * v)
   }
-  function paint(t, T, aS) {
+  function originalPaint(t, T, aS) {
     const P = PAL[th],
       c = upx
     c.setTransform(1, 0, 0, 1, 0, 0)
@@ -1352,8 +1311,8 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
       const Rmax = Math.hypot(Math.max(ox, Wpx - ox), Math.max(oy, waterY - oy)) + 2,
         lf = 90 * dpr
       const e1 = 1 - Math.pow(1 - clamp(T / 0.6, 0, 1), 3),
-        ui = smooth((T - T_INK) / 0.95),
-        uc = smooth((T - T_COL) / (T_FULL - T_COL))
+        ui = originalSmooth((T - T_INK) / 0.95),
+        uc = originalSmooth((T - T_COL) / (T_FULL - T_COL))
       if (uc < 1) {
         if (ui < 1) stamp(pano.line, e1 * (Rmax + lf), lf, Rmax)
         if (ui > 0) {
@@ -1401,9 +1360,7 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
     g.globalAlpha = 1
   }
 
-  // ── Crumpling the finished picture into a ball ───────────────────────────────
-  // Creases: three sizes of fold. Each layer is the minimum over a set of tilted shallow bowls, which meet in straight folds.
-  // The flat sheet wrinkles along the large folds; on the ball the sheet is seen magnified, so the two smaller layers give it its broken edges.
+
   function* bakeCrease(aspect, key) {
     const TW = aspect >= 1 ? 768 : Math.max(192, Math.round(768 * aspect)),
       TH = aspect >= 1 ? Math.max(192, Math.round(768 / aspect)) : 768
@@ -1471,24 +1428,28 @@ export function createTavernEntranceScene(cv, glcv, hooks = {}) {
           if (v > hi4[q]) hi4[q] = v
         }
       }
-      if ((y & 7) === 7) {
+      if ((y & 1) === 1) {
         yield
         if (key !== wantCrease || disposed) return
       }
     }
-    for (let o = 0; o < data.length; o += 4)
+    for (let o = 0; o < data.length; o += 4) {
       for (let q = 0; q < 4; q++) data[o + q] = (data[o + q] - lo4[q]) / (hi4[q] - lo4[q])
+      if ((o & 8191) === 0) yield
+    }
     // Coarse shape: the same map at one sixteenth, for the lumps of the ball.
     const LW = TW >> 4,
       LT = TH >> 4,
       lo = new Float32Array(LW * LT * 4)
-    for (let y = 0; y < LT; y++)
+    for (let y = 0; y < LT; y++) {
       for (let x = 0; x < LW; x++)
         for (let q = 0; q < 4; q++) {
           let s = 0
           for (let j = 0; j < 16; j++) for (let i = 0; i < 16; i++) s += data[((y * 16 + j) * TW + x * 16 + i) * 4 + q]
           lo[(y * LW + x) * 4 + q] = s / 256
         }
+      yield
+    }
     if (key === wantCrease) crease = { key, TW, TH, data, LW, LT, lo }
   }
   function createCrumpler(canvas) {
@@ -1818,166 +1779,243 @@ void main() { vec2 d = (gl_FragCoord.xy - uC) / uRad; o = vec4(0., 0., 0., uS * 
     return { load, draw, clear, release, destroy }
   }
 
-  // ── Flow ─────────────────────────────────────────────────────────────────────
-  let crumpler,
-    run = false,
-    T = 0,
-    Tw = 0,
-    last = 0,
-    speed = 1,
-    committed = false,
-    captured = false,
-    wipe2d = false,
-    fading = false,
-    hold = false,
-    raf = 0,
-    fadeTimer = 0,
-    releaseTimer = 0
-  function commit() {
-    committed = true
-    if (hooks.onCommit) hooks.onCommit()
-  }
-  function end(reason) {
-    run = false
-    fading = false
-    hold = false
-    cancelFrame(raf)
-    clearTimeout(fadeTimer)
-    budget = 6
-    g.setTransform(1, 0, 0, 1, 0, 0)
-    g.clearRect(0, 0, cv.width, cv.height)
-    if (crumpler) crumpler.clear()
-    glcv.style.visibility = 'hidden'
-    cv.style.opacity = glcv.style.opacity = ''
-    // The window-sized images are not kept: released if the tavern is not entered again soon.
-    clearTimeout(releaseTimer)
-    releaseTimer = setTimeout(release, 45000)
-    if (reason && hooks.onDone) hooks.onDone(reason)
-  }
-  function release() {
-    if (run) return
-    pano = null
-    wantPano = ''
-    cv.width = cv.height = up.width = up.height = tmp.width = tmp.height = wb.width = wb.height = 1
-    if (crumpler) crumpler.release()
-  }
-  function fadeOut(reason) {
-    fading = true
-    cv.style.opacity = glcv.style.opacity = '0'
-    fadeTimer = setTimeout(() => end(reason), 260)
-  }
-  const gate = createFrameGate()
 
+  if (!g) throw new Error('2D canvas unavailable')
+  let crumpler
+  let prepared = null, preparation = null, generation = 0, error = null, artReady = false, audioSettled = false
+  let run = false, hold = false, committed = false, captured = false, uploaded = false
+  let T = 0, raf = 0, fadeTimer = 0, waiting = 0, musicPaused = false, leaving = false
+  const makeMusic = hooks.createMusic || createTavernEntranceMusic
+  let music = makeMusic({ enabled: hooks.soundEnabled !== false })
+  let soundEnabled = hooks.soundEnabled !== false
+  let at = null
+  const clock = createEntranceClock(), gate = createFrameGate()
+  const unsubscribeSuspend = onRenderSuspendChange(suspended => {
+    if (!run) return
+    clock.tick(0, false); waiting = 0
+    if (suspended) { music.pause(); musicPaused = true }
+  })
+  const diag = { status: 'idle', slices: 0, maxSliceMs: 0, prepareMs: 0, coldStarts: 0, warmStarts: 0, uploadMs: 0, finalizeMs: 0 }
+  // Presentation only: the original painter owns every final pixel and all geometry.
+  function paint(seconds, destination = g, origin = at) {
+    const p = prepared
+    if (!p || !pano) return
+    const point = origin || p.origin
+    ox = point.x; oy = point.y
+    const colour = pano.colour
+    if (seconds < 6.3) {
+      const mix = smooth(5.1, 6.3, seconds)
+      const c = p.blend.getContext('2d')
+      c.clearRect(0, 0, Wpx, waterY)
+      c.globalCompositeOperation = 'source-over'
+      c.globalAlpha = 1 - mix; c.drawImage(pano.ink, 0, 0)
+      c.globalCompositeOperation = 'lighter'
+      c.globalAlpha = mix; c.drawImage(colour, 0, 0)
+      c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'
+      pano.colour = p.blend
+    }
+    try {
+      const reveal = 2.35 * smooth(1.35, 4.4, seconds)
+      originalPaint(2.65, seconds >= 4.4 ? T_FULL : reveal, smooth(0, .25, seconds))
+    } finally { pano.colour = colour }
+    // A brief local wet mark; it fades away before the untouched final painting.
+    if (seconds >= .25 && seconds < 2.75) {
+      const u = smooth(.25, .72, seconds)
+      const y = Hpx * .10 + (point.y - Hpx * .10) * u * u
+      const fade = 1 - smooth(1.35, 2.75, seconds)
+      g.save()
+      if (seconds < .72) {
+        g.fillStyle = '#161717'; g.globalAlpha = fade
+        g.beginPath(); g.ellipse(point.x, y, 11 * dpr, (11 + 3 * u) * dpr, 0, 0, TAU); g.fill()
+      } else {
+        const r = (16 + 65 * smooth(.72, 2.75, seconds)) * dpr
+        const wash = g.createRadialGradient(point.x, point.y, 0, point.x, point.y, r)
+        wash.addColorStop(0, `rgba(12,15,18,${.85 * fade})`)
+        wash.addColorStop(.3, `rgba(12,15,18,${.45 * fade})`)
+        wash.addColorStop(1, 'rgba(12,15,18,0)')
+        g.fillStyle = wash; g.fillRect(point.x-r, point.y-r, r*2, r*2)
+      }
+      g.restore()
+    }
+    if (destination !== g) {
+      destination.setTransform(1, 0, 0, 1, 0, 0)
+      destination.clearRect(0, 0, Wpx, Hpx); destination.drawImage(cv, 0, 0)
+    }
+  }
+  function bakePrepare() {
+    if (disposed) return Promise.resolve(false)
+    const ratio = scaledPixelRatio(2), width = Math.round(window.innerWidth * ratio), height = Math.round(window.innerHeight * ratio)
+    const key = `${th}|${width}x${height}`
+    if (prepared?.key === key && diag.status === 'ready') return Promise.resolve(true)
+    if (preparation?.key === key) return preparation.promise
+    const token = ++generation, begun = performance.now()
+    measure()
+    const snapshot = { key, width, height, ratio, theme: th, origin: inkOrigin(width, height), blend: mk(width, waterY), final: mk(width, height) }
+    wantPano = key
+    wantCrease = (width / height).toFixed(3)
+    diag.status = 'preparing'; error = null; artReady = false; audioSettled = false; prepared = null
+    let resolve
+    const promise = new Promise(r => { resolve = r })
+    preparation = { key, promise, resolve }
+    function* artwork() {
+      if (!fieldsQueued) {
+        yield* bakeFields()
+        fieldsQueued = true
+      }
+      if (generation !== token || disposed) return
+      yield* buildPano(snapshot.theme, key)
+      if (generation !== token || disposed) return
+      prepared = snapshot; artReady = true
+      if (!run) { cv.width = width; cv.height = height }
+      paint(6.3, snapshot.final.getContext('2d'), snapshot.origin)
+      yield
+    }
+    const tasks = [artwork()]
+    function* paperRuntime() {
+      if (crumpler === undefined) crumpler = createCrumpler(glcv)
+      yield
+      if (crumpler && crease?.key !== wantCrease) yield* bakeCrease(width / height, wantCrease)
+    }
+    tasks.push(paperRuntime())
+    // PCM preparation is asynchronous and never unlocked here.
+    const audioReady = Promise.resolve().then(() => music.prepare()).catch(() => false).then(value => { if (generation === token) audioSettled = true; return value })
+    function slice() {
+      if (disposed || generation !== token) { resolve(false); return }
+      const begin = performance.now()
+      try {
+        while (tasks.length && performance.now() - begin < 3.5) if (tasks[0].next().done) tasks.shift()
+        diag.slices++; diag.maxSliceMs = Math.max(diag.maxSliceMs, performance.now() - begin)
+        if (tasks.length) { setTimeout(slice, 0); return }
+        const finalizeBegin = performance.now()
+        prepared = snapshot
+        if (!run) { cv.width = width; cv.height = height }
+        paint(6.3, snapshot.final.getContext('2d'), snapshot.origin)
+        // Mesh, folds and shader compilation are warmed before a click. Texture will
+        // be updated with the actual shifted final picture during its resting phase.
+        if (crumpler && crease) crumpler.load(snapshot.final, crease, snapshot.theme)
+        diag.finalizeMs = performance.now() - finalizeBegin
+        audioReady.then(() => {
+          if (generation !== token || disposed) { resolve(false); return }
+          diag.prepareMs = performance.now() - begun; diag.status = 'ready'
+          preparation = null; resolve(true)
+        })
+      } catch (e) {
+        error = String(e); diag.status = artReady ? 'ready' : 'failed'; preparation = null
+        if (artReady) { crumpler?.destroy(); crumpler = null }
+        resolve(artReady)
+      }
+    }
+    setTimeout(slice, 0)
+    return promise
+  }
+  function prepare(opts = {}) {
+    if ('dark' in opts) th = opts.dark === false ? 1 : 0
+    try { return bakePrepare() } catch (e) {
+      error = String(e); diag.status = 'failed'; preparation?.resolve(false); preparation = null
+      return Promise.resolve(false)
+    }
+  }
+  function commit() { if (!committed && !hold) { committed = true; hooks.onCommit?.() } }
+  function end(reason) {
+    run = false; hold = false; cancelFrame(raf); clearTimeout(fadeTimer)
+    music.stop(); musicPaused = false
+    g.clearRect(0, 0, cv.width, cv.height); crumpler?.clear()
+    glcv.style.visibility = 'hidden'; cv.style.opacity = glcv.style.opacity = ''; cv.style.transition = ''
+    if (reason) hooks.onDone?.(reason)
+  }
   function frame(now) {
     if (!run) return
     raf = requestFrame(frame)
-    if (isRenderSuspended()) { last = 0; return }
-    // Honour Settings → 渲染帧率上限.
-    if (!gate.shouldDraw(now)) return
-    const t = now / 1000,
-      dt = last ? Math.min(0.05, t - last) : 0
-    last = t
-    if (!hold && !fading) {
-      Tw += dt * speed
-      if (pano) T = Math.min(T + dt * speed, crease ? T_END : T_CRUMPLE) // The paper darkens straight away; the drawing waits until the picture is ready.
-      if (!committed && Tw >= T_COMMIT) commit()
-    }
+    const suspended = isRenderSuspended(), ready = artReady && audioSettled
+    const paused = suspended || !ready || hold || leaving
+    if (paused && !musicPaused) { music.pause(); musicPaused = true }
+    if (!paused && musicPaused) { music.resume(); musicPaused = false }
+    T = clock.tick(now, !paused)
+    // Active waiting is bounded, but background time does not consume that limit.
+    if (!suspended && !ready) {
+      if (!waiting) waiting = now
+      if (diag.status === 'failed' || now - waiting > 20000) { commit(); end('failed'); return }
+    } else waiting = 0
+    if (suspended || !gate.shouldDraw(now)) return
+    if (!hold && !leaving && ready && soundEnabled) music.tick(T)
+    if (!ready) { g.fillStyle = PAL[th].sky0; g.fillRect(0, 0, cv.width, cv.height); return }
+    if (!committed && T >= .25) commit()
     if (!captured) {
-      paint(t, Math.min(T, T_CRUMPLE), ss(0, 0.5, Tw))
-      if (T >= T_CRUMPLE && pano && crease && !fading) {
-        // Hand this frame to the sheet: the flat sheet covers it first, the 2D picture underneath is cleared a frame later, so the app never shows through.
-        if (crumpler && crumpler.load(cv, crease, th) && crumpler.draw(0)) {
-          captured = true
-          wipe2d = true
-          glcv.style.visibility = 'visible'
-        } else {
-          fadeOut('done')
-          return
-        }
+      paint(Math.min(T, 6.8))
+      if (T >= 6.3 && !uploaded && crumpler && crease) {
+        const began = performance.now()
+        paint(6.3, prepared.final.getContext('2d'))
+        uploaded = crumpler.load(prepared.final, crease, prepared.theme)
+        if (!uploaded) { crumpler.destroy(); crumpler = null }
+        diag.uploadMs = performance.now() - began
       }
+      if (T >= 6.8 && crumpler && uploaded && crumpler.draw(T - 6.8)) {
+        captured = true; glcv.style.visibility = 'visible'
+        // Keep the original 2D sheet for this handoff frame. Clear on next draw.
+      } else if (T >= 6.8 && (!crumpler || !uploaded)) { cv.style.transition = 'none'; cv.style.opacity = String(1 - smooth(6.8, 8.7, T)) }
     } else {
-      if (wipe2d) {
-        wipe2d = false
-        g.setTransform(1, 0, 0, 1, 0, 0)
-        g.clearRect(0, 0, Wpx, Hpx)
-      }
-      if (!crumpler.draw(T - T_CRUMPLE) && !fading) {
-        fadeOut('done')
-        return
-      }
+      g.clearRect(0, 0, cv.width, cv.height)
+      if (!crumpler.draw(T - 6.8)) { captured = false; uploaded = false; crumpler = null; paint(6.8); cv.style.opacity = String(1 - smooth(6.8, 8.7, T)) }
     }
-    if (T >= T_END && !hold && !fading) end('done')
+    if (T >= 8.7 && !hold && !leaving) end('done')
   }
-  // x: where it starts, in CSS pixels. dark: whether the shell is dark. fast: the short version for repeat entries.
   function start(opts = {}) {
-    if (disposed || !g) return false
+    if (disposed) return false
     if (run) end(null)
-    clearTimeout(releaseTimer)
-    if (crumpler === undefined) crumpler = createCrumpler(glcv)
     th = opts.dark === false ? 1 : 0
-    measure()
-    ox = clamp(opts.x == null ? W / 2 : opts.x, 0, W) * dpr
-    oy = waterY - layH * 0.2
-    speed = opts.fast ? FAST : 1
-    T = 0
-    Tw = 0
-    last = 0
-    committed = false
-    captured = false
-    wipe2d = false
-    run = true
-    budget = 10
+    const warm = prepared?.theme === th && diag.status === 'ready' && prepared?.width === Math.round(window.innerWidth * scaledPixelRatio(2)) && prepared?.height === Math.round(window.innerHeight * scaledPixelRatio(2))
+    diag[warm ? 'warmStarts' : 'coldStarts']++
     prepare()
-    const pk = th + '|' + Wpx + 'x' + Hpx,
-      ck = (W / H).toFixed(3)
-    if (!pano || pano.key !== pk) {
-      pano = null
-      if (wantPano !== pk) {
-        wantPano = pk
-        enqueue(buildPano(th, pk))
-      }
-    }
-    if (!crease || crease.key !== ck) {
-      crease = null
-      if (wantCrease !== ck) {
-        wantCrease = ck
-        enqueue(bakeCrease(W / H, ck))
-      }
-    }
+    const ratio = scaledPixelRatio(2)
+    // CSS origin is constrained before scaling, not the navigation's x coordinate.
+    const origin = inkOrigin(window.innerWidth, window.innerHeight, opts.x)
+    at = { x: origin.x * ratio, y: origin.y * ratio }
+    if (cv.width !== Math.round(window.innerWidth * ratio)) cv.width = Math.round(window.innerWidth * ratio)
+    if (cv.height !== Math.round(window.innerHeight * ratio)) cv.height = Math.round(window.innerHeight * ratio)
+    T = 0; clock.reset(); waiting = 0; leaving = false; hold = false; committed = false; captured = false; uploaded = false; run = true
+    cv.style.opacity = ''; glcv.style.visibility = 'hidden'
+    if (opts.music !== false && soundEnabled) music.start(1)
+    musicPaused = false
     raf = requestFrame(frame)
     return true
   }
-  // Leave early: picture and sheet fade out together. The caller decides whether that is a cancel or a skip.
-  function leave(reason) {
-    if (run && !fading) fadeOut(reason || 'skipped')
+  function leave(reason = 'skipped') {
+    if (!run) return
+    leaving = true; music.stop()
+    cv.style.opacity = glcv.style.opacity = '0'
+    clearTimeout(fadeTimer); fadeTimer = setTimeout(() => end(reason), 260)
+  }
+  async function seek(seconds, opts = {}) {
+    if (run) end(null)
+    const ok = await prepare({ dark: opts.dark !== false })
+    if (!ok || disposed) return false
+    start({ ...opts, music: false }); hold = true
+    T = clamp(Number(seconds) || 0, 0, 8.7); clock.reset(T)
+    paint(Math.min(T, 6.8))
+    if (T >= 6.8 && crumpler && crease) {
+      paint(6.3, prepared.final.getContext('2d')); uploaded = crumpler.load(prepared.final, crease, prepared.theme)
+      if (uploaded && crumpler.draw(T - 6.8)) { captured = true; glcv.style.visibility = 'visible' }
+    }
+    return true
+  }
+  function resize() {
+    if (run && !hold) { commit(); end('resized') }
+    prepared = null; artReady = false; return prepare()
+  }
+  function setSoundEnabled(value) {
+    if (soundEnabled === (value !== false)) return
+    soundEnabled = value !== false; music.dispose()
+    music = makeMusic({ enabled: soundEnabled }); music.prepare()
+    // Enabling during a run waits for the next real gesture/run.
   }
   function dispose() {
-    if (run) end(null)
-    disposed = true
-    clearTimeout(releaseTimer)
-    release()
-    if (crumpler) crumpler.destroy()
+    end(null); disposed = true; generation++; preparation?.resolve(false); prepared = null
+    unsubscribeSuspend(); music.dispose(); crumpler?.destroy()
   }
-  function seek(v, opts) {
-    start(opts)
-    hold = true
-    T = clamp(v, 0, T_END)
-    Tw = Math.max(T, 0.5)
-    if (T >= T_COMMIT) commit()
+  return { prepare, start, seek, leave, resize, dispose, setSoundEnabled,
+    unlock: () => soundEnabled ? music.unlock() : false,
+    get ready() { return diag.status === 'ready' },
+    get diagnostics() { return { ...diag, error, seconds: T, phase: entrancePhase(T), suspended: isRenderSuspended(), waiting: !(artReady && audioSettled), paperReady: diag.status === 'ready', artReady, running: run, frozen: hold, webgl: !!crumpler, soundEnabled } },
+    get running() { return run }, get committed() { return committed }
   }
-  const api = {
-    prepare,
-    start,
-    leave,
-    seek,
-    dispose,
-    get running() {
-      return run
-    },
-    get committed() {
-      return committed
-    }
-  }
-
-  return api
 }

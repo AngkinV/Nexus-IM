@@ -12,32 +12,20 @@
       <!-- Profile / Group header -->
       <div class="profile-header">
         <div class="avatar-wrapper">
-          <img
-            :src="chatStore.activeChat.avatar || defaultAvatar"
-            :alt="chatStore.activeChat.name"
-            class="profile-avatar"
-          />
-        </div>
+          <IdentityAvatar :src="chatStore.activeChat.avatar || chatStore.activeChat.avatarUrl" :entity-id="chatStore.activeChat.id" :label="chatStore.activeChat.name" :kind="isGroup(chatStore.activeChat.type) ? 'group' : 'user'" class="profile-avatar" /></div>
         <h2 class="profile-name">{{ chatStore.activeChat.name }}</h2>
         <p class="profile-status" v-if="!isGroupChat">
-          <span class="status-pip" :class="{ online: chatStore.activeChat.status === 'online' }"></span>
-          {{ $t('chat.' + (chatStore.activeChat.status || 'offline')) }}
+          <PresenceDot class="status-pip" :value="chatPresence(chatStore.activeChat)" :type="chatStore.activeChat.type" />
+          {{ chatPresence(chatStore.activeChat) === null ? '' : $t(chatPresence(chatStore.activeChat) === true ? 'chat.online' : 'chat.offline') }}
         </p>
-        <p class="profile-status member-count" v-else>
-          {{ members.length }} {{ $t('group.members') }}
+        <p class="profile-status member-count" v-else-if="isGroupChat">
+          {{ chatStore.activeChat.memberCount ?? members.length }} {{ $t('group.members') }}
         </p>
       </div>
 
       <!-- Direct chat info -->
       <template v-if="!isGroupChat">
         <div class="profile-actions">
-          <div class="action-item">
-            <span class="material-symbols-outlined action-icon">smartphone</span>
-            <div class="action-text">
-              <span class="label">Mobile</span>
-              <span class="value">+1 234 567 890</span>
-            </div>
-          </div>
           <div class="action-item">
             <span class="material-symbols-outlined action-icon">notifications</span>
             <div class="action-text">
@@ -67,12 +55,7 @@
               @click="handleMemberClick(member)"
             >
               <div class="member-avatar-box">
-                <img
-                  :src="member.avatarUrl || defaultAvatar"
-                  :alt="member.nickname"
-                  class="member-avatar-img"
-                />
-                <span class="online-indicator" :class="{ online: member.isOnline }"></span>
+                <IdentityAvatar :src="member.avatarUrl || member.avatar" :entity-id="member.id" :label="member.nickname" kind="user" class="member-avatar-img" /><PresenceDot class="online-indicator" :value="member.isOnline" />
                 <span v-if="member.role === 'owner'" class="role-indicator owner">
                   <span class="material-symbols-outlined">star</span>
                 </span>
@@ -207,9 +190,17 @@
 </template>
 
 <script setup>
-import { ref, inject, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useContactStore } from '@/stores/contact'
+import { membershipSignature, currentGroupRecord } from '@/components/identity/displayFacts.mjs'
+import { memberRows, requestGate } from '@/components/identity/presentation.mjs'
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import { isGroup, presence, chatPresence } from '@/components/identity/presentation.mjs'
+import { ref, inject, computed, watch, onBeforeUnmount } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
+import { sameId } from '@/utils/socialData.mjs'
 import { groupAPI } from '@/services/api'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
@@ -220,11 +211,13 @@ const { t } = useI18n()
 const chatStore = useChatStore()
 const userStore = useUserStore()
 const toggleRightPanel = inject('toggleRightPanel')
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 const notificationsEnabled = ref(true)
 
 // Members data
+const router = useRouter()
+const contactStore = useContactStore()
 const members = ref([])
+const identityMembers = computed(() => memberRows(members.value, id => contactStore.getUserIdentity(id)))
 const loadingMembers = ref(false)
 
 // Modal visibility
@@ -260,7 +253,7 @@ const isGroupChat = computed(() => {
 
 // Current user's role in group
 const currentUserRole = computed(() => {
-  const member = members.value.find(m => m.id === currentUserId.value)
+  const member = identityMembers.value.find(m => sameId(m.id, currentUserId.value))
   return member?.role || 'member'
 })
 
@@ -269,15 +262,15 @@ const isAdmin = computed(() => currentUserRole.value === 'admin' || currentUserR
 
 // Display members sorted and limited for grid view
 const displayedMembers = computed(() => {
-  return [...members.value].sort((a, b) => {
+  return [...identityMembers.value].sort((a, b) => {
     const roleOrder = { owner: 0, admin: 1, member: 2 }
-    return (roleOrder[a.role] || 2) - (roleOrder[b.role] || 2)
+    return (roleOrder[a.role] ?? 2) - (roleOrder[b.role] ?? 2)
   })
 })
 
 // Get member label (You for self, nickname for others)
 const getMemberLabel = (member) => {
-  if (member.id === currentUserId.value) {
+  if (sameId(member.id, currentUserId.value)) {
     return t('group.me') || 'You'
   }
   // Truncate long names
@@ -297,7 +290,7 @@ const confirmDialog = ref({
 
 // Check if current user can manage a specific member
 const canManageMember = (member) => {
-  if (member.id === currentUserId.value) return false
+  if (sameId(member.id, currentUserId.value)) return false
   if (isOwner.value) return true
   if (isAdmin.value && member.role === 'member') return true
   return false
@@ -305,7 +298,7 @@ const canManageMember = (member) => {
 
 // Check if current user can kick a specific member
 const canKickMember = (member) => {
-  if (member.id === currentUserId.value) return false
+  if (sameId(member.id, currentUserId.value)) return false
   if (member.role === 'owner') return false
   if (isOwner.value) return true
   if (isAdmin.value && member.role === 'member') return true
@@ -313,39 +306,41 @@ const canKickMember = (member) => {
 }
 
 // Load group members
+const memberGate = requestGate()
+onBeforeUnmount(() => memberGate.dispose())
 const loadGroupMembers = async () => {
-  if (!chatStore.activeChat?.id || !isGroupChat.value) return
-
+  const id = chatStore.activeChat?.id
+  const ticket = memberGate.begin()
+  const identityToken = contactStore.captureIdentityRevision()
+  members.value = []
+  loadingMembers.value = false
+  if (!id || !isGroupChat.value || currentUserId.value == null) return
+  const current = () => memberGate.current(ticket) && chatStore.activeChat?.id === id && isGroupChat.value && contactStore.isIdentityRevisionCurrent(identityToken)
   loadingMembers.value = true
   try {
-    const response = await groupAPI.getGroupMembers(chatStore.activeChat.id)
-    members.value = response.data || []
+    const response = await groupAPI.getGroupMembers(id)
+    if (!current()) return
+    const rows = response.data || []
+    if (!contactStore.ingestUserSnapshots(rows, identityToken)) return
+    members.value = rows
   } catch (error) {
-    console.error('Failed to load group members:', error)
-    ElMessage.error(t('group.loadMembersFailed'))
+    if (current()) ElMessage.error(t('group.loadMembersFailed'))
   } finally {
-    loadingMembers.value = false
+    if (current()) loadingMembers.value = false
   }
 }
 
-// Watch for active chat changes
-watch(() => chatStore.activeChat?.id, (newId) => {
-  if (newId && isGroupChat.value) {
-    loadGroupMembers()
-  }
-}, { immediate: true })
-
-// Watch for memberCount changes to refresh member list
-watch(() => chatStore.activeChat?.memberCount, (newCount, oldCount) => {
-  if (newCount !== oldCount && isGroupChat.value && chatStore.activeChat?.id) {
-    loadGroupMembers()
-  }
+// A scalar signature coalesces selection + membership events, excluding identity ticks.
+const membershipFacts = computed(() => membershipSignature(currentGroupRecord(chatStore, chatStore.activeChat?.id)))
+watch(() => [currentUserId.value, chatStore.activeChat?.id, isGroupChat.value], loadGroupMembers, { immediate: true, flush: 'sync' })
+watch(() => JSON.stringify([currentUserId.value, chatStore.activeChat?.id, membershipFacts.value]), (next, previous) => {
+  const a = JSON.parse(next), b = JSON.parse(previous)
+  if (a[0] === b[0] && a[1] === b[1] && isGroupChat.value) loadGroupMembers()
 })
 
 // Handle member click
 const handleMemberClick = (member) => {
-  // Could open member profile or start direct chat
-  console.log('Member clicked:', member)
+  router.push(`/user/${member.id}`)
 }
 
 // Handle add member
@@ -614,7 +609,6 @@ const closePanel = () => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .profile-name {
@@ -642,7 +636,7 @@ const closePanel = () => {
 }
 
 .status-pip.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 /* ── Info rows ──────────────────────────────────────────── */
@@ -771,7 +765,6 @@ const closePanel = () => {
   height: 38px;
   border-radius: 9999px;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
   background: #2a2a2d;
   box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.35);
 }
@@ -788,7 +781,7 @@ const closePanel = () => {
 }
 
 .online-indicator.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 .role-indicator {

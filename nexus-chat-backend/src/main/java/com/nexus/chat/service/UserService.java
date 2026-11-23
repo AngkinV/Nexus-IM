@@ -8,6 +8,7 @@ import com.nexus.chat.model.UserSocialLink;
 import com.nexus.chat.model.UserSecuritySettings;
 import com.nexus.chat.model.UserActivity;
 import com.nexus.chat.repository.*;
+import com.nexus.chat.storage.UploadStorage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ import java.util.stream.Collectors;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final PresenceService presenceService;
     private final UserPrivacySettingsRepository privacySettingsRepository;
     private final ContactRepository contactRepository;
     private final ChatRepository chatRepository;
@@ -44,9 +46,10 @@ public class UserService {
     private final UserFollowRepository userFollowRepository;
     private final PostRepository postRepository;
     private final RedisCacheService redisCacheService;
+    private final UploadStorage uploadStorage;
 
-    // Avatar upload directory (can be configured)
-    private static final String AVATAR_UPLOAD_DIR = "uploads/avatars/";
+    /** Avatars live under the uploads directory and, unlike attachments, never expire. */
+    private static final String AVATAR_DIR = "avatars/";
 
     public UserDTO getUserById(Long id) {
         User user = userRepository.findById(id)
@@ -86,8 +89,7 @@ public class UserService {
     public void updateOnlineStatus(Long userId, boolean isOnline) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("error.user.not.found"));
-        user.setIsOnline(isOnline);
-        userRepository.save(user);
+        presenceService.refreshPresence(userId); // Compatibility query, not a client-authored status write.
     }
 
     /**
@@ -109,13 +111,13 @@ public class UserService {
         profile.setAvatarUrl(user.getAvatarUrl());
         profile.setBio(user.getBio());
         profile.setProfileBackground(user.getProfileBackground());
-        profile.setIsOnline(user.getIsOnline());
-        profile.setLastSeen(user.getLastSeen());
+        profile.setIsOnline(presenceService.getVisibleStatus(user.getId()));
+        profile.setLastSeen(presenceService.getVisibleLastSeen(user.getId()));
         profile.setCreatedAt(user.getCreatedAt());
 
         // Privacy settings
-        profile.setShowOnlineStatus(privacy.getShowOnlineStatus());
-        profile.setShowLastSeen(privacy.getShowLastSeen());
+        profile.setShowOnlineStatus(Boolean.TRUE.equals(privacy.getShowOnlineStatus()));
+        profile.setShowLastSeen(Boolean.TRUE.equals(privacy.getShowLastSeen()));
         profile.setShowEmail(privacy.getShowEmail());
         profile.setShowPhone(privacy.getShowPhone());
         profile.setFriendRequestMode(privacy.getFriendRequestMode() == null
@@ -158,11 +160,11 @@ public class UserService {
         profile.setCreatedAt(user.getCreatedAt());
 
         // Apply privacy settings
-        if (privacy.getShowOnlineStatus()) {
-            profile.setIsOnline(user.getIsOnline());
+        if (Boolean.TRUE.equals(privacy.getShowOnlineStatus())) {
+            profile.setIsOnline(presenceService.getVisibleStatus(user.getId()));
         }
-        if (privacy.getShowLastSeen()) {
-            profile.setLastSeen(user.getLastSeen());
+        if (Boolean.TRUE.equals(privacy.getShowLastSeen())) {
+            profile.setLastSeen(presenceService.getVisibleLastSeen(user.getId()));
         }
         if (privacy.getShowEmail()) {
             profile.setEmail(user.getEmail());
@@ -212,6 +214,14 @@ public class UserService {
         return getUserProfile(userId);
     }
 
+    /** Decoded size limit for one avatar image. */
+    private static final int MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+    /** Raster types only: an SVG served from our own origin can carry script. */
+    private static final Map<String, String> AVATAR_TYPES = Map.of(
+            "image/png", ".png", "image/jpeg", ".jpg", "image/jpg", ".jpg", "image/gif", ".gif", "image/webp", ".webp");
+    private static final java.util.regex.Pattern AVATAR_DATA_URI = java.util.regex.Pattern.compile(
+            "^data:(image/[a-z0-9.+-]+);base64,(.*)$", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL);
+
     /**
      * Upload user avatar
      */
@@ -219,56 +229,58 @@ public class UserService {
     public String uploadAvatar(Long userId, MultipartFile file) throws IOException {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("error.user.not.found"));
-
-        // Validate file
         if (file.isEmpty()) {
             throw new BusinessException("error.user.file.empty");
         }
-
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new BusinessException("error.user.file.image.only");
-        }
-
-        // Generate unique filename
-        String originalFilename = file.getOriginalFilename();
-        String extension = originalFilename != null && originalFilename.contains(".")
-                ? originalFilename.substring(originalFilename.lastIndexOf("."))
-                : ".png";
-        String filename = "avatar_" + userId + "_" + UUID.randomUUID().toString() + extension;
-
-        // Create upload directory if not exists
-        Path uploadPath = Paths.get(AVATAR_UPLOAD_DIR);
-        if (!Files.exists(uploadPath)) {
-            Files.createDirectories(uploadPath);
-        }
-
-        // Save file
-        Path filePath = uploadPath.resolve(filename);
-        Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
-
-        // Update user avatar URL
-        String avatarUrl = "/uploads/avatars/" + filename;
-        user.setAvatarUrl(avatarUrl);
-        userRepository.save(user);
-
-        return avatarUrl;
+        return storeAvatar(user, file.getContentType(), file.getBytes());
     }
 
     /**
-     * Upload avatar as Base64
+     * Upload avatar as Base64.
+     *
+     * The image is written to the uploads directory and only its URL is saved. Keeping
+     * the data URI in the user row would send the whole picture with every contact,
+     * group member and message that names this user.
      */
     @Transactional
     public String uploadAvatarBase64(Long userId, String base64Image) throws IOException {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("error.user.not.found"));
+        java.util.regex.Matcher dataUri = AVATAR_DATA_URI.matcher(base64Image == null ? "" : base64Image.trim());
+        if (!dataUri.matches()) {
+            throw new BusinessException("error.user.file.image.only");
+        }
+        byte[] bytes;
+        try {
+            bytes = java.util.Base64.getMimeDecoder().decode(dataUri.group(2));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("error.user.file.image.only");
+        }
+        return storeAvatar(user, dataUri.group(1), bytes);
+    }
 
-        // For simplicity, store Base64 directly (suitable for smaller images)
-        // In production, consider decoding and saving as file
-        user.setAvatarUrl(base64Image);
+    private String storeAvatar(User user, String contentType, byte[] bytes) throws IOException {
+        String extension = contentType == null ? null : AVATAR_TYPES.get(contentType.toLowerCase(java.util.Locale.ROOT));
+        if (extension == null) {
+            throw new BusinessException("error.user.file.image.only");
+        }
+        if (bytes.length == 0) {
+            throw new BusinessException("error.user.file.empty");
+        }
+        if (bytes.length > MAX_AVATAR_BYTES) {
+            throw new BusinessException("error.user.file.too.large");
+        }
+        String filename = "avatar_" + user.getId() + "_" + UUID.randomUUID() + extension;
+        Path target = uploadStorage.resolve(AVATAR_DIR + filename);
+        Files.createDirectories(target.getParent());
+        Files.write(target, bytes);
+
+        String previous = user.getAvatarUrl();
+        String avatarUrl = UploadStorage.URL_PREFIX + AVATAR_DIR + filename;
+        user.setAvatarUrl(avatarUrl);
         userRepository.save(user);
-
-        return base64Image;
+        deleteOwnAvatarFile(previous);
+        return avatarUrl;
     }
 
     /**
@@ -278,20 +290,26 @@ public class UserService {
     public void deleteAvatar(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("error.user.not.found"));
-
-        // Delete old file if it's a path
-        String oldAvatar = user.getAvatarUrl();
-        if (oldAvatar != null && oldAvatar.startsWith("/uploads/")) {
-            try {
-                Path oldPath = Paths.get(oldAvatar.substring(1));
-                Files.deleteIfExists(oldPath);
-            } catch (IOException e) {
-                // Ignore deletion errors
-            }
-        }
-
+        String previous = user.getAvatarUrl();
         user.setAvatarUrl(null);
         userRepository.save(user);
+        deleteOwnAvatarFile(previous);
+    }
+
+    /**
+     * Remove a replaced avatar file. Only files this service wrote (uploads/avatars/) are
+     * touched: an avatar that came through the attachment upload has its own record and
+     * lifetime, and a URL or data URI names no file of ours at all.
+     */
+    private void deleteOwnAvatarFile(String avatarUrl) {
+        if (avatarUrl == null || !avatarUrl.startsWith(UploadStorage.URL_PREFIX + AVATAR_DIR)) return;
+        Path file = uploadStorage.fileOf(avatarUrl);
+        if (file == null) return;
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            log.warn("Could not remove the replaced avatar file {}", file.getFileName());
+        }
     }
 
     /**
@@ -439,8 +457,8 @@ public class UserService {
                 user.getUsername(),
                 user.getNickname(),
                 user.getAvatarUrl(),
-                user.getIsOnline(),
-                user.getLastSeen());
+                presenceService.getVisibleStatus(user.getId()),
+                presenceService.getVisibleLastSeen(user.getId()));
     }
 
     /**

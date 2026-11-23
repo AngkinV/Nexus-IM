@@ -45,7 +45,7 @@ class UserPreferenceMvcTest {
         SecurityContextHolder.getContext()
                 .setAuthentication(new UsernamePasswordAuthenticationToken(ME, null, List.of()));
         UserController controller = new UserController(
-                mock(UserService.class), preferences, mock(ContactRepository.class),
+                mock(UserService.class), mock(com.nexus.chat.service.PresenceObservers.class), preferences, mock(ContactRepository.class),
                 mock(PresenceService.class), mock(RedisCacheService.class), mock(RedisMessageRelay.class));
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler(new StaticMessageSource()))

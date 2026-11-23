@@ -1,6 +1,7 @@
 package com.nexus.chat.service;
 
 import com.nexus.chat.model.CompanionModelBinding;
+import com.nexus.chat.model.ModelChannels;
 import com.nexus.chat.model.ModelCredential;
 import com.nexus.chat.repository.CompanionModelBindingRepository;
 import com.nexus.chat.repository.ModelCredentialRepository;
@@ -84,7 +85,7 @@ public class CompanionModelResolver {
                 || !Objects.equals(binding.getProvider(), credential.getProvider())) return "no_credential";
         if (trimmed(binding.getEndpoint()) == null) return "no_endpoint";
         if (trimmed(binding.getModelName()) == null) return "no_model";
-        if (trimmed(credential.getApiKeyEncrypted()) == null && !"ollama".equalsIgnoreCase(credential.getProvider())) return "no_api_key";
+        if (trimmed(credential.getApiKeyEncrypted()) == null && !ModelChannels.keyOptional(credential)) return "no_api_key";
         return null;
     }
 

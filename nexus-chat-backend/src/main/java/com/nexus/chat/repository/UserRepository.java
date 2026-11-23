@@ -53,4 +53,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     List<User> findAllByIdIn(Collection<Long> ids);
 
+    /** Whether any row shows this exact stored URL as its avatar. */
+    boolean existsByAvatarUrl(String avatarUrl);
 }

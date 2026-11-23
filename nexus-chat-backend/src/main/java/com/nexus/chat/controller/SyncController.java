@@ -1,6 +1,7 @@
 package com.nexus.chat.controller;
 
 import com.nexus.chat.dto.*;
+import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.model.Chat;
 import com.nexus.chat.model.Contact;
 import com.nexus.chat.model.Message;
@@ -42,6 +43,7 @@ public class SyncController {
     private final MessageRepository messageRepository;
     private final ContactRepository contactRepository;
     private final UserRepository userRepository;
+    private final PresenceService presenceService;
 
     /**
      * GET /api/sync/delta?since={ISO timestamp}&types=messages,chats,contacts
@@ -207,8 +209,8 @@ public class SyncController {
                                 user.getUsername(),
                                 user.getNickname(),
                                 user.getAvatarUrl(),
-                                user.getIsOnline(),
-                                user.getLastSeen());
+                                presenceService.getVisibleStatus(user.getId()),
+                                presenceService.getVisibleLastSeen(user.getId()));
                     }
                     return null;
                 })

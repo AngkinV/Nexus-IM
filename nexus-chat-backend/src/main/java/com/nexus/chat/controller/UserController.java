@@ -1,5 +1,6 @@
 package com.nexus.chat.controller;
 
+import com.nexus.chat.exception.BusinessException;
 import com.nexus.chat.dto.*;
 import com.nexus.chat.model.Contact;
 import com.nexus.chat.repository.ContactRepository;
@@ -32,6 +33,7 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final com.nexus.chat.service.PresenceObservers presenceObservers;
     private final UserPreferenceService userPreferenceService;
     private final ContactRepository contactRepository;
     private final PresenceService presenceService;
@@ -142,11 +144,13 @@ public class UserController {
             @RequestBody UpdateProfileRequest request) {
         CurrentUser.require(id);
         try {
+            String oldNickname = userService.getUserById(id).getNickname();
             UserProfileDTO updated = userService.updateUserProfile(id, request);
 
             // Broadcast nickname update to all contacts
-            if (request.getNickname() != null && !request.getNickname().isEmpty()) {
-                notifyProfileUpdate(id, updated.getAvatarUrl(), request.getNickname());
+            if (request.getNickname() != null && !request.getNickname().isEmpty()
+                    && !java.util.Objects.equals(oldNickname, updated.getNickname())) {
+                notifyProfileUpdate(id, null, request.getNickname());
             }
 
             return ResponseEntity.ok(updated);
@@ -171,6 +175,8 @@ public class UserController {
             notifyProfileUpdate(id, avatarUrl, null);
 
             return ResponseEntity.ok(Map.of("avatarUrl", avatarUrl));
+        } catch (BusinessException e) {
+            throw e; // carries the reason (wrong type, too large) to the client
         } catch (IOException | RuntimeException e) {
             return ResponseEntity.badRequest().build();
         }
@@ -196,6 +202,8 @@ public class UserController {
             notifyProfileUpdate(id, avatarUrl, null);
 
             return ResponseEntity.ok(Map.of("avatarUrl", avatarUrl));
+        } catch (BusinessException e) {
+            throw e; // carries the reason (wrong type, too large) to the client
         } catch (IOException | RuntimeException e) {
             return ResponseEntity.badRequest().build();
         }
@@ -210,6 +218,7 @@ public class UserController {
         CurrentUser.require(id);
         try {
             userService.deleteAvatar(id);
+            notifyProfileUpdate(id, "", null);
             return ResponseEntity.ok().build();
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
@@ -227,6 +236,8 @@ public class UserController {
         CurrentUser.require(id);
         try {
             PrivacySettingsDTO settings = userService.updatePrivacySettings(id, request);
+            try { presenceObservers.changed(new PresenceService.Changed(id, presenceService.isUserOnline(id))); }
+            catch (RuntimeException e) { log.warn("Privacy status notification unavailable for {}", id); }
             return ResponseEntity.ok(settings);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
@@ -441,7 +452,7 @@ public class UserController {
     private void notifyProfileUpdate(Long userId, String avatarUrl, String nickname) {
         try {
             // Get all users who have this user as a contact
-            List<Contact> contacts = contactRepository.findByContactUserId(userId);
+            java.util.Set<Long> contacts = presenceObservers.observers(userId);
 
             if (contacts.isEmpty()) {
                 log.debug("No contacts to notify for user {}", userId);
@@ -449,11 +460,10 @@ public class UserController {
             }
 
             // Build notification payload
-            Map<String, Object> payload = Map.of(
-                    "userId", userId,
-                    "avatarUrl", avatarUrl != null ? avatarUrl : "",
-                    "nickname", nickname != null ? nickname : ""
-            );
+            Map<String, Object> payload = new java.util.HashMap<>();
+            payload.put("userId", userId);
+            if (avatarUrl != null) payload.put("avatarUrl", avatarUrl);
+            if (nickname != null) payload.put("nickname", nickname);
 
             WebSocketMessage wsMessage = new WebSocketMessage(
                     WebSocketMessage.MessageType.USER_PROFILE_UPDATED,
@@ -461,8 +471,7 @@ public class UserController {
             );
 
             // Notify each contact
-            for (Contact contact : contacts) {
-                Long contactUserId = contact.getUserId();
+            for (Long contactUserId : contacts) {
                 if (presenceService.isUserOnline(contactUserId)) {
                     String destination = "/topic/user." + contactUserId + ".messages";
                     redisMessageRelay.sendToUser(contactUserId, destination, wsMessage);

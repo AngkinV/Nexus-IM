@@ -12,7 +12,7 @@
 
         <div class="aside-identity">
           <div class="identity-avatar">
-            <el-avatar :size="84" :src="userStore.currentUser?.avatar || defaultAvatar" />
+            <IdentityAvatar class="avatar-face" :size="84" :src="userStore.currentUser?.avatar" :entity-id="userStore.currentUser?.id" :label="userStore.currentUser?.nickname || userStore.currentUser?.username" />
             <span class="status-dot" :class="{ online: isOnline }"></span>
           </div>
           <div class="identity-name-row">
@@ -204,7 +204,7 @@
                       {{ $t('profile.noRecentActivity') }}
                     </div>
                     <div v-for="a in recentActivities" :key="a.id" class="act-row">
-                      <el-avatar :size="34" :src="userStore.currentUser?.avatar || defaultAvatar" />
+                      <IdentityAvatar class="act-avatar" :size="34" :src="userStore.currentUser?.avatar" :entity-id="userStore.currentUser?.id" :label="userStore.currentUser?.nickname || userStore.currentUser?.username" />
                       <span class="act-text">{{ a.text }}</span>
                       <span class="act-time">{{ formatTime(a.time) }}</span>
                       <span class="act-type" :class="a.tone"><el-icon><component :is="a.icon" /></el-icon></span>
@@ -234,6 +234,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { goBack as returnToSource } from '@/router/navigation'
@@ -272,7 +273,6 @@ watch(activeSection, (tab) => {
     router.replace({ query: { ...route.query, tab } })
   }
 })
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 const userStats = ref(null)
 
 const displayName = computed(() =>
@@ -457,9 +457,16 @@ const formatTime = (time) => {
   position: relative;
 }
 
-.identity-avatar .el-avatar {
+.identity-avatar .avatar-face {
+  box-sizing: border-box;
+  border-radius: 50%;
+  font-size: 30px;
   border: 3px solid #131316;
-  box-shadow: none;
+}
+
+.act-avatar {
+  border-radius: 50%;
+  font-size: 13px;
 }
 
 .status-dot {

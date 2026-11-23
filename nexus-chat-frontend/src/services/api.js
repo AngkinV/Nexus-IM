@@ -1,5 +1,7 @@
+import { resolveAvatarUrl } from '../utils/socialData.mjs'
 import axios from 'axios'
-import { failureBelongsToSession } from '../utils/sessionGuard.js'
+import { failureBelongsToSession, isKnownExpiredJwt, isPublicAuthRequest, navigateToLogin } from '../utils/sessionGuard.js'
+import { useUserStore } from '@/stores/user'
 import { API_BASE_URL, SERVER_BASE_URL } from './runtimeConfig'
 
 const apiClient = axios.create({
@@ -11,7 +13,14 @@ const apiClient = axios.create({
 
 // Add token to requests
 apiClient.interceptors.request.use(config => {
+    if (isPublicAuthRequest(config.url)) return config
     const token = localStorage.getItem('token')
+    const userStore = useUserStore()
+    config._authSession = userStore.captureSession()
+    if (isKnownExpiredJwt(token)) {
+        if (userStore.expireSession(token, config._authSession)) navigateToLogin()
+        throw new axios.CanceledError('Session expired')
+    }
     if (config._settingsSession !== undefined) {
         let owner = null
         try { owner = JSON.parse(localStorage.getItem('user') || 'null')?.id } catch {}
@@ -26,22 +35,12 @@ apiClient.interceptors.request.use(config => {
 })
 
 // Force logout when the session was revoked on another device (HTTP 401).
-let authRedirecting = false
-let redirectingSession = null
 apiClient.interceptors.response.use(
     response => response,
     error => {
         const currentSession = localStorage.getItem('token')
-        if (failureBelongsToSession(error, currentSession) && (!authRedirecting || redirectingSession !== currentSession)) {
-            authRedirecting = true
-            redirectingSession = currentSession
-            localStorage.removeItem('token')
-            localStorage.removeItem('user')
-            const here = window.location.hash || window.location.pathname
-            if (!String(here).includes('/login')) {
-                // Reload so the router guard sends the device to the login page.
-                window.location.reload()
-            }
+        if (!isPublicAuthRequest(error.config?.url) && failureBelongsToSession(error, currentSession) && error.config?._authSession) {
+            if (useUserStore().expireSession(currentSession, error.config._authSession)) navigateToLogin()
         }
         return Promise.reject(error)
     }
@@ -92,6 +91,9 @@ export const userAPI = {
     //上传base64头像
     uploadAvatar: (id, base64Image) =>
         apiClient.post(`/users/${id}/avatar/base64`, { avatar: base64Image }),
+
+    deleteAvatar: (id) =>
+        apiClient.delete(`/users/${id}/avatar`),
 
     updateOnlineStatus: (id, isOnline) =>
         apiClient.put(`/users/${id}/status`, null, { params: { isOnline } }),
@@ -490,7 +492,5 @@ export default apiClient
  * Returns the original value for absolute URLs, data URIs, or empty/null values.
  */
 export function resolveFileUrl(url) {
-    if (!url) return ''
-    if (url.startsWith('http') || url.startsWith('data:')) return url
-    return `${SERVER_BASE_URL}${url}`
+    return resolveAvatarUrl(url, SERVER_BASE_URL)
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.nexus.chat.model.CompanionMessage;
 import com.nexus.chat.model.CompanionModelBinding;
 import com.nexus.chat.model.CompanionRole;
+import com.nexus.chat.model.ModelChannels;
 import com.nexus.chat.model.ModelCredential;
 import com.nexus.chat.service.agent.AgentProviderService.ResolvedProvider;
 import com.nexus.chat.service.agent.PythonModelGateway;
@@ -198,8 +199,9 @@ public class CompanionModelService {
         } catch (RuntimeException e) {
             return ModelReply.configuration("unreadable_api_key");
         }
-        if ((key == null || key.isBlank()) && !"ollama".equalsIgnoreCase(credential.getProvider())) return ModelReply.configuration("no_api_key");
-        ResolvedProvider channel = new ResolvedProvider(credential.getId(), credential.getProvider(),
+        boolean hasKey = key != null && !key.isBlank();
+        if (!hasKey && !ModelChannels.keyOptional(credential)) return ModelReply.configuration("no_api_key");
+        ResolvedProvider channel = new ResolvedProvider(credential.getId(), ModelChannels.adapterName(credential, hasKey),
                 credential.getDisplayName(), base, model, key);
         // Do not catch exceptions from onDelta: unwinding is how a reader releases the stream.
         long owner = credential.getUserId();

@@ -1029,7 +1029,7 @@
     },
     "providers": {
       "title": "AI Model Settings",
-      "help": "Configure API key, model and base URL per provider. Supports any OpenAI-compatible API, Claude, and Gemini.",
+      "help": "Add as many providers as you need: official APIs, aggregators, local servers or custom relays, each with its own address, API key and default model.",
       "add": "Add provider",
       "edit": "Edit",
       "default": "Default",
@@ -1057,11 +1057,8 @@
       "incompatible": "This model does not support the selected purpose.",
       "noKey": "missing",
       "empty": "No providers configured yet. Click \"Add provider\" to start.",
-      "preset": "Preset",
-      "fieldId": "Provider ID",
-      "fieldIdHint": "Unique key, e.g. openai / deepseek-personal / ollama-local",
+      "preset": "Provider",
       "fieldDisplay": "Display name",
-      "displayPlaceholder": "OpenAI Main Account",
       "fieldBaseUrl": "Base URL",
       "fieldModel": "Default model",
       "fieldModelHint": "Enter an exact model ID or alias",
@@ -1076,7 +1073,47 @@
       "colActions": "Actions",
       "tabChat": "Chat model",
       "tabEmbedding": "Embedding",
-      "embeddingHelp": "Pick a provider that supports /embeddings for the knowledge base. Configured separately from the chat model."
+      "embeddingHelp": "Pick a provider that supports /embeddings for the knowledge base. Configured separately from the chat model.",
+      "searchChannels": "Search by name, provider, model or address",
+      "count": "{n} in total",
+      "countFiltered": "{shown} of {n}",
+      "noMatch": "No provider matches",
+      "searchVendors": "Search providers",
+      "customHint": "For a relay, a self-hosted gateway, or a provider not listed here: enter its address and choose the API format it speaks.",
+      "channelId": "Channel ID: {id} (fixed once saved)",
+      "fieldFormat": "API format",
+      "formatFixed": "This provider speaks one fixed API format.",
+      "baseUrlHint": "End at the version path, e.g. https://api.example.com/v1, without /chat/completions.",
+      "baseUrlRequired": "Enter the Base URL",
+      "keyOptionalHint": "A server on this machine needs no API key; leave it empty.",
+      "keyNotNeeded": "No key needed",
+      "format": {
+        "openai": "OpenAI-compatible",
+        "anthropic": "Anthropic",
+        "gemini": "Gemini"
+      },
+      "group": {
+        "official": "Official",
+        "aggregator": "Aggregators",
+        "local": "Local",
+        "custom": "Custom"
+      },
+      "status": {
+        "ok": "Ready",
+        "invalid": "Invalid key",
+        "unknown": "Untested"
+      },
+      "switcher": {
+        "title": "Switch model",
+        "search": "Search providers or models",
+        "none": "No provider is set up yet",
+        "noMatch": "No provider matches",
+        "count": "{n} providers",
+        "issue": {
+          "model": "No model selected",
+          "key": "API key missing"
+        }
+      }
     },
     "knowledge": {
       "title": "Knowledge bases",

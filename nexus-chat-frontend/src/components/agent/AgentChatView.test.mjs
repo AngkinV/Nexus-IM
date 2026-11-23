@@ -123,8 +123,8 @@ async function mount(messages = [], sessionId = 'session-one', describeModelErro
     let prevented = false
     nodes('textarea')[0].props.onKeydown({ key: 'Enter', preventDefault() { prevented = true }, ...extra }); await paint(); return prevented
   }
-  // The header has two menus, in template order: the model picker, then "more".
-  const menu = which => walk(root).filter(n => n.type?.name === 'ElDropdown')[which === 'more' ? 1 : 0]
+  // The header has one dropdown menu, "more". The model picker is its own component.
+  const menu = which => { assert.equal(which, 'more'); return walk(root).filter(n => n.type?.name === 'ElDropdown')[0] }
   return { calls, paint, nodes, button, click, type, enter, widgets, menu, text: () => walk(root).filter(n => typeof n.children === 'string').map(n => n.children).join(' ') }
 }
 
@@ -212,6 +212,30 @@ test('a model error is shown as described; a backend wait holds Continue and onl
 
   const unknown = await mount([{ ...message, error: { code: 'SOMETHING_NEW', message: 'as the backend said' } }])
   assert.match(unknown.text(), /as the backend said/)
+})
+
+test('the model switcher lists every saved chat channel; choosing one selects it for the next turn', async () => {
+  const v = await mount([message])
+  const other = { id: 6, purpose: 'chat', displayName: 'Relay', defaultModel: 'relay-model', hasApiKey: true }
+  stores.agentProviders.chatProviders = [stores.agentProviders.chatProviders[0], other]; await v.paint(); v.nodes('section')
+  const switcher = () => v.widgets.ModelChannelSwitcher.props
+  assert.deepEqual(switcher().channels.map(c => c.id), [5, 6], 'chat channels only, never the embedding one')
+  assert.equal(switcher()['active-id'] ?? switcher().activeId, 5)
+  assert.equal(switcher().label, 'Personal · next-model')
+  assert.equal(switcher().disabled, false)
+
+  switcher().onSelect(6); await v.paint(); v.nodes('section')
+  assert.equal(stores.agent.activeProviderId, 6)
+  assert.equal(switcher().label, 'Relay · relay-model')
+  switcher().onSelect(9); await v.paint()
+  assert.equal(stores.agent.activeProviderId, 6, 'an embedding channel is never selected for chat')
+
+  assert.ok(!v.widgets.AgentProviderSettings.props.visible)
+  switcher().onManage(); await v.paint(); v.nodes('section')
+  assert.equal(v.widgets.AgentProviderSettings.props.visible, true)
+
+  stores.agent.streaming = true; await v.paint(); v.nodes('section')
+  assert.equal(switcher().disabled, true, 'the channel cannot change under a running turn')
 })
 
 test('a clear confirmed after switching sessions clears nothing; the workspace follows every session change', async () => {

@@ -1,6 +1,5 @@
 package com.nexus.chat.dto.agent;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -13,10 +12,24 @@ public final class AgentProviderDtos {
 
     @Data
     public static class UpsertProviderRequest {
-        /** A short identifier unique per user, e.g. "openai", "deepseek-1", "ollama-local". */
-        @NotBlank
+        /**
+         * The saved channel to change. Absent when adding a channel, so adding can
+         * never overwrite one that already exists.
+         */
+        private Long id;
+        /**
+         * The channel's id, unique per user and purpose, e.g. "openai", "deepseek-2".
+         * Optional when adding: the server derives one from the vendor and keeps it unique.
+         * Fixed once saved.
+         */
         @Size(max = 50)
         private String provider;
+        /** Catalogue entry the channel comes from ("openai", "deepseek", "custom", ...). */
+        @Size(max = 40)
+        private String vendor;
+        /** Wire protocol: "openai-compatible", "anthropic" or "gemini". */
+        @Size(max = 30)
+        private String apiFormat;
 
         /**
          * What this credential is for: "chat" (LLM completions) or "embedding" (vector embeddings).
@@ -52,6 +65,12 @@ public final class AgentProviderDtos {
     public static class ProviderView {
         private Long id;
         private String provider;
+        /** Catalogue entry the channel comes from; for older rows this is the channel id. */
+        private String vendor;
+        /** Wire protocol in effect: "openai-compatible", "anthropic" or "gemini". */
+        private String apiFormat;
+        /** True when the channel works without an API key (a local server). */
+        private boolean keyOptional;
         /** "chat" or "embedding". Frontend filters credential pickers by this. */
         private String purpose;
         private String displayName;

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { isKnownExpiredJwt } from '@/utils/sessionGuard.js'
 import { authAPI, userAPI, resolveFileUrl } from '@/services/api'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
@@ -100,9 +101,36 @@ export const useUserStore = defineStore('user', () => {
         }
     }
 
+    // Synchronous revisions reject late callbacks even across A → B → A.
+    let sessionRevision = 0
+    watch([token, currentUser], () => { ++sessionRevision }, { flush: 'sync' })
+    const captureSession = () => ({
+        revision: sessionRevision, token: token.value, owner: currentUser.value?.id,
+        storedToken: localStorage.getItem('token'), storedUser: localStorage.getItem('user')
+    })
+    const expireSession = (expectedToken, expected) => {
+        if (!expected || !expectedToken || expected.revision !== sessionRevision ||
+            expected.token !== token.value || expected.owner !== currentUser.value?.id ||
+            expected.storedToken !== expectedToken || localStorage.getItem('token') !== expectedToken ||
+            localStorage.getItem('user') !== expected.storedUser ||
+            (token.value !== null && token.value !== expectedToken)) return false
+        ++profileSequence
+        token.value = null
+        // Existing synchronous owner watchers invalidate social revisions and
+        // clear only memory. Never call logout/resetStore/IndexedDB clearAll.
+        currentUser.value = null
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        return true
+    }
+
     const loadUserFromStorage = () => {
         const storedUser = localStorage.getItem('user')
         const storedToken = localStorage.getItem('token')
+        if (isKnownExpiredJwt(storedToken)) {
+            expireSession(storedToken, captureSession())
+            return
+        }
         if (!storedUser || !storedToken) return
 
         try {
@@ -325,6 +353,8 @@ export const useUserStore = defineStore('user', () => {
         register,
         login,
         loadUserFromStorage,
+        captureSession,
+        expireSession,
         logout,
         updateProfile,
         updateAvatar,

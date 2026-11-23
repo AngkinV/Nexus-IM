@@ -80,21 +80,10 @@
           </template>
           <template v-else>
             <div class="avatar-frame">
-              <img
-                v-if="chat.avatar && !failedAvatars[chat.id]"
-                class="avatar-img"
-                :src="chat.avatar"
-                alt=""
-                @error="failedAvatars[chat.id] = true"
-              />
-              <div v-else class="avatar-fallback" :data-initial="initialOf(chat.name)"></div>
+              <IdentityAvatar :src="chat.avatarUrl || chat.avatar" :entity-id="chat.id" :label="chat.name" :kind="isGroup(chat.type) ? 'group' : 'user'" class="avatar-img" />
             </div>
-            <span
-              v-if="chat.type !== 'GROUP'"
-              class="presence-dot"
-              :class="{ online: chat.status === 'online' }"
-            ></span>
-            <div v-if="chat.type === 'GROUP'" class="group-badge">
+            <PresenceDot class="presence-dot" :value="chatPresence(chat)" :type="chat.type" />
+            <div v-if="isGroup(chat.type)" class="group-badge">
               <span class="material-symbols-outlined">group</span>
             </div>
           </template>
@@ -146,6 +135,9 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import { isGroup, presence, chatPresence } from '@/components/identity/presentation.mjs'
 import { computed, inject, reactive, ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
@@ -545,7 +537,6 @@ const formatTime = (time) => settings.format(time)
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .avatar-fallback {
@@ -585,7 +576,7 @@ const formatTime = (time) => settings.format(time)
 }
 
 .presence-dot.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 .group-badge {

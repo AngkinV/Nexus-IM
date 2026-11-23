@@ -50,6 +50,15 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * A static file that is not there (an avatar whose upload is gone) is a plain 404,
+     * not a server fault to be logged with a stack trace.
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Void> handleMissingResource() {
+        return ResponseEntity.notFound().build();
+    }
+
+    /**
      * Keeps the intended status (401/403/...) instead of falling into the RuntimeException handler below.
      */
     @ExceptionHandler(ResponseStatusException.class)

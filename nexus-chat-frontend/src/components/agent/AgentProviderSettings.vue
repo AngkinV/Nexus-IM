@@ -10,7 +10,7 @@
   <el-dialog
     v-model="visibleModel"
     :title="$t('agent.providers.title')"
-    width="760px"
+    width="min(900px, 94vw)"
     draggable
     overflow
     :modal="false"
@@ -36,8 +36,23 @@
       </el-button>
     </div>
 
-    <el-table :data="visibleProviders" v-loading="store.loading" stripe size="default">
-      <el-table-column prop="displayName" :label="$t('agent.providers.colName')" min-width="160">
+    <div v-if="tabProviders.length" class="provider-filter">
+      <el-input
+        v-model="query" clearable class="provider-search"
+        :placeholder="$t('agent.providers.searchChannels')" :aria-label="$t('agent.providers.searchChannels')"
+      >
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <span class="provider-count" role="status">{{ query.trim()
+        ? $t('agent.providers.countFiltered', { shown: visibleProviders.length, n: tabProviders.length })
+        : $t('agent.providers.count', { n: tabProviders.length }) }}</span>
+    </div>
+
+    <el-table
+      v-if="tabProviders.length || store.loading" :data="visibleProviders" v-loading="store.loading" stripe size="default"
+      max-height="420" row-key="id" :empty-text="$t('agent.providers.noMatch')"
+    >
+      <el-table-column prop="displayName" :label="$t('agent.providers.colName')" min-width="190">
         <template #default="{ row }">
           <div class="cell-name">
             <strong>{{ row.displayName || row.provider }}</strong>
@@ -45,28 +60,30 @@
               {{ $t('agent.providers.default') }}
             </el-tag>
           </div>
-          <div class="cell-sub">{{ row.provider }}</div>
+          <div class="cell-sub">{{ presetLabel(vendorOf(row, activeTab)) }} · {{ row.provider }}</div>
         </template>
       </el-table-column>
-      <el-table-column prop="defaultModel" :label="$t('agent.providers.colModel')" min-width="160">
+      <el-table-column prop="defaultModel" :label="$t('agent.providers.colModel')" min-width="170">
         <template #default="{ row }">
           <span class="model-text">{{ row.defaultModel || '—' }}</span>
+          <div class="cell-sub">{{ formatLabel(formatOf(row)) }}</div>
         </template>
       </el-table-column>
-      <el-table-column :label="$t('agent.providers.colKey')" width="140">
+      <el-table-column :label="$t('agent.providers.colKey')" width="130">
         <template #default="{ row }">
           <code v-if="row.hasApiKey" class="key-mask">{{ row.apiKeyMask || '***' }}</code>
+          <span v-else-if="keyOptionalFor(row)" class="cell-sub">{{ $t('agent.providers.keyNotNeeded') }}</span>
           <span v-else class="missing">{{ $t('agent.providers.noKey') }}</span>
         </template>
       </el-table-column>
-      <el-table-column :label="$t('agent.providers.colStatus')" width="110">
+      <el-table-column :label="$t('agent.providers.colStatus')" width="96">
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">{{ row.status }}</el-tag>
+          <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column :label="$t('agent.providers.colActions')" width="220" align="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" :disabled="!canTest(row)" :title="$t('agent.providers.testHint')" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
+          <el-button link type="primary" size="small" :disabled="!canTest(row)" :loading="testingId === row.id" :title="$t('agent.providers.testHint')" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
           <el-button link size="small" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
           <el-button link size="small" :disabled="row.isDefault" @click="setDefault(row)">
             {{ $t('agent.providers.setDefault') }}
@@ -76,14 +93,14 @@
       </el-table-column>
     </el-table>
 
-    <el-empty v-if="!store.loading && !visibleProviders.length" :description="$t('agent.providers.empty')" />
+    <el-empty v-if="!store.loading && !tabProviders.length" :description="$t('agent.providers.empty')" />
   </el-dialog>
 
   <!-- Edit / Create dialog: 仍然走模态遮罩（表单需要专注），z-index 在主悬浮窗之上 -->
   <el-dialog
     v-model="formDialog"
     :title="form.id ? $t('agent.providers.edit') : $t('agent.providers.add')"
-    width="560px"
+    width="min(580px, 94vw)"
     :close-on-click-modal="false"
     :z-index="10020"
     append-to-body
@@ -91,22 +108,32 @@
   >
     <el-form :model="form" label-width="110px" label-position="left" :disabled="saving">
       <el-form-item :label="$t('agent.providers.preset')">
-        <el-select v-model="form.preset" :teleported="false" :aria-label="$t('agent.providers.preset')" @change="applyPreset">
-          <el-option v-for="p in presetsForActiveTab" :key="p.key" :label="presetLabel(p)" :value="p.key" />
+        <el-select
+          v-model="form.preset" filterable :teleported="false" :aria-label="$t('agent.providers.preset')"
+          :placeholder="$t('agent.providers.searchVendors')" @change="applyPreset"
+        >
+          <el-option-group v-for="group in presetGroups" :key="group.key" :label="$t(`agent.providers.group.${group.key}`)">
+            <el-option v-for="p in group.items" :key="p.key" :label="presetLabel(p)" :value="p.key" />
+          </el-option-group>
         </el-select>
-      </el-form-item>
-
-      <el-form-item :label="$t('agent.providers.fieldId')" required>
-        <el-input v-model="form.provider" :disabled="!!form.id" placeholder="openai" />
-        <div class="form-hint">{{ $t('agent.providers.fieldIdHint') }}</div>
+        <div v-if="activePreset.key === 'custom'" class="form-hint">{{ $t('agent.providers.customHint') }}</div>
       </el-form-item>
 
       <el-form-item :label="$t('agent.providers.fieldDisplay')">
-        <el-input v-model="form.displayName" :placeholder="$t('agent.providers.displayPlaceholder')" />
+        <el-input v-model="form.displayName" maxlength="80" :placeholder="presetLabel(activePreset)" />
+        <div v-if="form.id" class="form-hint">{{ $t('agent.providers.channelId', { id: form.provider }) }}</div>
       </el-form-item>
 
-      <el-form-item :label="$t('agent.providers.fieldBaseUrl')">
-        <el-input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" />
+      <el-form-item :label="$t('agent.providers.fieldFormat')">
+        <el-radio-group v-model="form.apiFormat" :aria-label="$t('agent.providers.fieldFormat')">
+          <el-radio-button v-for="f in formatChoices" :key="f" :value="f">{{ formatLabel(f) }}</el-radio-button>
+        </el-radio-group>
+        <div v-if="formatChoices.length === 1" class="form-hint">{{ $t('agent.providers.formatFixed') }}</div>
+      </el-form-item>
+
+      <el-form-item :label="$t('agent.providers.fieldBaseUrl')" :required="baseUrlRequired">
+        <el-input v-model="form.baseUrl" maxlength="255" :placeholder="activePreset.baseUrl || 'https://api.example.com/v1'" />
+        <div v-if="form.apiFormat === 'openai-compatible'" class="form-hint">{{ $t('agent.providers.baseUrlHint') }}</div>
       </el-form-item>
 
       <el-form-item :label="$t('agent.providers.fieldKey')">
@@ -114,8 +141,10 @@
           v-model="form.apiKey"
           type="password"
           show-password
+          autocomplete="new-password"
           :placeholder="form.id ? $t('agent.providers.fieldKeyKeep') : 'sk-...'"
         />
+        <div v-if="activePreset.keyOptional" class="form-hint">{{ $t('agent.providers.keyOptionalHint') }}</div>
       </el-form-item>
 
       <el-form-item :label="$t('agent.providers.fieldModel')">
@@ -146,13 +175,19 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import {
   useAgentProvidersStore,
-  PROVIDER_PRESETS,
-  EMBEDDING_PRESETS,
+  API_FORMAT,
+  VENDOR_GROUPS,
+  PROVIDER_PURPOSE,
+  presetsFor,
   presetLabel,
-  PROVIDER_PURPOSE
+  vendorOf,
+  formatOf,
+  keyOptionalFor,
+  freeChannelId,
+  filterChannels
 } from '@/stores/agentProviders'
 import { useAgentStore } from '@/stores/agent'
 import ProviderModelPicker from './ProviderModelPicker.vue'
@@ -174,13 +209,26 @@ const saving = ref(false)
 const testingId = ref(null)
 const form = ref(emptyForm())
 
-const presetsForActiveTab = computed(() =>
-  activeTab.value === 'embedding' ? EMBEDDING_PRESETS : PROVIDER_PRESETS
-)
+const query = ref('')
+const presetsForActiveTab = computed(() => presetsFor(activeTab.value))
+const presetGroups = computed(() => VENDOR_GROUPS
+  .map(key => ({ key, items: presetsForActiveTab.value.filter(p => p.group === key) })).filter(g => g.items.length))
 
-const visibleProviders = computed(() =>
+// Every saved channel of this tab, and the ones the search box leaves visible.
+const tabProviders = computed(() =>
   activeTab.value === 'embedding' ? store.embeddingProviders : store.chatProviders
 )
+const visibleProviders = computed(() => filterChannels(tabProviders.value, query.value))
+
+const activePreset = computed(() =>
+  presetsForActiveTab.value.find(p => p.key === form.value.preset) || presetsForActiveTab.value.find(p => p.key === 'custom'))
+// An official vendor speaks one protocol; only a custom endpoint chooses.
+const formatChoices = computed(() => {
+  const offered = activePreset.value.formats || [activePreset.value.format]
+  return offered.includes(form.value.apiFormat) ? offered : [...offered, form.value.apiFormat].filter(Boolean)
+})
+// Anthropic and Gemini have one well-known address; an OpenAI-compatible endpoint must be given.
+const baseUrlRequired = computed(() => form.value.apiFormat === API_FORMAT.OPENAI)
 
 function emptyForm(purpose = 'chat') {
   return {
@@ -188,6 +236,7 @@ function emptyForm(purpose = 'chat') {
     purpose,
     preset: 'openai',
     provider: '',
+    apiFormat: API_FORMAT.OPENAI,
     displayName: '',
     baseUrl: '',
     defaultModel: '',
@@ -199,7 +248,7 @@ function emptyForm(purpose = 'chat') {
 const original = ref(null)
 const dirty = computed(() => !original.value || Object.keys(original.value).some(k => form.value[k] !== original.value[k]))
 const connectionDirty = computed(() => !form.value.id || !original.value ||
-  ['provider', 'purpose', 'baseUrl', 'apiKey'].some(k => form.value[k] !== original.value[k]))
+  ['provider', 'purpose', 'preset', 'apiFormat', 'baseUrl', 'apiKey'].some(k => form.value[k] !== original.value[k]))
 const incompatible = computed(() => !connectionDirty.value && store.getModelsForProvider(form.value.id)
   .find(m => m.id === form.value.defaultModel.trim())?.[form.value.purpose] === false)
 
@@ -209,9 +258,11 @@ watch([visibleModel, activeTab, () => store.accountId], async ([open, tab, accou
   formDialog.value = false
   form.value = emptyForm(tab)
   original.value = null
+  query.value = ''
   if (!open || accountId == null) return
+  // Catalogues are read per channel when it is edited: reading every saved
+  // channel's model list on open does not scale to dozens of channels.
   await store.fetchAll()
-  if (current) visibleProviders.value.forEach(p => store.fetchModels(p.id))
 }, { immediate: true })
 
 watch(formDialog, open => { if (!open) form.value.apiKey = '' })
@@ -222,6 +273,22 @@ function statusTagType(status) {
   return 'info'
 }
 
+// Message keys are plain words; the protocol name itself carries a hyphen.
+function formatLabel(format) {
+  return t(`agent.providers.format.${format === API_FORMAT.OPENAI ? 'openai' : format}`)
+}
+
+function statusLabel(status) {
+  return t(`agent.providers.status.${['ok', 'invalid'].includes(status) ? status : 'unknown'}`)
+}
+
+/** The vendor's name, numbered when a channel of this tab already uses it. */
+function freeDisplayName(preset) {
+  const base = presetLabel(preset), taken = new Set(tabProviders.value.map(p => p.displayName))
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
+}
+
 function openCreate() {
   form.value = emptyForm(activeTab.value)
   original.value = null
@@ -230,13 +297,13 @@ function openCreate() {
 }
 
 function openEdit(row) {
-  const list = presetsForActiveTab.value
-  const preset = list.find(p => row.provider?.startsWith(p.key)) || list.find(p => p.key === 'custom')
+  const preset = vendorOf(row, row.purpose || activeTab.value)
   form.value = {
     id: row.id,
     purpose: row.purpose || activeTab.value,
     preset: preset.key,
     provider: row.provider,
+    apiFormat: formatOf(row),
     displayName: row.displayName || '',
     baseUrl: row.baseUrl || '',
     defaultModel: row.defaultModel || '',
@@ -251,24 +318,33 @@ function applyPreset(key) {
   const preset = presetsForActiveTab.value.find(p => p.key === key)
   if (!preset) return
   if (!form.value.id) {
-    form.value.provider = preset.key
-    form.value.displayName = presetLabel(preset)
+    // A new channel gets an id and a name nobody holds, so adding a second channel
+    // of the same vendor (or a second custom endpoint) never replaces the first.
+    form.value.provider = freeChannelId(preset.key, tabProviders.value)
+    form.value.displayName = freeDisplayName(preset)
   }
-  form.value.baseUrl = preset.baseUrl
+  // A custom endpoint has no address or protocol of its own: when an existing channel
+  // is re-labelled as custom, what it already uses stays.
+  const editing = !!form.value.id
+  form.value.apiFormat = editing && preset.formats?.includes(form.value.apiFormat) ? form.value.apiFormat : preset.format
+  form.value.baseUrl = preset.baseUrl || (editing ? form.value.baseUrl : '')
 }
 
 async function save() {
   if (saving.value || incompatible.value || testingId.value != null) return
-  if (!form.value.provider.trim()) {
-    ElMessage.warning(t('agent.providers.fieldIdHint'))
+  if (baseUrlRequired.value && !form.value.baseUrl?.trim()) {
+    ElMessage.warning(t('agent.providers.baseUrlRequired'))
     return
   }
   saving.value = true
   try {
     const payload = {
-      provider: form.value.provider.trim(),
+      id: form.value.id || undefined,
+      provider: form.value.provider.trim() || freeChannelId(activePreset.value.key, tabProviders.value),
+      vendor: activePreset.value.key,
+      apiFormat: form.value.apiFormat,
       purpose: form.value.purpose || PROVIDER_PURPOSE.CHAT,
-      displayName: form.value.displayName?.trim() || null,
+      displayName: form.value.displayName?.trim() || presetLabel(activePreset.value),
       baseUrl: form.value.baseUrl?.trim() || null,
       defaultModel: form.value.defaultModel?.trim() || null,
       apiKey: form.value.apiKey || null,
@@ -363,6 +439,22 @@ async function testOne(row) {
   justify-content: space-between;
   margin-bottom: 16px;
   gap: 16px;
+}
+.provider-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.provider-search {
+  flex: 1;
+  min-width: 0;
+}
+.provider-count {
+  flex: none;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--tg-text-tertiary);
 }
 .provider-help {
   margin: 0;

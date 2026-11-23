@@ -2,9 +2,7 @@
   <section ref="shell" class="agent-chat-view workbench" :aria-label="g('agent.title')">
     <header class="controls">
       <div class="breadcrumb"><button type="button" class="icon-btn" :aria-label="isMobile ? g('common.back') : t('sessions')" :title="isMobile ? g('common.back') : t('sessions')" @click="isMobile ? chat.clearActiveChat() : toggleList()"><span class="material-symbols-outlined" aria-hidden="true">{{ isMobile ? 'arrow_back' : 'side_navigation' }}</span></button><span class="root-name">{{ g('leftPanel.ai') }} /</span><h2 :title="sessionTitle">{{ sessionTitle }}</h2><span class="state-pill" role="status"><i :class="{ active: agent.streaming }"></i>{{ stateLabel }}</span></div>
-      <div class="header-actions"><el-dropdown trigger="click" @command="selectProvider"><button type="button" class="model-btn" :aria-label="g('agent.providers.title')" :title="modelLabel" :disabled="agent.streaming"><span class="material-symbols-outlined" aria-hidden="true">memory</span><span class="model-text">{{ modelLabel }}</span><span class="material-symbols-outlined" aria-hidden="true">arrow_drop_down</span></button>
-        <template #dropdown><el-dropdown-menu><el-dropdown-item v-for="p in providers.chatProviders" :key="p.id" :command="p.id" :disabled="!p.defaultModel || (!p.hasApiKey && p.provider?.toLowerCase() !== 'ollama')">{{ p.displayName || p.provider }} · {{ p.defaultModel || '—' }}</el-dropdown-item><el-dropdown-item command="settings" divided>{{ g('agent.providers.manage') }}</el-dropdown-item></el-dropdown-menu></template>
-      </el-dropdown>
+      <div class="header-actions"><ModelChannelSwitcher :channels="providers.chatProviders" :active-id="activeChannel?.id ?? null" :label="modelLabel" :disabled="agent.streaming" @select="selectProvider" @manage="providersOpen = true" />
       <button type="button" class="output-count" :disabled="!files.length" :title="`${t('outputs')} · ⌘E`" :aria-label="t('outputs')" @click="openLatest"><span class="material-symbols-outlined" aria-hidden="true">folder_zip</span>{{ files.length }}</button>
       <button type="button" class="icon-btn" :disabled="agent.streaming || agent.switching || refreshing || !agent.sessionId" :title="t('reload')" :aria-label="t('reload')" @click="refresh"><span class="material-symbols-outlined" aria-hidden="true">refresh</span></button>
       <button type="button" class="icon-btn" :title="t('tune')" :aria-label="t('tune')" @click="startTuning"><span class="material-symbols-outlined" aria-hidden="true">tune</span></button>
@@ -52,6 +50,7 @@ import AgentExecutionBoard from './AgentExecutionBoard.vue'
 import AgentMarkdown from './AgentMarkdown.vue'
 import AgentArtifactDrawer from './AgentArtifactDrawer.vue'
 import AgentProviderSettings from './AgentProviderSettings.vue'
+import ModelChannelSwitcher from './ModelChannelSwitcher.vue'
 import KnowledgeBaseManager from './KnowledgeBaseManager.vue'
 
 const { t: g } = useI18n({ useScope:'global' })
@@ -68,7 +67,8 @@ const examples = ['summarize','weeklyReport','quickReply']
 const options = reactive({ temperature:0.2, maxOutputTokens:1024, maxIterations:6 }), tuning = reactive({ ...options })
 const lastReply = computed(() => agent.messages.findLast(m => m.role === 'assistant') || null)
 const files = computed(() => agent.messages.flatMap(m => m.artifacts || []))
-const modelLabel = computed(() => { const p = providers.chatProviders.find(x => x.id === agent.activeProviderId) || providers.defaultProvider; return p ? [p.displayName || p.provider,p.defaultModel].filter(Boolean).join(' · ') : t('server') })
+const activeChannel = computed(() => providers.chatProviders.find(x => x.id === agent.activeProviderId) || providers.defaultProvider || null)
+const modelLabel = computed(() => { const p = activeChannel.value; return p ? [p.displayName || p.provider,p.defaultModel].filter(Boolean).join(' · ') : t('server') })
 const sessionTitle = computed(() => agent.activeSession?.title || g('agent.title'))
 const stateLabel = computed(() => { const state = agent.streaming ? 'running' : lastReply.value?.status || 'idle'; return g(`agent.workbench.state.${['done','error','interrupted','cancelled','limited','running','idle'].includes(state) ? state : 'unknown'}`) })
 const time = date => date && dayjs(date).isValid() ? dayjs(date).format('HH:mm:ss') : ''

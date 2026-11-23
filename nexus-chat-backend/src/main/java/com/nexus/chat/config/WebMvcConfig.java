@@ -1,5 +1,6 @@
 package com.nexus.chat.config;
 
+import com.nexus.chat.storage.UploadStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -21,15 +22,22 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Value("${companion.assets.motions-dir:../nexus-chat-frontend/public/motions}")
     private String motionsDir;
 
+    private final UploadStorage uploadStorage;
+
+    public WebMvcConfig(UploadStorage uploadStorage) {
+        this.uploadStorage = uploadStorage;
+    }
+
     /**
      * 配置静态资源处理器
      * 使 /uploads/** 路径可以访问 uploads/ 目录下的文件
      */
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // 同时注册当前目录和父目录的 uploads/，兼容不同启动方式的工作目录
+        // The configured uploads directory first; the two working-directory locations
+        // stay as fallbacks for files written before nexus.uploads.dir existed.
         registry.addResourceHandler("/uploads/**")
-                .addResourceLocations("file:uploads/", "file:../uploads/")
+                .addResourceLocations(asFileLocation(uploadStorage.root().toString()), "file:uploads/", "file:../uploads/")
                 .setCachePeriod(3600);
 
         registry.addResourceHandler("/apk/**")
