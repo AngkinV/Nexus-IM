@@ -82,7 +82,7 @@
           :key="user.id"
           class="selected-member-tag"
         >
-          <el-avatar :size="24" :src="user.avatar || defaultAvatar" />
+          <IdentityAvatar :size="24" :src="user.avatarUrl || user.avatar" :entity-id="user.id" :label="user.nickname || user.username" />
           <span>{{ user.nickname }}</span>
           <el-icon class="remove-icon" @click="toggleUser(user.id)"><Close /></el-icon>
         </div>
@@ -112,7 +112,7 @@
             :class="{ selected: selectedUsers.includes(user.id) }"
             @click="toggleUser(user.id)"
           >
-            <el-avatar :size="40" :src="user.avatar || defaultAvatar" />
+            <IdentityAvatar :size="40" :src="user.avatarUrl || user.avatar" :entity-id="user.id" :label="user.nickname || user.username" />
             <div class="user-info">
               <span class="user-name">{{ user.nickname }}</span>
               <span class="user-username">@{{ user.username }}</span>
@@ -158,6 +158,8 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import { presence } from '@/components/identity/presentation.mjs'
 import { ref, computed, watch } from 'vue'
 import { Camera, Check, Search, Lock, Close, User } from '@element-plus/icons-vue'
 import { useChatStore } from '@/stores/chat'
@@ -188,16 +190,15 @@ const isPrivate = ref(false)
 const selectedUsers = ref([])
 const searchQuery = ref('')
 const isCreating = ref(false)
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 
 // Use real contacts from contactStore
 const availableUsers = computed(() => {
   return contactStore.contacts.map(contact => ({
-    id: contact.id,
+    id: contact.userId ?? contact.id,
     nickname: contact.nickname || contact.username,
     username: contact.username,
-    avatar: contact.avatar || contact.avatarUrl || '',
-    isOnline: contact.isOnline || false
+    avatar: contact.avatarUrl || contact.avatar || '',
+    isOnline: presence(contact.isOnline)
   }))
 })
 
@@ -312,28 +313,11 @@ const createGroup = async () => {
 
     const newGroup = response.data
 
-    // Transform to frontend format and add to store. The backend returns the
-    // relative file URL (e.g. "/uploads/.../x.png"); resolve it to the full
-    // backend host or the creator will see a broken avatar while other
-    // members (who receive the URL via the WebSocket handler that already
-    // resolves) see it correctly.
-    const groupForStore = {
-      id: newGroup.id,
-      name: newGroup.name,
-      description: newGroup.description,
-      avatar: resolveFileUrl(newGroup.avatar || ''),
-      lastMessage: t('group.created'),
-      lastMessageTime: newGroup.createdAt,
-      unreadCount: 0,
-      online: true,
-      type: 'GROUP',
-      isPrivate: newGroup.isPrivate,
-      members: newGroup.members || [],
-      memberCount: newGroup.memberCount || selectedUsers.value.length + 1
-    }
-
-    chatStore.chats.unshift(groupForStore)
-    emit('created', groupForStore)
+    // Consume the public store normalizer with the successful server DTO.
+    // Never invent group presence, borrow a member portrait or estimate count.
+    chatStore.mergeChats([newGroup], userId)
+    const groupForStore = chatStore.chats.find(chat => chat.id === newGroup.id)
+    emit('created', groupForStore || newGroup)
     ElMessage.success(t('group.createSuccess'))
     handleClose()
   } catch (error) {

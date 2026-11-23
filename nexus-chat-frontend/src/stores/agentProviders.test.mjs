@@ -6,6 +6,7 @@ import { createServer } from 'vite'
 import { createPinia, setActivePinia } from 'pinia'
 
 let server, describeModelError, retryAtOf, modelCatalogNote, api, user, store, useUserStore, useAgentProvidersStore, rows, calls
+let channels
 const originalStorage = globalThis.localStorage
 const wrap = data => ({ data: { data } })
 const model = { id: 'catalog-model', chat: null, embedding: false }
@@ -21,6 +22,7 @@ before(async () => {
   ;({ agentAPI: api } = await server.ssrLoadModule('/src/services/agentApi.js'))
   ;({ useUserStore } = await server.ssrLoadModule('/src/stores/user.js'))
   ;({ useAgentProvidersStore, describeModelError, retryAtOf, modelCatalogNote } = await server.ssrLoadModule('/src/stores/agentProviders.js'))
+  channels = await server.ssrLoadModule('/src/stores/agentProviders.js')
 })
 after(async () => { await server?.close(); globalThis.localStorage = originalStorage })
 beforeEach(async () => {
@@ -166,4 +168,88 @@ test('a channel that cannot be used as configured points at the settings, whiche
     assert.equal(described.settings, true)
     assert.match(described.detail, /AGENT_PARAM_40001/)
   }
+})
+
+// ---- many channels per account -------------------------------------------------
+
+test('the catalogue offers official, aggregator, local and custom providers with a usable template each', () => {
+  for (const presets of [channels.PROVIDER_PRESETS, channels.EMBEDDING_PRESETS]) {
+    assert.equal(new Set(presets.map(p => p.key)).size, presets.length, 'vendor keys are unique')
+    assert.deepEqual([...new Set(presets.map(p => p.group))].sort(), [...channels.VENDOR_GROUPS].sort())
+    for (const p of presets) {
+      assert.ok(Object.values(channels.API_FORMAT).includes(p.format), `${p.key} names a supported protocol`)
+      if (p.key === 'custom') assert.ok(p.formats.length > 1 && p.baseUrl === '', 'a custom endpoint chooses its own')
+      else assert.match(p.baseUrl, /^https?:\/\/[^\s?#]+[^/]$/, `${p.key} has an address to start from`)
+      assert.ok(p.key.length <= 40 && p.key === p.key.toLowerCase())
+    }
+    assert.equal(presets.filter(p => p.key === 'custom').length, 1)
+  }
+  assert.ok(channels.PROVIDER_PRESETS.length >= 20)
+  assert.ok(!channels.EMBEDDING_PRESETS.find(p => p.key === 'custom').formats.includes('anthropic'), 'Anthropic has no embeddings')
+})
+
+test('a new channel never takes the id of a saved one, however many share a vendor', () => {
+  const saved = []
+  for (const expected of ['custom', 'custom-2', 'custom-3', 'custom-4']) {
+    const id = channels.freeChannelId('custom', saved)
+    assert.equal(id, expected)
+    saved.push({ provider: id })
+  }
+  assert.equal(channels.freeChannelId('deepseek', saved), 'deepseek')
+  assert.equal(channels.freeChannelId('OpenAI', [{ provider: 'openai' }, { provider: 'OPENAI-2' }]), 'openai-3')
+  assert.equal(channels.freeChannelId('', []), 'custom')
+})
+
+test('a channel is shown under the vendor the backend recorded, or the one its old id implied', () => {
+  const key = (row, purpose) => channels.vendorOf(row, purpose).key
+  assert.equal(key({ provider: 'deepseek-2', vendor: 'deepseek' }), 'deepseek')
+  assert.equal(key({ provider: 'openai', vendor: 'custom' }), 'custom', 'the recorded vendor wins over the id')
+  assert.equal(key({ provider: 'deepseek-personal', vendor: 'deepseek-personal' }), 'deepseek', 'older row: the backend echoes its id')
+  assert.equal(key({ provider: 'moonshot' }), 'moonshot', 'backend that reports no vendor yet')
+  assert.equal(key({ provider: 'my-relay', vendor: 'my-relay' }), 'custom')
+  assert.equal(key({ provider: 'x', vendor: 'voyage' }, 'embedding'), 'voyage')
+  assert.equal(key({ provider: 'x', vendor: 'voyage' }, 'chat'), 'custom', 'not a chat vendor')
+  assert.equal(channels.formatOf({ provider: 'claude', vendor: 'claude', apiFormat: 'anthropic' }), 'anthropic')
+  assert.equal(channels.formatOf({ provider: 'gemini' }), 'gemini')
+  assert.equal(channels.formatOf({ provider: 'my-relay' }), 'openai-compatible')
+})
+
+test('a channel that cannot answer says why; only a local server may lack a key', () => {
+  assert.equal(channels.channelIssue({ defaultModel: 'm', hasApiKey: true }), null)
+  assert.equal(channels.channelIssue({ defaultModel: '  ', hasApiKey: true }), 'model')
+  assert.equal(channels.channelIssue({ defaultModel: 'm', hasApiKey: false }), 'key')
+  assert.equal(channels.channelIssue({ defaultModel: 'm', hasApiKey: false, keyOptional: true }), null)
+  assert.equal(channels.channelIssue({ defaultModel: 'm', hasApiKey: false, keyOptional: false, provider: 'ollama' }), 'key', 'the backend decides when it says')
+  assert.equal(channels.channelIssue({ defaultModel: 'm', hasApiKey: false, provider: 'Ollama' }), null, 'older backend: the id is all there is')
+  assert.equal(channels.channelIssue(null), 'model')
+})
+
+test('dozens of channels stay findable: search spans name, vendor, model and address; groups keep the default first', () => {
+  const saved = [
+    { id: 1, provider: 'custom', vendor: 'custom', displayName: 'Relay B', defaultModel: 'glm-flash', baseUrl: 'https://b.invalid/v1', hasApiKey: true },
+    { id: 2, provider: 'custom-2', vendor: 'custom', displayName: 'Relay A', defaultModel: 'step-flash', baseUrl: 'https://a.invalid/v1', hasApiKey: true, isDefault: true },
+    { id: 3, provider: 'deepseek', vendor: 'deepseek', displayName: 'DeepSeek', defaultModel: '', hasApiKey: true },
+    { id: 4, provider: 'ollama', vendor: 'ollama', displayName: 'Laptop', defaultModel: 'qwen', hasApiKey: false, keyOptional: true },
+    { id: 5, provider: 'openrouter', vendor: 'openrouter', displayName: 'Router', defaultModel: 'any/model', hasApiKey: false, keyOptional: false },
+    ...Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, provider: `custom-${i + 3}`, vendor: 'custom', displayName: `Extra ${String(i).padStart(2, '0')}`, defaultModel: 'm', hasApiKey: true }))
+  ]
+  const ids = q => channels.filterChannels(saved, q).map(c => c.id)
+  assert.equal(ids('').length, 35)
+  assert.deepEqual(ids('relay'), [1, 2])
+  assert.deepEqual(ids('STEP'), [2], 'model, case-insensitive')
+  assert.deepEqual(ids('b.invalid'), [1], 'address')
+  assert.deepEqual(ids('deepseek'), [3], 'vendor')
+  assert.deepEqual(ids('relay glm'), [1], 'every word must match')
+  assert.deepEqual(ids('nothing-like-this'), [])
+
+  const groups = channels.groupChannels(saved)
+  assert.deepEqual(groups.map(g => g.key), ['official', 'aggregator', 'local', 'custom'])
+  const custom = groups.at(-1).items
+  assert.equal(custom.length, 32)
+  assert.deepEqual(custom.slice(0, 3).map(c => c.id), [2, 100, 101], 'default first, then by name')
+  assert.equal(groups[0].items[0].issue, 'model')
+  assert.equal(groups[1].items[0].issue, 'key')
+  assert.equal(groups[2].items[0].issue, null)
+  assert.deepEqual(channels.groupChannels(saved, 'laptop').map(g => [g.key, g.items.length]), [['local', 1]], 'empty groups are left out')
+  assert.deepEqual(channels.groupChannels([], ''), [])
 })

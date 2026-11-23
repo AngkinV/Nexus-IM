@@ -1,7 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { contactAPI, userAPI, resolveFileUrl } from '@/services/api'
 import offlineStore from '@/services/offlineStore'
+import { useUserStore } from '@/stores/user'
+import { useChatStore } from '@/stores/chat'
+import { normalizeUser, sameId, createRevisionLedger } from '@/utils/socialData.mjs'
 
 export const useContactStore = defineStore('contact', () => {
     const contacts = ref([])
@@ -13,103 +16,112 @@ export const useContactStore = defineStore('contact', () => {
 
     // Computed: Online contacts
     const onlineContacts = computed(() => {
-        return contacts.value.filter(c => c.isOnline)
+        return contacts.value.filter(c => c.isOnline === true)
     })
 
     // Computed: Offline contacts
     const offlineContacts = computed(() => {
-        return contacts.value.filter(c => !c.isOnline)
+        return contacts.value.filter(c => c.isOnline === false)
     })
 
     // Computed: Sorted contacts (online first, then alphabetically)
     const sortedContacts = computed(() => {
         return [...contacts.value].sort((a, b) => {
-            if (a.isOnline !== b.isOnline) {
-                return a.isOnline ? -1 : 1
-            }
-            return a.nickname.localeCompare(b.nickname)
+            const rank = value => value === true ? 0 : value === false ? 1 : 2
+            const statusOrder = rank(a.isOnline) - rank(b.isOnline)
+            if (statusOrder !== 0) return statusOrder
+            return String(a.nickname || a.username || '').localeCompare(String(b.nickname || b.username || ''))
         })
     })
 
-    function setContacts(contactList) {
-        contacts.value = contactList
-    }
-
-    function addContact(contact) {
-        const exists = contacts.value.some(c => c.id === contact.id)
-        if (!exists) {
-            contacts.value.push({
-                ...contact,
-                addedAt: new Date().toISOString()
-            })
+    const identities = ref({})
+    const ledger = createRevisionLedger()
+    const membership = new Map()
+    const userStore = useUserStore()
+    watch(() => userStore.currentUser?.id, owner => {
+        if (ledger.setOwner(owner)) {
+            isLoading.value = false; membership.clear(); contacts.value = []; identities.value = {}; onlineUsers.value = new Set()
+            pendingRequests.value = []; sentRequests.value = []; pendingRequestCount.value = 0
         }
-    }
-
-    function removeContact(contactId) {
-        contacts.value = contacts.value.filter(c => c.id !== contactId)
-    }
-
-    function updateContactStatus(userId, isOnline) {
-        if (isOnline) {
-            onlineUsers.value.add(userId)
-        } else {
-            onlineUsers.value.delete(userId)
+    }, { immediate: true, flush: 'sync' })
+    function captureIdentityRevision() { return ledger.capture() }
+    function isIdentityRevisionCurrent(token) { return ledger.valid(token) }
+    function getUserIdentity(userId) { return identities.value[String(userId)] || null }
+    function ingestUserSnapshots(users, revisionToken) {
+        if (captureIdentityRevision().owner == null || (revisionToken && !ledger.valid(revisionToken))) return false
+        for (const dto of users || []) {
+            const patch = normalizeUser(dto, resolveFileUrl)
+            if (!patch) continue
+            // Roles/relationship metadata belong to their source, not global identity.
+            const identityPatch = { ...patch }
+            for (const k of ['role', 'isAdmin', 'relationId', 'userId']) delete identityPatch[k]
+            const key = String(patch.id)
+            const record = ledger.merge(key, identities.value[key] || { id: patch.id, avatar: undefined, avatarUrl: undefined, nickname: undefined, lastSeen: undefined, isOnline: null }, identityPatch, revisionToken)
+            if (!record) continue
+            if (identities.value[key]) Object.assign(identities.value[key], record)
+            else identities.value[key] = record
+            const contact = contacts.value.find(c => sameId(c.id, patch.id))
+            if (contact) Object.assign(contact, record)
+            useChatStore().applyUserIdentity(patch.id, record)
         }
-
-        // Update contact in list
-        const contact = contacts.value.find(c => c.id === userId)
-        if (contact) {
-            contact.isOnline = isOnline
-            if (!isOnline) {
-                contact.lastSeen = new Date().toISOString()
-            }
-        }
+        onlineUsers.value = new Set(Object.values(identities.value).filter(u => u.isOnline === true).map(u => u.id))
+        return true
     }
-
-    function updateContactInfo(contactId, updates) {
-        const contact = contacts.value.find(c => c.id === contactId)
-        if (contact) {
-            Object.assign(contact, updates)
-        }
+    function updateUserPresence(userId, payload) {
+        return ingestUserSnapshots([{ ...payload, id: userId, userId: undefined }])
     }
-
-    function isUserOnline(userId) {
-        return onlineUsers.value.has(userId)
+    function invalidatePresence() {
+        for (const record of Object.values(identities.value)) updateUserPresence(record.id, { isOnline: null })
+        useChatStore().invalidatePresence()
     }
-
-    function isContact(userId) {
-        return contacts.value.some(c => c.id === userId)
+    function setContacts(list, token) {
+        if (token && !ledger.valid(token)) return
+        mergeContacts(list, token)
     }
-
+    function addContact(dto, token) {
+        if (token && !ledger.valid(token)) return
+        const patch = normalizeUser(dto, resolveFileUrl)
+        if (!patch) return
+        const state = ledger.merge(`contact:${patch.id}`, membership.get(String(patch.id)) || {}, { present: true }, token)
+        if (!state?.present) return
+        membership.set(String(patch.id), state)
+        ingestUserSnapshots([dto], token)
+        const existing = contacts.value.find(c => sameId(c.id, patch.id))
+        const merged = { ...existing, ...patch, ...getUserIdentity(patch.id) }
+        if (existing) Object.assign(existing, merged)
+        else contacts.value.push(merged)
+    }
+    function removeContact(id) { membership.set(String(id), ledger.merge(`contact:${id}`, {}, { present: false })); contacts.value = contacts.value.filter(c => !sameId(c.id, id)) }
+    function removeContactRelation(id) { for (const c of [...contacts.value]) if (sameId(c.relationId, id)) removeContact(c.id) }
+    function updateContactStatus(id, isOnline) { updateUserPresence(id, { isOnline }) }
+    function updateContactInfo(id, patch) { updateUserPresence(id, patch) }
+    function isUserOnline(id) { return getUserIdentity(id)?.isOnline ?? null }
+    function isContact(id) { return contacts.value.some(c => sameId(c.id, id)) }
     async function fetchContacts(userId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         isLoading.value = true
         try {
             const response = await contactAPI.getContacts(userId)
-            // Map backend avatarUrl to frontend avatar field
-            contacts.value = (response.data || []).map(contact => ({
-                ...contact,
-                avatar: resolveFileUrl(contact.avatarUrl || contact.avatar)
-            }))
-            // Persist to IndexedDB
-            offlineStore.saveContacts(contacts.value).catch(() => {})
-        } catch (error) {
-            console.error('Failed to fetch contacts:', error)
-            throw error
-        } finally {
-            isLoading.value = false
-        }
+            if (!ledger.valid(token)) return
+            const list = response.data || []
+            for (const c of [...contacts.value]) {
+                if (!list.some(dto => sameId(dto.userId ?? dto.id, c.id))) {
+                    const state = ledger.merge(`contact:${c.id}`, membership.get(String(c.id)) || {}, { present: false }, token)
+                    membership.set(String(c.id), state)
+                    if (!state.present) contacts.value = contacts.value.filter(x => !sameId(x.id, c.id))
+                }
+            }
+            mergeContacts(list, token)
+        } finally { if (ledger.valid(token)) isLoading.value = false }
     }
 
     async function searchUsers(query) {
-        try {
-            // In real app, implement search API
-            // const response = await userAPI.searchUsers(query)
-            // return response.data
-            return []
-        } catch (error) {
-            console.error('Failed to search users:', error)
-            throw error
-        }
+        const token = captureIdentityRevision()
+        const response = await userAPI.searchUsers(query)
+        if (!ledger.valid(token)) return []
+        // Search does not grant a friendship or presence observation subscription.
+        return (response.data || []).map(dto => normalizeUser(dto, resolveFileUrl)).filter(Boolean)
     }
 
     /**
@@ -117,24 +129,17 @@ export const useContactStore = defineStore('contact', () => {
      * @returns { type: 'direct' | 'request', data: ContactDTO | ContactRequestDTO }
      */
     async function addContactRequest(userId, contactUserId, message = null) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             const response = await contactAPI.addContact(userId, contactUserId, message)
+            if (!ledger.valid(token)) return
             const result = response.data
 
             if (result.type === 'direct') {
                 // 直接添加成功
                 const contactData = result.data
-                addContact({
-                    id: contactData.userId,
-                    username: contactData.username,
-                    nickname: contactData.nickname,
-                    avatarUrl: resolveFileUrl(contactData.avatarUrl),
-                    avatar: resolveFileUrl(contactData.avatarUrl),
-                    isOnline: contactData.isOnline,
-                    lastSeen: contactData.lastSeen,
-                    email: contactData.email,
-                    phone: contactData.phone
-                })
+                addContact(contactData, token)
             } else if (result.type === 'request') {
                 // 发送了好友申请
                 sentRequests.value.unshift(result.data)
@@ -148,8 +153,11 @@ export const useContactStore = defineStore('contact', () => {
     }
 
     async function removeContactRequest(userId, contactUserId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             await contactAPI.removeContact(userId, contactUserId)
+            if (!ledger.valid(token)) return
             removeContact(contactUserId)
         } catch (error) {
             console.error('Failed to remove contact:', error)
@@ -158,7 +166,7 @@ export const useContactStore = defineStore('contact', () => {
     }
 
     function getContactById(contactId) {
-        return contacts.value.find(c => c.id === contactId)
+        return contacts.value.find(c => sameId(c.id, contactId))
     }
 
     // ==================== 好友申请相关方法 ====================
@@ -167,8 +175,11 @@ export const useContactStore = defineStore('contact', () => {
      * 获取待处理的好友申请（收到的）
      */
     async function fetchPendingRequests(userId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             const response = await contactAPI.getPendingRequests(userId)
+            if (!ledger.valid(token)) return
             pendingRequests.value = response.data || []
             pendingRequestCount.value = pendingRequests.value.length
         } catch (error) {
@@ -181,8 +192,11 @@ export const useContactStore = defineStore('contact', () => {
      * 获取已发送的好友申请
      */
     async function fetchSentRequests(userId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             const response = await contactAPI.getSentRequests(userId)
+            if (!ledger.valid(token)) return
             sentRequests.value = response.data || []
         } catch (error) {
             console.error('Failed to fetch sent requests:', error)
@@ -194,8 +208,11 @@ export const useContactStore = defineStore('contact', () => {
      * 获取待处理申请数量
      */
     async function fetchPendingRequestCount(userId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             const response = await contactAPI.getPendingRequestCount(userId)
+            if (!ledger.valid(token)) return
             pendingRequestCount.value = response.data?.count || 0
         } catch (error) {
             console.error('Failed to fetch pending request count:', error)
@@ -206,21 +223,14 @@ export const useContactStore = defineStore('contact', () => {
      * 接受好友申请
      */
     async function acceptRequest(requestId, userId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             const response = await contactAPI.acceptRequest(requestId, userId)
+            if (!ledger.valid(token)) return
             // 添加到联系人列表
             const contactData = response.data
-            addContact({
-                id: contactData.userId,
-                username: contactData.username,
-                nickname: contactData.nickname,
-                avatarUrl: resolveFileUrl(contactData.avatarUrl),
-                avatar: resolveFileUrl(contactData.avatarUrl),
-                isOnline: contactData.isOnline,
-                lastSeen: contactData.lastSeen,
-                email: contactData.email,
-                phone: contactData.phone
-            })
+            addContact(contactData, token)
             // 从待处理列表中移除
             pendingRequests.value = pendingRequests.value.filter(r => r.id !== requestId)
             pendingRequestCount.value = Math.max(0, pendingRequestCount.value - 1)
@@ -235,8 +245,11 @@ export const useContactStore = defineStore('contact', () => {
      * 拒绝好友申请
      */
     async function rejectRequest(requestId, userId) {
+        const token = captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
         try {
             await contactAPI.rejectRequest(requestId, userId)
+            if (!ledger.valid(token)) return
             // 从待处理列表中移除
             pendingRequests.value = pendingRequests.value.filter(r => r.id !== requestId)
             pendingRequestCount.value = Math.max(0, pendingRequestCount.value - 1)
@@ -263,17 +276,7 @@ export const useContactStore = defineStore('contact', () => {
      */
     function handleRequestAccepted(contactData) {
         // 添加到联系人列表
-        addContact({
-            id: contactData.userId,
-            username: contactData.username,
-            nickname: contactData.nickname,
-            avatarUrl: resolveFileUrl(contactData.avatarUrl),
-            avatar: resolveFileUrl(contactData.avatarUrl),
-            isOnline: contactData.isOnline,
-            lastSeen: contactData.lastSeen,
-            email: contactData.email,
-            phone: contactData.phone
-        })
+        addContact(contactData)
         // 从已发送列表中移除相关申请
         sentRequests.value = sentRequests.value.filter(
             r => r.toUserId !== contactData.userId
@@ -294,35 +297,23 @@ export const useContactStore = defineStore('contact', () => {
      * Merge delta-synced contacts into the store.
      * Updates existing contacts or inserts new ones.
      */
-    function mergeContacts(deltaContactList) {
-        for (const deltaContact of deltaContactList) {
-            const idx = contacts.value.findIndex(c => c.id === deltaContact.id)
-            if (idx !== -1) {
-                contacts.value[idx] = { ...contacts.value[idx], ...deltaContact }
-            } else {
-                contacts.value.push(deltaContact)
-            }
-        }
-        offlineStore.saveContacts(deltaContactList).catch(() => {})
+    function mergeContacts(list, token) {
+        if (token && !ledger.valid(token)) return
+        for (const dto of list || []) addContact(dto, token)
+        const owner = captureIdentityRevision().owner
+        offlineStore.saveContacts(contacts.value.map(c => ({ ...c, _socialOwner: owner }))).catch(e => console.warn('[ContactStore] Cache write failed', e))
     }
-
-    /**
-     * Load contacts from IndexedDB cache (offline-first).
-     */
     async function loadFromCache() {
-        try {
-            const cached = await offlineStore.getContacts()
-            if (cached.length > 0) {
-                contacts.value = cached
-            }
-            return cached
-        } catch (e) {
-            console.error('[ContactStore] Failed to load from cache:', e)
-            return []
-        }
+        const token = captureIdentityRevision()
+        const cached = await offlineStore.getContacts()
+        if (!ledger.valid(token)) return []
+        const safe = cached.filter(c => sameId(c._socialOwner, token.owner)).map(c => ({ ...c, isOnline: null }))
+        for (const dto of safe) addContact(dto, token)
+        return safe
     }
 
     return {
+        identities, captureIdentityRevision, isIdentityRevisionCurrent, ingestUserSnapshots, getUserIdentity, updateUserPresence, invalidatePresence, removeContactRelation,
         contacts,
         onlineUsers,
         pendingRequests,

@@ -71,4 +71,6 @@ public interface ChatRepository extends JpaRepository<Chat, Long> {
      */
     List<Chat> findByIdIn(List<Long> ids);
 
+    /** Whether any row shows this exact stored URL as its avatar. */
+    boolean existsByAvatarUrl(String avatarUrl);
 }

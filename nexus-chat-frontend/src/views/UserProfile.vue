@@ -17,7 +17,7 @@
       <!-- User card -->
       <div class="user-card glass-panel">
         <div class="avatar-section">
-          <el-avatar :size="120" :src="userProfile?.avatarUrl || defaultAvatar" class="avatar-img" />
+          <IdentityAvatar :size="120" :src="userProfile?.avatarUrl" :entity-id="userProfile?.id ?? userId" :label="userProfile?.nickname || userProfile?.username" class="avatar-img" />
           <div class="status-dot" :class="{ online: isOnline }" v-if="showOnlineStatus"></div>
         </div>
 
@@ -114,11 +114,13 @@
         <div class="mutual-section" v-if="mutualContacts.length > 0">
           <h4 class="mutual-title">{{ $t('profile.mutualContacts') }} ({{ mutualContacts.length }})</h4>
           <div class="mutual-list">
-            <el-avatar
+            <IdentityAvatar
               v-for="contact in mutualContacts.slice(0, 5)"
               :key="contact.id"
               :size="36"
-              :src="contact.avatar || contact.avatarUrl || defaultAvatar"
+              :src="contact.avatarUrl || contact.avatar"
+              :entity-id="contact.id"
+              :label="contact.nickname || contact.username"
               class="mutual-avatar"
             />
             <span v-if="mutualContacts.length > 5" class="mutual-more">+{{ mutualContacts.length - 5 }}</span>
@@ -148,6 +150,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { goBack as returnToSource, mainLocation } from '@/router/navigation'
@@ -190,7 +193,6 @@ const blocking = ref(false)
 const mutualContacts = ref([])
 const socialLinks = ref({})
 
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 
 // Computed properties
 const userId = computed(() => Number(props.id) || Number(route.params.id))
@@ -426,6 +428,9 @@ onMounted(() => {
 }
 
 .avatar-section .avatar-img {
+  box-sizing: border-box;
+  border-radius: 50%;
+  font-size: 44px;
   border: 4px solid var(--tg-surface);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
@@ -603,6 +608,9 @@ onMounted(() => {
 }
 
 .mutual-avatar {
+  box-sizing: border-box;
+  border-radius: 50%;
+  font-size: 14px;
   border: 2px solid var(--tg-surface);
 }
 

@@ -60,7 +60,7 @@
         <div class="row-list">
           <div v-if="pendingRequests.length === 0" class="list-empty">{{ $t('profile.noFriendRequests') }}</div>
           <div v-for="r in pendingRequests" :key="r.id" class="row">
-            <el-avatar :size="34" :src="r.fromAvatarUrl || defaultAvatar" />
+            <IdentityAvatar class="row-avatar" :size="34" :src="r.fromAvatarUrl" :entity-id="r.fromUserId" :label="r.fromNickname || r.fromUsername" />
             <div class="row-main">
               <span class="row-name">{{ r.fromNickname }}</span>
               <span class="row-sub">{{ r.message || '@' + r.fromUsername }}</span>
@@ -107,7 +107,7 @@
             @click="viewProfile(c)"
           >
             <span class="ri-avatar">
-              <el-avatar :size="34" :src="c.avatar || c.avatarUrl || defaultAvatar" />
+              <IdentityAvatar class="row-avatar" :size="34" :src="c.avatarUrl || c.avatar" :entity-id="c.id" :label="c.nickname || c.username" />
               <span class="online-dot" :class="{ on: c.isOnline }"></span>
             </span>
             <div class="row-main">
@@ -168,7 +168,7 @@
             {{ $t('profile.blacklistEmpty') }}
           </div>
           <div v-for="b in blacklist" :key="b.userId" class="row">
-            <el-avatar :size="34" :src="resolveFileUrl(b.avatarUrl) || defaultAvatar" />
+            <IdentityAvatar class="row-avatar" :size="34" :src="b.avatarUrl" :entity-id="b.userId" :label="b.nickname || b.username" />
             <div class="row-main">
               <span class="row-name">{{ b.nickname }}</span>
               <span class="row-sub">@{{ b.username }}</span>
@@ -188,6 +188,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { mainLocation } from '@/router/navigation'
@@ -207,7 +208,6 @@ const userStore = useUserStore()
 const contactStore = useContactStore()
 
 const HOUR = 3600000
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 
 const userId = computed(() => userStore.currentUser?.id)
 
@@ -694,6 +694,11 @@ onMounted(async () => {
 
 .row-action:hover { color: #f2b8b5; }
 .row-action:disabled { opacity: 0.5; cursor: default; }
+
+.row-avatar {
+  border-radius: 50%;
+  font-size: 13px;
+}
 
 /* ===== Recent interactions ===== */
 .ri-avatar {

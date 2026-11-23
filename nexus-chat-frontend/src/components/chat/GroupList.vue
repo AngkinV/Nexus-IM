@@ -17,13 +17,7 @@
         @click="selectGroup(group)"
       >
         <div class="avatar-frame">
-          <img
-            v-if="group.avatar"
-            class="avatar-img"
-            :src="group.avatar"
-            alt=""
-          />
-          <div v-else class="avatar-fallback">{{ getGroupInitials(group.name) }}</div>
+          <IdentityAvatar :src="group.avatarUrl || group.avatar" :entity-id="group.id" :label="group.name" kind="group" class="avatar-img" />
           <span class="member-badge">{{ group.memberCount || 0 }}</span>
         </div>
 
@@ -55,6 +49,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
@@ -206,7 +201,6 @@ const formatTime = (time) => {
   height: 100%;
   border-radius: 4px;
   object-fit: cover;
-  filter: grayscale(100%);
 }
 
 .avatar-fallback {

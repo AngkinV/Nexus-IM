@@ -512,6 +512,8 @@ CREATE TABLE IF NOT EXISTS model_credentials (
     provider VARCHAR(50) NOT NULL,
     purpose VARCHAR(20) NOT NULL DEFAULT 'chat',
     display_name VARCHAR(80) DEFAULT NULL,
+    vendor VARCHAR(40) DEFAULT NULL,
+    api_format VARCHAR(30) DEFAULT NULL,
     base_url VARCHAR(255) DEFAULT NULL,
     default_model VARCHAR(120) DEFAULT NULL,
     api_key_encrypted TEXT,
@@ -554,6 +556,18 @@ BEGIN
                      AND COLUMN_NAME = 'is_default') THEN
         ALTER TABLE model_credentials
             ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0 AFTER api_key_encrypted;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
+                   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'model_credentials'
+                     AND COLUMN_NAME = 'vendor') THEN
+        ALTER TABLE model_credentials
+            ADD COLUMN vendor VARCHAR(40) DEFAULT NULL AFTER display_name;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
+                   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'model_credentials'
+                     AND COLUMN_NAME = 'api_format') THEN
+        ALTER TABLE model_credentials
+            ADD COLUMN api_format VARCHAR(30) DEFAULT NULL AFTER vendor;
     END IF;
 END$$
 DELIMITER ;

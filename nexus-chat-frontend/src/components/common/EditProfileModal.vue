@@ -173,7 +173,7 @@
 import { ref, computed, watch, reactive } from 'vue'
 import { Camera, Delete, User, Message, Phone, Lock, Picture, Upload, Check } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
-import { userAPI } from '@/services/api'
+import { userAPI, resolveFileUrl } from '@/services/api'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 
@@ -190,7 +190,6 @@ const dialogVisible = computed({
 
 const formRef = ref(null)
 const isSaving = ref(false)
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 const showBackgroundOptions = ref(false)
 const bgFileInput = ref(null)
 
@@ -323,18 +322,25 @@ const saveProfile = async () => {
         await userStore.updateBackground(form.value.profileBackground)
       }
 
-      // Update avatar if changed (base64)
-      const currentAvatar = userStore.currentUser?.avatar
-      if (form.value.avatar && form.value.avatar !== currentAvatar) {
+      // The server stores the picture and answers with its URL. Keep that URL, not the
+      // picked file's data: it is what every other screen and every contact will load.
+      const currentAvatar = userStore.currentUser?.avatar || ''
+      let avatar = currentAvatar
+      if (form.value.avatar !== currentAvatar) {
         if (form.value.avatar.startsWith('data:image')) {
-          await userAPI.uploadAvatar(userId, form.value.avatar)
+          const { data } = await userAPI.uploadAvatar(userId, form.value.avatar)
+          avatar = resolveFileUrl(data?.avatarUrl)
+        } else if (!form.value.avatar) {
+          await userAPI.deleteAvatar(userId)
+          avatar = ''
         }
       }
 
       // Update local state
       userStore.currentUser = {
         ...userStore.currentUser,
-        ...form.value
+        ...form.value,
+        avatar
       }
       localStorage.setItem('user', JSON.stringify(userStore.currentUser))
 
@@ -463,7 +469,6 @@ const saveProfile = async () => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .modal-avatar-fallback {

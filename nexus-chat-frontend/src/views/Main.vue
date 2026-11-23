@@ -47,7 +47,7 @@
     <CommandPalette v-model="paletteOpen" @action="handlePaletteAction" />
 
     <!-- Creator's Eye: fullscreen transition played when entering the AI section -->
-    <TavernEntrance />
+    <TavernEntrance :sound-enabled="settings.soundEnabled" />
 
     <!-- Mobile overlay for right panel -->
     <div
@@ -269,7 +269,8 @@ const enterTavern = (commit) => {
 watch(
   () => callStore.callStatus,
   (status) => {
-    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) tavernEntrance.cancel()
+    // A ringing call outranks the picture, including the first, unskippable viewing.
+    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) tavernEntrance.cancel(true)
   }
 )
 
@@ -495,7 +496,7 @@ provide('requestSearch', () => { searchSignal.value += 1 })
  *
  * Phase 1: Load from IndexedDB instantly (UI opens immediately)
  * Phase 2: Connect WebSocket (close message-loss window)
- * Phase 3: Parallel network sync (delta sync + pending requests)
+ * Phase 3: Serial delta, current snapshots, then pending requests
  * Phase 4: Flush offline outbox
  */
 onMounted(async () => {
@@ -510,6 +511,8 @@ onMounted(async () => {
 
   const userId = userStore.currentUser?.id
   if (!userId) return
+  const identityToken = contactStore.captureIdentityRevision()
+  const currentSync = () => mainAlive && userStore.currentUser?.id === userId && contactStore.isIdentityRevisionCurrent(identityToken)
 
   try {
     // ── Phase 1: Instant load from IndexedDB cache ──
@@ -521,37 +524,45 @@ onMounted(async () => {
     // ── Phase 2: Connect WebSocket immediately ──
     // No more waiting for API fetches before connecting.
     // The unified channel receives all events from the moment of connect.
+    if (!currentSync()) return
+    let syncRun = 0
     websocket.connect(userId, async () => {
+      if (!currentSync()) return
+      const run = ++syncRun
+      const currentRun = () => currentSync() && run === syncRun && websocket.isConnected()
       // Initialize call service after WebSocket connects
       callStore.initialize()
 
       // Initialize companion widget data
       companionStore.ensureInitialized(userId).catch(() => {})
 
-      // ── Phase 3: Parallel network sync (runs after WS is connected) ──
+      // ── Phase 3: Serial network sync (runs after WS is connected) ──
       try {
-        await Promise.all([
-          chatStore.fetchChats(userId),
-          contactStore.fetchContacts(userId),
-          contactStore.fetchPendingRequests(userId),
-          syncService.performDeltaSync({
-            chatStore,
-            messageStore,
-            contactStore,
-            userStore
-          })
-        ])
+        // Historical delta first; current full snapshots are the final baseline.
+        try {
+          await syncService.performDeltaSync({ chatStore, messageStore, contactStore, userStore })
+        } catch (error) {
+          console.warn('[Main] Delta unavailable; continuing with current snapshots:', error)
+        }
+        if (!currentRun()) return
+        await chatStore.fetchChats(userId)
+        if (!currentRun()) return
+        await contactStore.fetchContacts(userId)
+        if (!currentRun()) return
+        await contactStore.fetchPendingRequests(userId)
       } catch (error) {
         console.error('[Main] Network sync failed:', error)
+        return
       }
 
+      if (!currentRun()) return
       // ── Phase 4: Flush offline outbox ──
       try {
         await syncService.flushPendingMessages((msg) => {
           return websocket.sendMessage(
             msg.chatId, msg.senderId, msg.content, msg.messageType, msg.fileUrl
           ).promise
-        })
+        }, userId, currentRun)
       } catch (error) {
         console.error('[Main] Offline flush failed:', error)
       }

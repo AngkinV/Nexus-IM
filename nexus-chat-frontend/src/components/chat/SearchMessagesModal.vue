@@ -34,7 +34,7 @@
               @click="handleMessageClick(message)"
             >
               <div class="message-avatar">
-                <div class="avatar-frame"><img v-if="message.senderAvatar" class="avatar-img" :src="message.senderAvatar" alt="" /><div v-else class="avatar-fallback">{{ (message.senderName || "?").charAt(0) }}</div></div>
+                <div class="avatar-frame"><IdentityAvatar :src="message.senderAvatar" :entity-id="message.senderId" :label="message.senderName" /></div>
               </div>
               <div class="message-content">
                 <div class="message-header">
@@ -64,6 +64,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessageStore } from '@/stores/message'
@@ -92,7 +93,6 @@ const visible = computed({
   set: (val) => emit('update:modelValue', val)
 })
 
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
 const searchQuery = ref('')
 const searchResults = ref([])
 const loading = ref(false)
@@ -240,14 +240,8 @@ const handleClose = () => {
   border-radius: 9999px;
   background: #2a2a2d;
   box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.4);
-}
-
-.avatar-img {
-  width: 100%;
-  height: 100%;
-  border-radius: 9999px;
-  object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
+  overflow: hidden;
+  font-size: 12px;
 }
 
 .avatar-fallback {

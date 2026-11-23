@@ -134,26 +134,8 @@ public class WebSocketController {
     public void updateUserStatus(@Payload Map<String, Object> payload, Principal principal) {
         try {
             Long userId = actingUser(principal, payload.get("userId"));
-            Boolean isOnline = (Boolean) payload.get("isOnline");
-
-            // Update presence in Redis (not MySQL)
-            if (Boolean.TRUE.equals(isOnline)) {
-                String sessionId = payload.get("sessionId") != null
-                        ? payload.get("sessionId").toString() : "ws-" + userId;
-                presenceService.userConnected(userId, sessionId);
-            } else {
-                String sessionId = payload.get("sessionId") != null
-                        ? payload.get("sessionId").toString() : "ws-" + userId;
-                presenceService.userDisconnected(userId, sessionId);
-            }
-
-            // Notify contacts (uses indexed reverse lookup, not full table scan)
-            contactService.notifyContactsOfStatusChange(userId, isOnline);
-
-            // Deliver offline messages when user comes online
-            if (Boolean.TRUE.equals(isOnline)) {
-                deliverOfflineMessages(userId);
-            }
+            // Legacy status is a query; ignore client boolean and sessionId.
+            if (presenceService.isUserOnline(userId)) deliverOfflineMessages(userId);
         } catch (Exception e) {
             log.error("更新用户状态失败: userId={}", payload.get("userId"), e);
         }
@@ -231,10 +213,11 @@ public class WebSocketController {
      * Handle heartbeat from client (refresh presence TTL).
      */
     @MessageMapping("/user.heartbeat")
-    public void heartbeat(@Payload Map<String, Object> payload, Principal principal) {
+    public void heartbeat(@Payload Map<String, Object> payload, Principal principal,
+            org.springframework.messaging.simp.SimpMessageHeaderAccessor headers) {
         try {
             Long userId = actingUser(principal, payload.get("userId"));
-            presenceService.refreshPresence(userId);
+            presenceService.refreshPresence(userId, headers.getSessionId());
         } catch (Exception e) {
             log.debug("心跳处理失败: {}", e.getMessage());
         }

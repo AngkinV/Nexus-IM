@@ -10,20 +10,7 @@
     >
       <!-- Avatar for received messages; no portrait → monochrome initial -->
       <div v-if="!msg.isSelf" class="message-avatar">
-        <el-avatar
-          v-if="msg.senderAvatar"
-          :size="32"
-          :src="msg.senderAvatar"
-          :alt="msg.senderName"
-          class="clickable-avatar"
-          @click="handleAvatarClick(msg.senderId)"
-        />
-        <div
-          v-else
-          class="avatar-initial clickable-avatar"
-          :data-initial="(msg.senderName || '?').trim().charAt(0) || '?'"
-          @click="handleAvatarClick(msg.senderId)"
-        ></div>
+        <IdentityAvatar :src="msg.senderAvatar" :entity-id="msg.senderId" :label="msg.senderName" :size="32" class="clickable-avatar" @click="handleAvatarClick(msg.senderId)" />
       </div>
 
       <div class="message-content">
@@ -185,6 +172,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, onMounted, onBeforeUnmount, onUpdated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { WarningFilled, Download, PictureFilled, Loading } from '@element-plus/icons-vue'
@@ -444,10 +432,10 @@ const handleAvatarClick = (senderId) => {
   width: 32px;
 }
 
-.message-avatar .el-avatar {
+.message-avatar .identity-avatar {
+  border-radius: 50%;
   background: #2a2a2d;
   box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3);
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .avatar-initial {
@@ -1020,7 +1008,7 @@ const handleAvatarClick = (senderId) => {
     width: 28px;
   }
 
-  .message-avatar .el-avatar {
+  .message-avatar .identity-avatar {
     width: 28px !important;
     height: 28px !important;
   }

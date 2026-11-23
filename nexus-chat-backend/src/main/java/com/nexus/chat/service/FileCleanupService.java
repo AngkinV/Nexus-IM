@@ -1,7 +1,10 @@
 package com.nexus.chat.service;
 
 import com.nexus.chat.model.FileUpload;
+import com.nexus.chat.repository.ChatRepository;
 import com.nexus.chat.repository.FileUploadRepository;
+import com.nexus.chat.repository.UserRepository;
+import com.nexus.chat.storage.UploadStorage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,9 +24,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class FileCleanupService {
 
-    private static final String UPLOAD_DIR = "uploads/";
 
     private final FileUploadRepository fileUploadRepository;
+    private final UserRepository userRepository;
+    private final ChatRepository chatRepository;
+    private final UploadStorage storage;
 
     /**
      * 每天凌晨3点执行清理任务
@@ -43,8 +48,13 @@ public class FileCleanupService {
 
             for (FileUpload fileUpload : expiredFiles) {
                 try {
+                    // An avatar is uploaded like any attachment but must outlive the 30 days
+                    // an attachment gets: keep the file for as long as a user or group shows it.
+                    if (isAvatarInUse(fileUpload)) {
+                        continue;
+                    }
                     // 删除物理文件
-                    File file = new File(UPLOAD_DIR + fileUpload.getFilePath());
+                    File file = storage.resolve(fileUpload.getFilePath()).toFile();
                     if (file.exists()) {
                         if (file.delete()) {
                             log.debug("已删除文件: {}", fileUpload.getFilePath());
@@ -57,7 +67,7 @@ public class FileCleanupService {
 
                     // 删除缩略图（如果有）
                     if (fileUpload.getThumbnailPath() != null) {
-                        File thumbnail = new File(UPLOAD_DIR + fileUpload.getThumbnailPath());
+                        File thumbnail = storage.resolve(fileUpload.getThumbnailPath()).toFile();
                         if (thumbnail.exists()) {
                             thumbnail.delete();
                         }
@@ -83,7 +93,7 @@ public class FileCleanupService {
             for (FileUpload fileUpload : incompleteUploads) {
                 try {
                     // 删除临时分片目录
-                    File chunksDir = new File(UPLOAD_DIR + "chunks/" + fileUpload.getFileId());
+                    File chunksDir = storage.resolve("chunks/" + fileUpload.getFileId()).toFile();
                     if (chunksDir.exists()) {
                         deleteDirectory(chunksDir);
                     }
@@ -107,11 +117,17 @@ public class FileCleanupService {
         log.info("文件清理任务完成: 已删除 {} 个文件, 失败 {} 个", deletedCount, failedCount);
     }
 
+    /** True while a user or a group still shows this file as its avatar. */
+    private boolean isAvatarInUse(FileUpload fileUpload) {
+        String url = UploadStorage.URL_PREFIX + fileUpload.getFilePath();
+        return userRepository.existsByAvatarUrl(url) || chatRepository.existsByAvatarUrl(url);
+    }
+
     /**
      * 清理孤立的临时分片目录
      */
     private void cleanupOrphanedChunks() {
-        File chunksBaseDir = new File(UPLOAD_DIR + "chunks/");
+        File chunksBaseDir = storage.resolve("chunks").toFile();
         if (!chunksBaseDir.exists()) {
             return;
         }

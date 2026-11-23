@@ -101,7 +101,7 @@
         <div class="w-8 h-8 rounded-full bg-white flex items-center justify-center ring-1 ring-white/20 overflow-hidden">
           <img
             v-if="userStore.currentUser?.avatar"
-            class="w-full h-full object-cover grayscale"
+            class="w-full h-full object-cover"
             :src="userStore.currentUser.avatar"
             alt=""
           />

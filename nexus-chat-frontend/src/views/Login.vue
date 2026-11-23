@@ -190,10 +190,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { loginDestination } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
-import { authAPI } from '@/services/api'
+import { authAPI, userAPI, resolveFileUrl } from '@/services/api'
 import { Camera, User, Lock, Message, Iphone, Postcard, Key } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { fileAPI } from '@/services/api'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -345,28 +344,28 @@ const handleRegister = async () => {
 
   loading.value = true
   try {
-    // 如果有头像文件，先上传
-    let uploadedAvatarUrl = null
-    if (avatarFile.value) {
-      try {
-        const uploadResponse = await fileAPI.uploadFile(avatarFile.value)
-        uploadedAvatarUrl = uploadResponse.data.fileUrl
-      } catch (uploadError) {
-        console.error('Avatar upload failed:', uploadError)
-        // 头像上传失败不阻止注册，但提示用户可稍后设置
-        ElMessage.warning(t('auth.avatarUploadFailed'))
-      }
-    }
-
+    const chosenAvatar = avatarFile.value ? avatarPreview.value : null
     await userStore.register({
       username: registerForm.username,
       email: registerForm.email,
       nickname: registerForm.nickname,
       password: registerForm.password,
       phone: registerForm.phone || null,
-      avatarUrl: uploadedAvatarUrl,  // 使用上传后的 URL 而不是 base64
       verificationCode: registerForm.verificationCode
     })
+    // Uploading needs a signed-in account, so the picture can only be sent once the
+    // account exists. Sending it before registering was always refused.
+    if (chosenAvatar?.startsWith('data:image/')) {
+      const owner = userStore.currentUser?.id
+      try {
+        const { data } = await userAPI.uploadAvatar(owner, chosenAvatar)
+        if (userStore.currentUser?.id === owner) await userStore.updateAvatar(resolveFileUrl(data?.avatarUrl))
+      } catch (uploadError) {
+        console.error('Avatar upload failed:', uploadError)
+        // 头像上传失败不阻止注册，但提示用户可稍后设置
+        ElMessage.warning(t('auth.avatarUploadFailed'))
+      }
+    }
     if (route.name === 'Login') await router.replace(loginDestination(router, route.query))
     ElMessage.success(t('auth.registerSuccess') || 'Registration successful')
   } catch (error) {

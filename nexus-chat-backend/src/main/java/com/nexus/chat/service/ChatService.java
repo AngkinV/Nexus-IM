@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 public class ChatService {
 
     private final ChatRepository chatRepository;
+    private final PresenceService presenceService;
     private final ChatMemberRepository chatMemberRepository;
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
@@ -95,7 +96,7 @@ public class ChatService {
 
         // Batch verify all member IDs exist
         List<Long> otherMemberIds = request.getMemberIds().stream()
-                .filter(id -> !id.equals(userId))
+                .filter(id -> !id.equals(userId)).distinct()
                 .collect(Collectors.toList());
         if (!otherMemberIds.isEmpty()) {
             List<User> existingUsers = userRepository.findAllByIdIn(otherMemberIds);
@@ -213,8 +214,8 @@ public class ChatService {
                                     user.getUsername(),
                                     user.getNickname(),
                                     user.getAvatarUrl(),
-                                    user.getIsOnline(),
-                                    user.getLastSeen());
+                                    presenceService.getVisibleStatus(user.getId()),
+                                    presenceService.getVisibleLastSeen(user.getId()));
                         }
                         return null;
                     })
@@ -300,8 +301,8 @@ public class ChatService {
                                 user.getUsername(),
                                 user.getNickname(),
                                 user.getAvatarUrl(),
-                                user.getIsOnline(),
-                                user.getLastSeen());
+                                presenceService.getVisibleStatus(user.getId()),
+                                presenceService.getVisibleLastSeen(user.getId()));
                     }
                     return null;
                 })

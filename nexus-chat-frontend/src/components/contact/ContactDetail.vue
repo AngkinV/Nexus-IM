@@ -30,17 +30,10 @@
           <div class="flex items-center gap-space-lg min-w-0">
             <div class="relative shrink-0">
               <div class="w-20 h-20 rounded-lg p-0.5 border border-outline-variant/40 bg-surface-container">
-                <img
-                  v-if="avatarUrl && !avatarFailed"
-                  class="w-full h-full rounded object-cover grayscale contrast-125"
-                  :src="avatarUrl"
-                  alt=""
-                  @error="avatarFailed = true"
-                />
-                <div v-else class="detail-initial w-full h-full rounded" :data-initial="initial"></div>
+                <IdentityAvatar :src="avatarUrl" :entity-id="contact.id" :label="displayName" kind="user" class="w-full h-full rounded object-cover" />
               </div>
-              <div class="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded bg-surface border border-outline-variant/40 flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full" :class="isOnline ? 'bg-primary' : 'bg-outline'"></span>
+              <div v-if="isOnline !== null" class="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded bg-surface border border-outline-variant/40 flex items-center gap-1">
+                <PresenceDot class="w-1.5 h-1.5" :value="isOnline" />
                 <span class="font-code text-[11px]" :class="isOnline ? 'text-primary' : 'text-on-surface-variant'">
                   {{ isOnline ? $t('chat.online') : $t('chat.offline') }}
                 </span>
@@ -202,7 +195,11 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { useContactStore } from '@/stores/contact'
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import { isGroup, presence } from '@/components/identity/presentation.mjs'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
@@ -229,22 +226,24 @@ const tileCls = 'p-3 rounded bg-surface-container border border-outline-variant/
 const rowCls = 'p-2 rounded bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 flex items-center gap-2.5 transition-colors cursor-pointer group'
 const rowIcon = 'w-8 h-8 rounded bg-surface-container-highest border border-outline-variant/30 text-primary flex items-center justify-center shrink-0'
 
+const contactStore = useContactStore()
+const identity = computed(() => contactStore.getUserIdentity(props.contact.id))
 const profile = ref(null)
 const mutual = ref([])
 const loading = ref(false)
-const avatarFailed = ref(false)
 
-const displayName = computed(() => props.contact.nickname || props.contact.username || '')
+const displayName = computed(() => identity.value?.nickname || props.contact.nickname || props.contact.username || '')
 const initial = computed(() => displayName.value.trim().charAt(0) || '?')
 const avatarUrl = computed(() => {
-  const raw = profile.value?.avatarUrl || props.contact.avatar || props.contact.avatarUrl
+  const raw = identity.value ? identity.value.avatarUrl || identity.value.avatar : profile.value?.avatarUrl || props.contact.avatarUrl || props.contact.avatar
   return raw ? resolveFileUrl(raw) : ''
 })
-const isOnline = computed(() => !!props.contact.isOnline)
+const isOnline = computed(() => presence(identity.value ? identity.value.isOnline : props.contact.isOnline))
 const lastSeen = computed(() => profile.value?.lastSeen || props.contact.lastSeen)
 
 const presenceText = computed(() => {
-  if (isOnline.value) return t('chat.activeNow')
+  if (isOnline.value === null) return ''
+  if (isOnline.value === true) return t('chat.activeNow')
   return lastSeen.value ? `${t('chat.lastSeen')} ${dayjs(lastSeen.value).fromNow()}` : t('chat.offline')
 })
 const joinedText = computed(() =>
@@ -276,21 +275,23 @@ const openProfile = () => router.push(`/user/${props.contact.id}`)
 // Load the viewer-scoped profile + mutual contacts whenever the selection
 // changes; a late response for a previous contact is dropped.
 let requestId = 0
+onBeforeUnmount(() => { ++requestId })
 const load = async () => {
   const id = props.contact.id
   const viewerId = userStore.currentUser?.id
   const current = ++requestId
+  const identityToken = contactStore.captureIdentityRevision()
   profile.value = null
   mutual.value = []
-  avatarFailed.value = false
   if (!id || !viewerId) return
   loading.value = true
   const [p, m] = await Promise.allSettled([
     userAPI.getUserProfileForViewer(id, viewerId),
     contactAPI.getMutualContacts(viewerId, id)
   ])
-  if (current !== requestId) return
+  if (current !== requestId || props.contact.id !== id) return
   profile.value = p.status === 'fulfilled' ? p.value.data : null
+  if (profile.value) contactStore.ingestUserSnapshots([{ ...profile.value, id }], identityToken)
   mutual.value = m.status === 'fulfilled' ? m.value.data || [] : []
   loading.value = false
 }

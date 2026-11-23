@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nexus.chat.dto.agent.AgentProviderDtos;
 import com.nexus.chat.exception.agent.AgentErrorCode;
 import com.nexus.chat.exception.agent.AgentException;
+import com.nexus.chat.model.ModelChannels;
 import com.nexus.chat.model.ModelCredential;
 import com.nexus.chat.repository.ModelCredentialRepository;
 import com.nexus.chat.service.CompanionCryptoService;
@@ -42,6 +43,9 @@ public class AgentProviderService {
                 .stream().map(this::toView).toList();
     }
 
+    /** Enough for every vendor in the catalogue plus private relays; a bound, not a product limit. */
+    static final int MAX_CHANNELS_PER_PURPOSE = 100;
+
     @Transactional
     public AgentProviderDtos.ProviderView upsert(Long userId, AgentProviderDtos.UpsertProviderRequest req) {
         String base = emptyToNull(req.getBaseUrl());
@@ -50,30 +54,78 @@ public class AgentProviderService {
         try { endpointGuard.validate(base); }
         catch (IllegalArgumentException e) { throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, e.getMessage()); }
         String purpose = normalizePurpose(req.getPurpose());
-        String provider = req.getProvider().trim();
-        ModelCredential entity = repository.findByUserIdAndProviderAndPurpose(userId, provider, purpose).orElseGet(ModelCredential::new);
-        if (key != null || !Objects.equals(base, entity.getBaseUrl()) || !Objects.equals(model, entity.getDefaultModel())) {
+        String vendor = emptyToNull(req.getVendor());
+        if (vendor != null) vendor = vendor.toLowerCase(Locale.ROOT);
+        String format;
+        try { format = ModelChannels.normalizeFormat(req.getApiFormat()); }
+        catch (IllegalArgumentException e) { throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, e.getMessage()); }
+
+        ModelCredential entity = channelToSave(userId, req, purpose, vendor, format);
+        String formatBefore = entity.getId() == null ? null : ModelChannels.apiFormat(entity);
+        if (vendor != null) entity.setVendor(vendor);
+        if (format != null) entity.setApiFormat(format);
+        if (key != null || !Objects.equals(base, entity.getBaseUrl()) || !Objects.equals(model, entity.getDefaultModel())
+                || (formatBefore != null && !formatBefore.equals(ModelChannels.apiFormat(entity)))) {
             entity.setStatus(ModelCredential.CredentialStatus.unknown);
         }
         entity.setUserId(userId);
-        entity.setProvider(provider);
         entity.setPurpose(purpose);
         entity.setDisplayName(emptyToNull(req.getDisplayName()));
         entity.setBaseUrl(base);
         entity.setDefaultModel(model);
         if (key != null) entity.setApiKeyEncrypted(crypto.encrypt(key));
+        List<ModelCredential> siblings = repository.findByUserIdAndPurposeOrderByIsDefaultDescUpdatedAtDesc(userId, purpose);
         if (req.isMakeDefault()) {
-            repository.findByUserIdAndPurposeOrderByIsDefaultDescUpdatedAtDesc(userId, purpose).forEach(m -> {
-                if (Boolean.TRUE.equals(m.getIsDefault()) && !Objects.equals(m.getProvider(), provider)) {
+            siblings.forEach(m -> {
+                if (Boolean.TRUE.equals(m.getIsDefault()) && !Objects.equals(m.getId(), entity.getId())) {
                     m.setIsDefault(false);
                     repository.save(m);
                 }
             });
             entity.setIsDefault(true);
         } else if (entity.getId() == null) {
-            entity.setIsDefault(repository.findByUserIdAndPurposeOrderByIsDefaultDescUpdatedAtDesc(userId, purpose).isEmpty());
+            entity.setIsDefault(siblings.isEmpty());
         }
         return toView(repository.saveAndFlush(entity));
+    }
+
+    /**
+     * The row an upsert writes to. A request that names a saved channel changes that
+     * channel. One that does not adds a channel under an id nobody else holds. Only a
+     * request from a client that predates vendors (no id, no vendor, no protocol) still
+     * addresses a channel by its provider id, as that client always has.
+     */
+    private ModelCredential channelToSave(Long userId, AgentProviderDtos.UpsertProviderRequest req,
+                                          String purpose, String vendor, String format) {
+        if (req.getId() != null) {
+            ModelCredential saved = owned(userId, req.getId());
+            if (!purpose.equals(normalizePurpose(saved.getPurpose()))) throw invalidProvider();
+            return saved;
+        }
+        String requested = emptyToNull(req.getProvider());
+        if (requested != null && vendor == null && format == null) {
+            Optional<ModelCredential> legacy = repository.findByUserIdAndProviderAndPurpose(userId, requested, purpose);
+            if (legacy.isPresent()) return legacy.get();
+        }
+        if (repository.countByUserIdAndPurpose(userId, purpose) >= MAX_CHANNELS_PER_PURPOSE) {
+            throw new AgentException(AgentErrorCode.AGENT_PARAM_40001,
+                    "This account already has " + MAX_CHANNELS_PER_PURPOSE + " saved channels for this purpose");
+        }
+        ModelCredential created = new ModelCredential();
+        created.setProvider(freeChannelId(userId, purpose,
+                requested != null ? requested : vendor != null ? vendor : ModelChannels.CUSTOM_VENDOR));
+        return created;
+    }
+
+    /** {@code wanted} if nobody holds it, otherwise {@code wanted-2}, {@code wanted-3}, ... */
+    private String freeChannelId(Long userId, String purpose, String wanted) {
+        String stem = wanted.length() > 44 ? wanted.substring(0, 44) : wanted;
+        String candidate = stem;
+        for (int n = 2; repository.existsByUserIdAndProviderAndPurpose(userId, candidate, purpose); n++) {
+            if (n > MAX_CHANNELS_PER_PURPOSE + 1) throw invalidProvider();
+            candidate = stem + "-" + n;
+        }
+        return candidate;
     }
 
     @Transactional
@@ -107,7 +159,7 @@ public class AgentProviderService {
                 : Optional.of(owned(userId, providerId));
         return selected.map(c -> {
             if (!ModelCredential.PURPOSE_CHAT.equals(normalizePurpose(c.getPurpose()))) throw invalidProvider();
-            if (emptyToNull(c.getDefaultModel()) == null || (emptyToNull(c.getApiKeyEncrypted()) == null && !"ollama".equalsIgnoreCase(c.getProvider()))) {
+            if (emptyToNull(c.getDefaultModel()) == null || (emptyToNull(c.getApiKeyEncrypted()) == null && !ModelChannels.keyOptional(c))) {
                 throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, "Selected channel has no configured chat model or credential");
             }
             return toResolved(c);
@@ -124,6 +176,10 @@ public class AgentProviderService {
         });
     }
 
+    /**
+     * A channel ready to be called. {@code provider} is the adapter name the Python
+     * model service keys on ({@link ModelChannels#adapterName}), not the channel's id.
+     */
     public record ResolvedProvider(Long id, String provider, String displayName, String baseUrl, String defaultModel, String apiKeyPlain) {
         @Override public String toString() { return "ResolvedProvider[id=" + id + ", provider=" + provider + "]"; }
     }
@@ -170,12 +226,14 @@ public class AgentProviderService {
 
     private ResolvedProvider toResolved(ModelCredential m) {
         String key = m.getApiKeyEncrypted() == null ? null : crypto.decrypt(m.getApiKeyEncrypted());
-        return new ResolvedProvider(m.getId(), m.getProvider(), m.getDisplayName(), m.getBaseUrl(), m.getDefaultModel(), key);
+        return new ResolvedProvider(m.getId(), ModelChannels.adapterName(m, key != null && !key.isBlank()),
+                m.getDisplayName(), m.getBaseUrl(), m.getDefaultModel(), key);
     }
 
     private static String revision(ModelCredential m) {
         String config = String.join("\u0000", Objects.toString(m.getId(), ""), m.getProvider(), normalizePurpose(m.getPurpose()),
-                Objects.toString(m.getBaseUrl(), ""), Objects.toString(m.getDefaultModel(), ""), Objects.toString(m.getApiKeyEncrypted(), ""));
+                Objects.toString(m.getBaseUrl(), ""), Objects.toString(m.getDefaultModel(), ""), Objects.toString(m.getApiKeyEncrypted(), ""),
+                ModelChannels.apiFormat(m), Objects.toString(ModelChannels.vendor(m), ""));
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(config.getBytes(StandardCharsets.UTF_8))); }
         catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
     }
@@ -183,6 +241,8 @@ public class AgentProviderService {
     private AgentProviderDtos.ProviderView toView(ModelCredential m) {
         var view = new AgentProviderDtos.ProviderView();
         view.setId(m.getId()); view.setProvider(m.getProvider()); view.setPurpose(normalizePurpose(m.getPurpose()));
+        view.setVendor(ModelChannels.vendor(m)); view.setApiFormat(ModelChannels.apiFormat(m));
+        view.setKeyOptional(ModelChannels.keyOptional(m));
         view.setDisplayName(m.getDisplayName() == null ? m.getProvider() : m.getDisplayName());
         view.setBaseUrl(m.getBaseUrl()); view.setDefaultModel(m.getDefaultModel());
         view.setHasApiKey(emptyToNull(m.getApiKeyEncrypted()) != null);

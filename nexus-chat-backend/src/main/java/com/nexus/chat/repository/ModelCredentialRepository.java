@@ -35,6 +35,10 @@ public interface ModelCredentialRepository extends JpaRepository<ModelCredential
 
     Optional<ModelCredential> findByIdAndUserId(Long id, Long userId);
 
+    long countByUserIdAndPurpose(Long userId, String purpose);
+
+    boolean existsByUserIdAndProviderAndPurpose(Long userId, String provider, String purpose);
+
     @Transactional
     @Modifying(clearAutomatically = true)
     @Query("""

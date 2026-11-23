@@ -38,6 +38,21 @@ public class ModelCredential {
     @Column(name = "display_name", length = 80)
     private String displayName;
 
+    /**
+     * The catalogue entry this channel was created from ("openai", "deepseek", "custom", ...).
+     * {@link #provider} is only the channel's unique id, so one vendor can back several
+     * channels. Null on rows saved before this column existed.
+     */
+    @Column(length = 40)
+    private String vendor;
+
+    /**
+     * Wire protocol the endpoint speaks: openai-compatible, anthropic or gemini.
+     * Null on rows saved before this column existed; see {@link ModelChannels}.
+     */
+    @Column(name = "api_format", length = 30)
+    private String apiFormat;
+
     @Column(name = "base_url", length = 255)
     private String baseUrl;
 

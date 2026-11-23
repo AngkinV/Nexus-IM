@@ -90,7 +90,7 @@
       >
         <img
           v-if="userStore.currentUser?.avatar"
-          class="w-full h-full object-cover grayscale"
+          class="w-full h-full object-cover"
           :src="userStore.currentUser.avatar"
           alt=""
         />

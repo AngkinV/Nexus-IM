@@ -23,18 +23,25 @@
             <span class="ms-label">{{ $t('companion.modelSettings.channel') }}</span>
             <button class="ms-btn" type="button" @click="accountSettings = true">{{ $t('agent.providers.manage') }}</button>
           </div>
+          <el-input
+            v-if="providersStore.chatProviders.length > 5" v-model="channelQuery" size="small" clearable
+            :placeholder="$t('agent.providers.switcher.search')" :aria-label="$t('agent.providers.switcher.search')" />
           <div class="ms-cards" role="group" :aria-label="$t('companion.modelSettings.channel')">
-            <button v-for="p in providersStore.chatProviders" :key="p.id" type="button" class="ms-card"
+            <button v-for="p in shownChannels" :key="p.id" type="button" class="ms-card"
               :class="{ 'is-active': p.id === draft.credentialId }" :aria-pressed="p.id === draft.credentialId"
               :disabled="busy" @click="chooseChannel(p.id)">
               <span class="ms-card-title">
                 <span class="ms-card-icon" :class="{ 'is-active': p.id === draft.credentialId }" aria-hidden="true"><span class="material-symbols-outlined">smart_toy</span></span>
-                <span class="ms-card-name">{{ p.displayName || p.provider }}</span>
+                <span class="ms-card-text">
+                  <span class="ms-card-name">{{ p.displayName || p.provider }}</span>
+                  <span class="ms-card-sub">{{ presetLabel(vendorOf(p)) }}<template v-if="p.defaultModel"> · {{ p.defaultModel }}</template></span>
+                </span>
                 <span v-if="p.isDefault" class="ms-tag">{{ $t('agent.providers.default') }}</span>
               </span>
               <span class="ms-card-state" aria-hidden="true"><span class="ms-dot" :class="{ 'is-on': p.id === draft.credentialId }"></span></span>
             </button>
             <p v-if="!loading && !providersStore.chatProviders.length" class="ms-empty">{{ $t('companion.modelSettings.noProvider') }}</p>
+            <p v-else-if="!shownChannels.length" class="ms-empty">{{ $t('agent.providers.switcher.noMatch') }}</p>
           </div>
         </section>
 
@@ -138,7 +145,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useCompanionStore } from '@/stores/companion'
-import { useAgentProvidersStore } from '@/stores/agentProviders'
+import { useAgentProvidersStore, filterChannels, presetLabel, vendorOf } from '@/stores/agentProviders'
 import { useUserStore } from '@/stores/user'
 import AgentProviderSettings from '@/components/agent/AgentProviderSettings.vue'
 import ProviderModelPicker from '@/components/agent/ProviderModelPicker.vue'
@@ -171,6 +178,12 @@ const probeNote = ref('')
 const loading = ref(false), saving = ref(false), testing = ref(false)
 const busy = computed(() => loading.value || saving.value || testing.value)
 const channel = computed(() => providersStore.chatProviders.find(p => p.id === draft.value.credentialId))
+// The bound channel stays in view whatever the search says, so the selection is never hidden.
+const channelQuery = ref('')
+const shownChannels = computed(() => {
+  const matches = filterChannels(providersStore.chatProviders, channelQuery.value)
+  return channel.value && !matches.includes(channel.value) ? [channel.value, ...matches] : matches
+})
 const dirty = computed(() => !!original.value && Object.keys(original.value).some(k => draft.value[k] !== original.value[k]))
 const effectiveModel = computed(() => draft.value.modelName.trim() || channel.value?.defaultModel || '')
 const incompatible = computed(() => providersStore.getModelsForProvider(channel.value?.id)
@@ -216,6 +229,7 @@ watch([() => props.open, () => userStore.currentUser?.id, () => companionStore.a
     const version = ++generation
     onCleanup(() => { ++generation })
     accountSettings.value = false
+    channelQuery.value = ''
     loading.value = saving.value = testing.value = false
     probeNote.value = ''
     status.value = original.value = null
@@ -429,6 +443,32 @@ async function save() {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 268px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.ms-card {
+  flex-shrink: 0;
+}
+
+.ms-card-title {
+  min-width: 0;
+}
+
+.ms-card-text .ms-card-name {
+  display: block;
+}
+
+.ms-card-sub {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #8e9192;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
 }
 
 .ms-card {

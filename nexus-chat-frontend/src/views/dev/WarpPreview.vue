@@ -15,10 +15,13 @@
       <section class="wp-panel">
         <h1>酒馆入场转场</h1>
         <p>
-          从点击处起稿，线稿、墨色、彩色依次铺开，随后整幅画揉成纸团丢开，露出酒馆。首次完整播放约
-          4.6 秒，同一窗口内再次进入约 2.3 秒。画面盖住界面时（0.62 秒）自动切到酒馆，不需要确认。
+          一滴墨落下、化开，墨晕长成灰阶山水，颜色再由灰里渗出来，随后整幅画揉成纸团丢开，露出酒馆。
+          完整播放约 8.7 秒，再次进入保留跳过但不自动加速。纸盖住界面时（0.25 秒）自动切到酒馆，不需要确认。
         </p>
-        <p>Esc：切换前取消，切换后跳过。点击、回车、空格：跳过。</p>
+        <p>
+          首次观看不能跳过：点击、回车、空格、Esc 都不生效，也不显示跳过按钮。看过一次之后才有「跳过」按钮，
+          点击与按键也才生效。
+        </p>
         <div class="wp-actions">
           <button class="wp-btn wp-btn--primary" type="button" data-testid="warp-trigger" @click="play">
             进入酒馆
@@ -26,11 +29,15 @@
           <button class="wp-btn" type="button" data-testid="warp-theme" @click="light = !light">
             切换深色 / 浅色
           </button>
+          <button class="wp-btn" type="button" data-testid="warp-forget" @click="forget">
+            重置为首次
+          </button>
         </div>
         <dl class="wp-log">
           <div><dt>entered</dt><dd data-testid="warp-entered">{{ entered }}</dd></div>
           <div><dt>cancelled</dt><dd data-testid="warp-cancelled">{{ cancelled }}</dd></div>
-          <div><dt>next</dt><dd data-testid="warp-next">{{ entered ? 'short' : 'full' }}</dd></div>
+          <div><dt>seen</dt><dd data-testid="warp-seen">{{ seen ? 'yes' : 'no' }}</dd></div>
+          <div><dt>skippable</dt><dd data-testid="warp-skippable">{{ state.canSkip ? 'yes' : 'no' }}</dd></div>
         </dl>
       </section>
 
@@ -51,10 +58,10 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import TavernEntrance from '@/components/warp/TavernEntrance.vue'
-import { useTavernEntrance } from '@/composables/useTavernEntrance'
+import { useTavernEntrance, clearEntranceSeen } from '@/composables/useTavernEntrance'
 
 const { state, enter } = useTavernEntrance()
 const route = useRoute()
@@ -63,6 +70,18 @@ const light = ref(route.query.theme === 'light')
 const inTavern = ref(false)
 const entered = ref(0)
 const cancelled = ref(0)
+const seenTick = ref(0)
+
+// Reading the flag through a tick keeps the panel in step with what the composable stored.
+const seen = computed(() => {
+  seenTick.value
+  try {
+    const id = JSON.parse(localStorage.getItem('user') || 'null')?.id
+    return localStorage.getItem(id ? `tavernEntranceSeen:${id}` : 'tavernEntranceSeen') === '1'
+  } catch {
+    return false
+  }
+})
 
 const play = () => {
   enter({
@@ -70,17 +89,39 @@ const play = () => {
       inTavern.value = true
       entered.value += 1
     },
-    onCancel: () => { cancelled.value += 1 }
+    onCancel: () => {
+      cancelled.value += 1
+      seenTick.value += 1
+    }
   })
 }
 
+const forget = () => {
+  clearEntranceSeen()
+  seenTick.value += 1
+}
+
+const previewApi = {
+  prepare: () => stage.value?.prepare(),
+  diagnostics: () => stage.value?.diagnostics(),
+  seek: async (seconds, options) => {
+    const ok = await stage.value?.seek(seconds, options)
+    if (ok) inTavern.value = seconds >= .25
+    return ok
+  },
+  play,
+  get ready() { return stage.value?.ready || false }
+}
+defineExpose(previewApi)
+onBeforeUnmount(() => { if (window.__tavernEntrancePreview === previewApi) delete window.__tavernEntrancePreview })
 onMounted(async () => {
+  window.__tavernEntrancePreview = previewApi
   const at = Number(route.query.t)
   if (!Number.isFinite(at) || route.query.t == null) return
   await nextTick()
-  stage.value?.seek(at, { x: 120 })
-  // Past 0.62s the app behind the picture is already the tavern.
-  if (at >= 0.62) inTavern.value = true
+  await previewApi.seek(at)
+  // Past the commit point the app behind the picture is already the tavern.
+  if (at >= 0.25) inTavern.value = true
 })
 </script>
 

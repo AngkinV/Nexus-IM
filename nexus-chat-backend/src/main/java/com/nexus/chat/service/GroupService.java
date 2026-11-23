@@ -26,6 +26,8 @@ import java.util.stream.Collectors;
 public class GroupService {
 
     private final ChatRepository chatRepository;
+    private final PresenceService presenceService;
+    private final RedisMessageRelay redisMessageRelay;
     private final ChatMemberRepository chatMemberRepository;
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
@@ -57,8 +59,9 @@ public class GroupService {
 
         // Add other members
         if (request.getMemberIds() != null) {
-            for (Long memberId : request.getMemberIds()) {
+            for (Long memberId : new java.util.LinkedHashSet<>(request.getMemberIds())) {
                 if (!memberId.equals(creatorId)) {
+                    userRepository.findById(memberId).orElseThrow(() -> new BusinessException("error.user.not.found"));
                     ChatMember member = new ChatMember();
                     member.setChatId(savedChat.getId());
                     member.setUserId(memberId);
@@ -68,7 +71,7 @@ public class GroupService {
                 }
             }
             // Update member count
-            savedChat.setMemberCount(request.getMemberIds().size() + 1);
+            savedChat.setMemberCount((int) chatMemberRepository.countByChatId(savedChat.getId()));
             chatRepository.save(savedChat);
         }
 
@@ -420,8 +423,8 @@ public class GroupService {
                 user.getUsername(),
                 user.getNickname(),
                 user.getAvatarUrl(),
-                user.getIsOnline(),
-                user.getLastSeen());
+                presenceService.getVisibleStatus(user.getId()),
+                presenceService.getVisibleLastSeen(user.getId()));
     }
 
     /**
@@ -433,11 +436,11 @@ public class GroupService {
                 user.getUsername(),
                 user.getNickname(),
                 user.getAvatarUrl(),
-                user.getIsOnline(),
+                presenceService.getVisibleStatus(user.getId()),
                 member.getRole().name(),
                 member.getIsAdmin(),
                 member.getJoinedAt(),
-                user.getLastSeen());
+                presenceService.getVisibleLastSeen(user.getId()));
     }
 
     /**
@@ -447,7 +450,14 @@ public class GroupService {
         WebSocketMessage wsMessage = new WebSocketMessage(
                 WebSocketMessage.MessageType.valueOf(eventType.replace(":", "_").replace("-", "_").toUpperCase()),
                 payload);
-        messagingTemplate.convertAndSend("/topic/group/" + groupId, wsMessage);
+        java.util.Set<Long> recipients = chatMemberRepository.findByChatId(groupId).stream()
+                .map(ChatMember::getUserId).collect(Collectors.toSet());
+        // A removed member must learn to remove this group from their local list.
+        if ("group:member-left".equals(eventType) && payload instanceof Map<?, ?> data
+                && data.get("memberId") instanceof Long removedId) recipients.add(removedId);
+        for (Long recipient : recipients) {
+            redisMessageRelay.sendToUser(recipient, "/topic/user." + recipient + ".contacts", wsMessage);
+        }
     }
 
 }
