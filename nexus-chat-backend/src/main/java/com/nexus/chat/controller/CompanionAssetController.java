@@ -44,6 +44,9 @@ public class CompanionAssetController {
     private final ObjectMapper objectMapper;
 
     private final CompanionModelAssetCatalog modelAssetCatalog;
+    private final com.nexus.chat.repository.CompanionRoleRepository roleRepository;
+    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
+    private final Object modelLock = new Object();
 
     private final Object motionLock = new Object();
 
@@ -61,23 +64,43 @@ public class CompanionAssetController {
             return ResponseEntity.badRequest().body(Map.of("error", "invalid_extension"));
         }
 
-        try {
-            Path dir = ensureDir(modelsDir);
-            String base = sanitizeBaseName(stripExtension(originalName));
-            String storedName = resolveUniqueFilename(dir, base, ext);
-            Path target = dir.resolve(storedName);
-            try (InputStream in = file.getInputStream()) {
-                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+        if (!plainModelName(originalName)) {
+            return ResponseEntity.badRequest().body(Map.of("error", CompanionModelAssetCatalog.MODEL_URL_INVALID));
+        }
+        synchronized (modelLock) {
+            Path target = null;
+            boolean created = false;
+            try {
+                Path dir = ensureDir(modelsDir).toRealPath();
+                String base = sanitizeBaseName(stripExtension(originalName));
+                String storedName = resolveUniqueFilename(dir, base, ext);
+                target = dir.resolve(storedName);
+                // CREATE_NEW cannot overwrite an existing file or follow an
+                // attacker-created link between name selection and creation.
+                try (InputStream in = file.getInputStream()) {
+                    try (var out = Files.newOutputStream(target, java.nio.file.StandardOpenOption.CREATE_NEW,
+                            java.nio.file.StandardOpenOption.WRITE, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        created = true;
+                        in.transferTo(out);
+                    }
+                }
+                if (!modelAssetCatalog.validStageContainer(target)) {
+                    Files.deleteIfExists(target);
+                    return ResponseEntity.badRequest().body(Map.of("error", CompanionModelAssetCatalog.MODEL_FILE_INVALID));
+                }
+                Map<String, Object> response = new HashMap<>();
+                response.put("fileUrl", "/models/" + storedName);
+                response.put("fileName", storedName);
+                response.put("originalName", originalName);
+                response.put("uploadedAt", LocalDateTime.now().toString());
+                return ResponseEntity.ok(response);
+            } catch (IOException e) {
+                if (created && target != null) {
+                    try { Files.deleteIfExists(target); } catch (IOException ignored) {}
+                }
+                log.error("Upload model failed", e);
+                return ResponseEntity.internalServerError().body(Map.of("error", "upload_failed"));
             }
-            Map<String, Object> response = new HashMap<>();
-            response.put("fileUrl", "/models/" + storedName);
-            response.put("fileName", storedName);
-            response.put("originalName", originalName);
-            response.put("uploadedAt", LocalDateTime.now().toString());
-            return ResponseEntity.ok(response);
-        } catch (IOException e) {
-            log.error("Upload model failed: {}", originalName, e);
-            return ResponseEntity.internalServerError().body(Map.of("error", "upload_failed"));
         }
     }
 
@@ -149,40 +172,51 @@ public class CompanionAssetController {
 
     @PutMapping("/model/rename")
     public ResponseEntity<Map<String, Object>> renameModel(@RequestBody Map<String, String> request) {
-        String oldFileName = request.get("oldFileName");
-        String newFileName = request.get("newFileName");
-        if (oldFileName == null || oldFileName.isBlank() || newFileName == null || newFileName.isBlank()) {
+        String oldFileName = request == null ? null : request.get("oldFileName");
+        String newFileName = request == null ? null : request.get("newFileName");
+        if (oldFileName == null || newFileName == null || oldFileName.isBlank() || newFileName.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "missing_params"));
         }
-
-        String oldExt = getExtension(oldFileName);
-        String newBase = sanitizeBaseName(stripExtension(newFileName));
-        String newExt = getExtension(newFileName);
-        if (newExt.isEmpty()) {
-            newExt = oldExt.isEmpty() ? ".vrm" : oldExt;
+        String oldExt = getExtension(oldFileName), newExt = getExtension(newFileName);
+        if (newExt.isEmpty()) newExt = oldExt;
+        String requestedName = getExtension(newFileName).isEmpty() ? newFileName + newExt : newFileName;
+        if (!plainModelName(oldFileName) || !plainModelName(requestedName) || !oldExt.equalsIgnoreCase(newExt)) {
+            return ResponseEntity.badRequest().body(Map.of("error", CompanionModelAssetCatalog.MODEL_URL_INVALID));
         }
-        String targetName = newBase + newExt;
-
-        try {
-            Path dir = Paths.get(modelsDir).toAbsolutePath().normalize();
-            Path oldPath = dir.resolve(oldFileName).toAbsolutePath().normalize();
-            if (!Files.exists(oldPath)) {
-                return ResponseEntity.notFound().build();
+        String newBase = sanitizeBaseName(stripExtension(requestedName));
+        synchronized (modelLock) {
+            Path oldPath = null, nextPath = null;
+            boolean moved = false;
+            try {
+                Path dir = Paths.get(modelsDir).toAbsolutePath().normalize().toRealPath();
+                oldPath = dir.resolve(oldFileName);
+                if (!Files.isRegularFile(oldPath, java.nio.file.LinkOption.NOFOLLOW_LINKS) ||
+                        !modelAssetCatalog.exists(oldFileName)) return ResponseEntity.notFound().build();
+                String targetName = newBase + newExt;
+                if (!targetName.equals(oldFileName)) targetName = resolveUniqueFilename(dir, newBase, newExt);
+                nextPath = dir.resolve(targetName);
+                if (!oldPath.equals(nextPath)) {
+                    // Without REPLACE_EXISTING, a concurrent creator cannot be overwritten.
+                    Files.move(oldPath, nextPath);
+                    moved = true;
+                }
+                String oldUrl = "/models/" + oldFileName, nextUrl = "/models/" + targetName;
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                        .executeWithoutResult(status -> roleRepository.rebindModelAsset(oldUrl, oldFileName, nextUrl));
+                Map<String, Object> response = new HashMap<>();
+                response.put("oldFileName", oldFileName);
+                response.put("newFileName", targetName);
+                response.put("oldFileUrl", oldUrl);
+                response.put("newFileUrl", nextUrl);
+                return ResponseEntity.ok(response);
+            } catch (IOException | RuntimeException e) {
+                if (moved) {
+                    try { Files.move(nextPath, oldPath); }
+                    catch (IOException rollbackFailure) { log.error("Could not restore model file after failed rename", rollbackFailure); }
+                }
+                log.error("Rename model failed", e);
+                return ResponseEntity.internalServerError().body(Map.of("error", "rename_failed"));
             }
-            if (!targetName.equals(oldFileName)) {
-                targetName = resolveUniqueFilename(dir, newBase, newExt);
-                Path newPath = dir.resolve(targetName);
-                Files.move(oldPath, newPath, StandardCopyOption.ATOMIC_MOVE);
-            }
-            Map<String, Object> response = new HashMap<>();
-            response.put("oldFileName", oldFileName);
-            response.put("newFileName", targetName);
-            response.put("oldFileUrl", "/models/" + oldFileName);
-            response.put("newFileUrl", "/models/" + targetName);
-            return ResponseEntity.ok(response);
-        } catch (IOException e) {
-            log.error("Rename model failed: {} -> {}", oldFileName, targetName, e);
-            return ResponseEntity.internalServerError().body(Map.of("error", "rename_failed"));
         }
     }
 
@@ -227,9 +261,11 @@ public class CompanionAssetController {
     }
 
     /**
-     * Every model on disk. Reads the shared catalogue rather than listing the
-     * directory itself, so what settings shows and what an invited guest can
-     * wear are guaranteed to be the same set.
+     * Every model on disk, of every type. Reads the shared catalogue rather than
+     * listing the directory itself, so the invite step's list is always a subset
+     * of this one. {@code type} is the value to store as a role's modelType:
+     * "vrm", "gltf" (for both .glb and .gltf) or "fbx". A directory that cannot
+     * be read is a 500 with {@code message} model_catalog_unavailable.
      */
     @GetMapping("/models")
     public ResponseEntity<List<Map<String, Object>>> listModels() {
@@ -356,6 +392,11 @@ public class CompanionAssetController {
         Path temp = Files.createTempFile(dir, "motions", ".json");
         objectMapper.writerWithDefaultPrettyPrinter().writeValue(temp.toFile(), config);
         Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    private boolean plainModelName(String name) {
+        return name != null && name.equals(name.trim()) && !name.contains("/") && !name.contains("\\")
+                && modelAssetCatalog.canonicalUrl(name) != null;
     }
 
     private Path ensureDir(String dir) throws IOException {

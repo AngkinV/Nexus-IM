@@ -218,6 +218,35 @@ class CompanionStateTagTest {
     }
 
     @Test
+    void stateIsDeliveredBeforeFollowingTextAtEveryChunkSize() {
+        String raw = TAG + "\n你好。";
+        for (int size = 1; size <= raw.length(); size++) {
+            List<String> events = new ArrayList<>();
+            CompanionStateTag.Filter filter = new CompanionStateTag.Filter(
+                    piece -> events.add("delta:" + piece), cue -> events.add("state:" + cue.mood()));
+            for (int offset = 0; offset < raw.length(); offset += size) {
+                filter.accept(raw.substring(offset, Math.min(raw.length(), offset + size)));
+            }
+            filter.finish();
+            assertEquals("state:warm", events.get(0), "chunk size " + size);
+            assertEquals(1, events.stream().filter(event -> event.startsWith("state:")).count());
+            assertEquals("你好。", filter.visibleText());
+        }
+    }
+
+    @Test
+    void duplicateMarkersDoNotChangeTheAlreadyDeliveredState() {
+        List<CompanionStateTag.State> cues = new ArrayList<>();
+        CompanionStateTag.Filter filter = new CompanionStateTag.Filter(piece -> {}, cues::add);
+        filter.accept(TAG + "好。<state>{\"mood\":\"angry\"}</state>再见。");
+        filter.finish();
+        assertEquals(1, cues.size());
+        assertEquals(cues.get(0), filter.state());
+        assertEquals("warm", filter.state().mood());
+        assertEquals("好。再见。", filter.visibleText());
+    }
+
+    @Test
     void renderRoundTrips() {
         CompanionStateTag.State state = new CompanionStateTag.State("shy", "look_away", "低头擦杯子", "wipe");
         assertEquals(state, CompanionStateTag.parse(CompanionStateTag.render(state) + "嗯。").state());

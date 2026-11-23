@@ -9,6 +9,7 @@ SQLite on the agent data volume: single agent instance only.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import dataclasses
 import json
@@ -329,6 +330,40 @@ class RunStore:
         return len(expired)
 
 
+# How long leaving a run waits for a checkpoint write that is still in flight.
+_SETTLE_TIMEOUT_SEC = 5.0
+
+
+async def _close_settled(saver: AsyncSqliteSaver) -> None:
+    """Close a run's connection without leaving a transaction, and so a lock, behind.
+
+    When a run is cancelled the graph can still be saving that step's pending
+    writes. Closing under such a write, or after one was cancelled between its
+    statement and its commit, leaves the transaction open; and close() does not end
+    it while a cursor of the connection is still referenced: the handle lingers
+    with the file's write lock. The next run on this file (a resume, typically)
+    then waits out its busy timeout and fails with "database is locked".
+
+    So: wait for the write in flight (the saver holds its lock from statement to
+    commit), drop whatever was abandoned, and only then close, still under the lock.
+    """
+    conn = saver.conn
+
+    async def settle() -> None:
+        async with saver.lock:
+            await conn.rollback()
+            await conn.close()
+
+    try:
+        await asyncio.wait_for(settle(), _SETTLE_TIMEOUT_SEC)
+    except Exception:
+        # A writer that never lets go, or a connection that is already unusable.
+        # The lock is not ours to wait on forever; still end the transaction if we can.
+        log.warning("closing a run store without waiting for its last write")
+        with contextlib.suppress(Exception):
+            await conn.rollback()
+
+
 @contextlib.asynccontextmanager
 async def open_run_store() -> AsyncIterator[RunStore]:
     """One connection per run: the saver is bound to the event loop that created it."""
@@ -337,18 +372,21 @@ async def open_run_store() -> AsyncIterator[RunStore]:
     path = Path(settings.checkpoint_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     async with AsyncSqliteSaver.from_conn_string(str(path)) as saver:
-        # Per-run connections share this file; without WAL + busy timeout a
-        # cancel/resume overlapping another run's write hits "database is locked".
-        await saver.conn.execute("PRAGMA journal_mode=WAL")
-        await saver.conn.execute("PRAGMA busy_timeout=5000")
-        store = RunStore(saver)
-        await store._setup()
-        if time.monotonic() - _last_purge > _PURGE_INTERVAL_SEC:
-            _last_purge = time.monotonic()
-            try:
-                purged = await store.purge_expired(settings.checkpoint_ttl_sec)
-                if purged:
-                    log.info("purged %d expired run checkpoint(s)", purged)
-            except Exception:
-                log.exception("purging expired run checkpoints failed")
-        yield store
+        try:
+            # Per-run connections share this file; without WAL + busy timeout a
+            # cancel/resume overlapping another run's write hits "database is locked".
+            await saver.conn.execute("PRAGMA journal_mode=WAL")
+            await saver.conn.execute("PRAGMA busy_timeout=5000")
+            store = RunStore(saver)
+            await store._setup()
+            if time.monotonic() - _last_purge > _PURGE_INTERVAL_SEC:
+                _last_purge = time.monotonic()
+                try:
+                    purged = await store.purge_expired(settings.checkpoint_ttl_sec)
+                    if purged:
+                        log.info("purged %d expired run checkpoint(s)", purged)
+                except Exception:
+                    log.exception("purging expired run checkpoints failed")
+            yield store
+        finally:
+            await _close_settled(saver)

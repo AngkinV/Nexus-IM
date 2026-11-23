@@ -15,8 +15,13 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.io.IOException;
+import java.util.Map;
 
 /**
  * The tavern's clock: opening an evening, closing it, and the two things that
@@ -39,6 +44,8 @@ public class TavernSessionService {
     private static final int ARCHIVE_LIMIT = 30;
     /** How much of the evening the closing prompt reads. */
     private static final int CLOSING_HISTORY = 30;
+    /** 409 reason while this account's previous invite has not finished. */
+    public static final String INVITE_IN_PROGRESS = "invite_in_progress";
 
     private final TavernSessionRepository sessionRepository;
     private final CompanionRoleRepository roleRepository;
@@ -52,6 +59,9 @@ public class TavernSessionService {
     private final TransactionTemplate tx;
     private final CompanionConversationGuard conversationGuard;
     private final CompanionModelAssetCatalog modelAssetCatalog;
+    private final UserAssetService userAssetService;
+    /** Accounts with an invite in flight. */
+    private final Set<Long> inviting = ConcurrentHashMap.newKeySet();
 
     public TavernSessionService(TavernSessionRepository sessionRepository,
                                 CompanionRoleRepository roleRepository,
@@ -64,7 +74,8 @@ public class TavernSessionService {
                                 CompanionStatusRepository statusRepository,
                                 PlatformTransactionManager transactionManager,
                                 CompanionConversationGuard conversationGuard,
-                                CompanionModelAssetCatalog modelAssetCatalog) {
+                                CompanionModelAssetCatalog modelAssetCatalog,
+                                UserAssetService userAssetService) {
         this.sessionRepository = sessionRepository;
         this.roleRepository = roleRepository;
         this.messageRepository = messageRepository;
@@ -77,6 +88,7 @@ public class TavernSessionService {
         this.tx = new TransactionTemplate(transactionManager);
         this.conversationGuard = conversationGuard;
         this.modelAssetCatalog = modelAssetCatalog;
+        this.userAssetService = userAssetService;
     }
 
     /**
@@ -265,26 +277,45 @@ public class TavernSessionService {
      *
      * The 3D model comes from the same catalogue the settings panel lists. A
      * guest used to be saved with no model at all, so an invited character stood
-     * on an empty stage with no explanation. Now: the requested model when it
-     * really exists on disk, otherwise one that no other character is wearing.
+     * on an empty stage with no explanation.
      */
     public CompanionRole inviteRole(Long userId, String sceneKey) {
         return inviteRole(userId, sceneKey, null);
     }
 
     /**
-     * @param requestedModelUrl a model chosen by the user ("/models/x.vrm"), or
-     *                          null to let the tavern pick one
+     * @param requestedModelUrl a model chosen by the user: a shared one
+     *                          ("/models/x.vrm") or one from the account's own
+     *                          library; null/blank to let the tavern pick one
+     * @throws ResponseStatusException 409 {@link #INVITE_IN_PROGRESS} while this
+     *         account's previous invite is still running; 400 with one of the
+     *         catalogue's codes when the chosen model cannot be worn; 500 when
+     *         the models directory cannot be read
      */
     public CompanionRole inviteRole(Long userId, String sceneKey, String requestedModelUrl) {
-        // Model call first, outside any transaction — see the class comment.
+        // One invite per account at a time: two tabs inviting together would read
+        // the same "in use" set and seat the same face twice. In-process only,
+        // like the conversation guard — it does not span several backend nodes.
+        if (!inviting.add(userId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, INVITE_IN_PROGRESS);
+        }
+        try {
+            return inviteRoleLocked(userId, sceneKey, requestedModelUrl);
+        } finally {
+            inviting.remove(userId);
+        }
+    }
+
+    private CompanionRole inviteRoleLocked(Long userId, String sceneKey, String requestedModelUrl) {
+        // The disk first: a model that cannot be worn must fail the request
+        // before a model call is paid for, not after.
+        CompanionModelAssetCatalog.ModelAsset asset = resolveGuestModel(userId, requestedModelUrl);
+
+        // Model call next, outside any transaction — see the class comment.
         CompanionModelResolver.Resolved resolved = modelResolver.resolveForUser(userId);
         CompanionModelService.GeneratedRole generated = resolved.usable()
                 ? modelService.generateRole(resolved.binding(), resolved.credential(), sceneKey)
                 : null;
-
-        // Resolved before the transaction: it reads the disk, not the database.
-        String modelUrl = resolveGuestModelUrl(userId, requestedModelUrl);
 
         return tx.execute(status -> {
             CompanionRole role = new CompanionRole();
@@ -292,9 +323,9 @@ public class TavernSessionService {
             role.setKind(CompanionRole.Kind.guest);
             role.setActive(true);
             role.setBaselineMood("平静");
-            if (modelUrl != null) {
-                role.setModelUrl(modelUrl);
-                role.setModelType(modelAssetCatalog.typeOfUrl(modelUrl));
+            if (asset != null) {
+                role.setModelUrl(asset.fileUrl());
+                role.setModelType(asset.type());
             }
             if (generated != null) {
                 role.setName(generated.name());
@@ -327,24 +358,72 @@ public class TavernSessionService {
     /**
      * Which model a guest wears when they walk in.
      *
-     * A requested model is honoured only when the file is really there — a URL
-     * to a missing file renders an empty stage, which is the bug this fixes.
-     * Otherwise the catalogue picks one nobody else is wearing; when every model
-     * is taken it reuses one rather than leaving the character faceless. Null
-     * only when the user has never uploaded a model.
+     * A model the user chose is either worn or refused with a 400 — never
+     * quietly swapped for another one. With no choice, the catalogue picks one
+     * that none of this user's visible characters is wearing, reusing one at
+     * random when they are all taken. The choice is made among the shared models
+     * and the ones this account imported itself. Null only when there is no stage-ready
+     * model, in which case the guest is invited as text only.
+     *
+     * "Worn" is compared by canonical URL, so a character stored with the bare
+     * name "a.vrm" and one stored with "/models/a.vrm" count as the same model.
+     * A character whose conversation was deleted is off the seat list and does
+     * not hold its model.
      */
-    private String resolveGuestModelUrl(Long userId, String requestedModelUrl) {
-        if (requestedModelUrl != null && !requestedModelUrl.isBlank()
-                && modelAssetCatalog.exists(requestedModelUrl)) {
-            return requestedModelUrl.trim();
+    private CompanionModelAssetCatalog.ModelAsset resolveGuestModel(Long userId, String requestedModelUrl) {
+        if (requestedModelUrl != null && !requestedModelUrl.isBlank()) {
+            String ownId = UserAssetService.ownModelId(requestedModelUrl);
+            if (ownId == null) return modelAssetCatalog.requireStageAsset(requestedModelUrl);
+            // A model from this account's own library. What makes it wearable is
+            // that the library holds it for this user; another account's id, or one
+            // whose file is gone, is refused like any other missing model.
+            try {
+                CompanionModelAssetCatalog.ModelAsset own = ownAsset(userAssetService.ownModel(userId, ownId));
+                if (own == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_NOT_FOUND);
+                return own;
+            } catch (ResponseStatusException e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_NOT_FOUND);
+            } catch (IOException e) {
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, CompanionModelAssetCatalog.CATALOG_UNAVAILABLE);
+            }
         }
-        java.util.Set<String> inUse = new java.util.HashSet<>();
+        Set<String> inUse = new HashSet<>();
         for (CompanionRole role : roleRepository.findByUserIdOrderByIdAsc(userId)) {
-            String url = role.getModelUrl();
-            if (url != null && !url.isBlank()) inUse.add(url.trim());
+            if (role.isConversationHidden()) continue;
+            String url = modelAssetCatalog.canonicalUrl(role.getModelUrl());
+            if (url == null && UserAssetService.ownModelId(role.getModelUrl()) != null) url = role.getModelUrl().trim();
+            if (url != null) inUse.add(url);
         }
-        CompanionModelAssetCatalog.ModelAsset picked = modelAssetCatalog.pickForGuest(inUse);
-        return picked == null ? null : picked.fileUrl();
+        List<CompanionModelAssetCatalog.ModelAsset> own = ownStageModels(userId);
+        // Nothing of her own: the shared catalogue decides alone, as before.
+        return own.isEmpty() ? modelAssetCatalog.pickForGuest(inUse) : modelAssetCatalog.pickForGuest(inUse, own);
+    }
+
+    /**
+     * The models this account imported into its own library, as assets a guest can
+     * wear. The library accepts only self-contained VRM files, so each is stage-ready.
+     *
+     * @throws ResponseStatusException 500 {@link CompanionModelAssetCatalog#CATALOG_UNAVAILABLE}
+     *         when the library cannot be read — never an empty list in its place
+     */
+    public List<CompanionModelAssetCatalog.ModelAsset> ownStageModels(Long userId) {
+        try {
+            List<CompanionModelAssetCatalog.ModelAsset> out = new ArrayList<>();
+            for (Map<String, Object> entry : userAssetService.listOwnModels(userId)) {
+                CompanionModelAssetCatalog.ModelAsset asset = ownAsset(entry);
+                if (asset != null) out.add(asset);
+            }
+            return out;
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, CompanionModelAssetCatalog.CATALOG_UNAVAILABLE);
+        }
+    }
+
+    private static CompanionModelAssetCatalog.ModelAsset ownAsset(Map<String, Object> entry) {
+        if (entry == null || !(entry.get("fileUrl") instanceof String url) || UserAssetService.ownModelId(url) == null) return null;
+        String name = entry.get("fileName") instanceof String text ? text : "";
+        long size = entry.get("size") instanceof Number number ? number.longValue() : 0L;
+        return new CompanionModelAssetCatalog.ModelAsset(name, url, size, CompanionModelAssetCatalog.STAGE_TYPE, true);
     }
 
     private List<String> splitTraits(String raw) {

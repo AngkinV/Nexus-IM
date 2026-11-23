@@ -46,10 +46,10 @@
         </div>
 
         <div class="role-actions">
-          <button class="role-btn role-btn--primary" type="button" @click="saveRoleModel">
+          <button class="role-btn role-btn--primary" type="button" :disabled="savingModel" :aria-busy="savingModel" @click="saveRoleModel">
             {{ $t('companion.saveModel') }}
           </button>
-          <button class="role-btn" type="button" @click="modelFileInput?.click()">
+          <button class="role-btn" type="button" :disabled="savingModel" @click="modelFileInput?.click()">
             {{ $t('companion.importModel') }}
           </button>
         </div>
@@ -64,7 +64,8 @@
             class="role-row"
             :class="{ 'is-active': model.fileUrl === activeRole.modelUrl }"
             role="button"
-            tabindex="0"
+            :aria-disabled="savingModel"
+            :tabindex="savingModel ? -1 : 0"
             @click="switchModel(model)"
             @keydown.enter="switchModel(model)"
           >
@@ -151,11 +152,12 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useCompanionStore, withKnownPreview } from '@/stores/companion'
+import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
 import { userAPI, companionAPI } from '@/services/api'
 import ModelSettingsPanel from './ModelSettingsPanel.vue'
+import { useRoleModelTarget } from '@/composables/useRoleModelTarget'
 
 const { t } = useI18n()
 const userStore = useUserStore()
@@ -180,10 +182,14 @@ const panelLoading = ref(true)
 const panelError = ref(false)
 const libraryError = ref(false)
 let panelDisposed = false
+const savingModel = ref(false)
 const userId = () => userStore.currentUser?.id
-const context = () => ({ owner: userId(), session: userStore.token, roleId: activeRoleId.value })
+// A bound request belongs to one selection of one role: leaving the role and
+// coming back to it does not make an older request current again.
+const modelTarget = useRoleModelTarget({ store: companionStore, getUserId: userId, getRoleId: () => activeRoleId.value })
+const context = () => ({ owner: userId(), session: userStore.token, roleId: activeRoleId.value, target: modelTarget.capture() })
 const current = (ctx, bound = false) => !!ctx?.owner && !!ctx.session && !panelDisposed && userId() === ctx.owner &&
-  userStore.token === ctx.session && (!bound || activeRoleId.value === ctx.roleId)
+  userStore.token === ctx.session && (!bound || modelTarget.isCurrent(ctx.target))
 
 
 async function loadPanel() {
@@ -206,14 +212,29 @@ async function loadPanel() {
   } finally { panelLoading.value = false }
 }
 onMounted(loadPanel)
-onBeforeUnmount(() => { panelDisposed = true })
+onBeforeUnmount(() => { panelDisposed = true; modelTarget.dispose() })
 
 watch(activeRole, syncRoleModel)
+// Another account's library and half-finished edits must not stay on screen.
+watch(() => companionStore.ownerEpoch, () => {
+  uploadedModels.value = []
+  localMotions.value = []
+  savingModel.value = false
+  modelPanelOpen.value = false
+  renamingModelUrl.value = null
+  renamingMotionKey.value = null
+  renamingValue.value = ''
+}, { flush: 'sync' })
 
 function syncRoleModel() {
   const role = activeRole.value
-  if (!role) return
-  roleModelUrl.value = role.modelUrl || '/models/SpringSnow.vrm'
+  if (!role) {
+    roleModelUrl.value = ''
+    roleModelType.value = 'vrm'
+    return
+  }
+  // A guest invited without a model has none; the default belongs to regulars.
+  roleModelUrl.value = role.modelUrl || (role.kind === 'guest' ? '' : '/models/SpringSnow.vrm')
   roleModelType.value = role.modelType || 'vrm'
 }
 
@@ -239,48 +260,45 @@ async function loadModels(ctx = context()) {
   }
 }
 
-// applyRoleModel persists the role's model and keeps the local role list in sync,
-// so the on-screen widget picks the new model up without a reload.
+// applyRoleModel persists the role's model. The store puts the server's answer
+// in the list with its preview and owner guards, so the on-screen widget picks
+// the new model up without a reload; replacing the row again here would undo
+// those guards after a reply that finished while the save was in flight.
 async function applyRoleModel(payload, ctx = context()) {
   if (!current(ctx, true)) throw new Error('Account or role changed')
-  const { roleId, owner, session } = ctx
-  if (!owner || !roleId) throw new Error('No active role')
-  const response = await companionAPI.updateRole(roleId, owner, payload)
-  const updated = response.data
-  if (!current(ctx, true) || !updated || updated.id !== roleId || updated.modelUrl !== payload.modelUrl) {
-    throw new Error('Model binding was not confirmed')
-  }
-  const index = roles.value.findIndex((r) => r.id === roleId)
-  if (index < 0) throw new Error('Role no longer available')
-  roles.value.splice(index, 1, withKnownPreview(roles.value[index], updated))
-
+  await companionStore.updateRole(ctx.owner, ctx.roleId, payload)
 }
 
 async function saveRoleModel() {
   const ctx = context()
-  if (!current(ctx)) return
+  if (savingModel.value || !current(ctx, true)) return
   const url = roleModelUrl.value.trim()
   if (!url) {
     ElMessage.error(t('companion.modelUrlRequired'))
     return
   }
+  savingModel.value = true
   try {
     await applyRoleModel({ modelUrl: url, modelType: roleModelType.value || 'vrm' }, ctx)
     if (!current(ctx, true)) return
     ElMessage.success(t('companion.modelSaved'))
-  } catch { ElMessage.error(t('companion.modelSaveFailed')) }
+  } catch {
+    if (current(ctx)) ElMessage.error(t('companion.modelSaveFailed'))
+  } finally {
+    if (ctx.target.epoch === companionStore.ownerEpoch) savingModel.value = false
+  }
 }
 
 async function onModelFile(event) {
   const ctx = context()
-  if (!current(ctx)) return
   const file = event.target.files?.[0]
   event.target.value = ''
-  if (!file) return
+  if (!file || savingModel.value || !current(ctx, true)) return
   if (!file.name.toLowerCase().endsWith('.vrm')) {
     ElMessage.error(t('companion.modelFileInvalid'))
     return
   }
+  savingModel.value = true
   try {
     const upload = await userAPI.uploadSettingAsset('model', file, ctx)
     if (!current(ctx, true)) return
@@ -295,20 +313,28 @@ async function onModelFile(event) {
     ElMessage.success(t('companion.modelFileApplied'))
   } catch (error) {
     if (current(ctx)) ElMessage.error(t('companion.modelSaveFailed'))
+  } finally {
+    if (ctx.target.epoch === companionStore.ownerEpoch) savingModel.value = false
   }
 }
 
 async function switchModel(model) {
   const ctx = context()
-  if (!current(ctx)) return
+  if (savingModel.value || !current(ctx, true)) return
   if (!model?.fileUrl || model.fileUrl === activeRole.value?.modelUrl) return
+  savingModel.value = true
   try {
+    // The settings library lists VRM files only.
     await applyRoleModel({ modelUrl: model.fileUrl, modelType: 'vrm' }, ctx)
     if (!current(ctx, true)) return
     roleModelUrl.value = model.fileUrl
     roleModelType.value = 'vrm'
     ElMessage.success(t('companion.modelSwitched'))
-  } catch { ElMessage.error(t('companion.modelSaveFailed')) }
+  } catch {
+    if (current(ctx)) ElMessage.error(t('companion.modelSaveFailed'))
+  } finally {
+    if (ctx.target.epoch === companionStore.ownerEpoch) savingModel.value = false
+  }
 }
 
 function startRenameModel(model) {

@@ -178,6 +178,7 @@ public final class CompanionStateTag {
      */
     public static final class Filter {
         private final Consumer<String> out;
+        private final Consumer<State> onState;
         private final StringBuilder buffer = new StringBuilder();
         private final StringBuilder visible = new StringBuilder();
         private boolean inTag;
@@ -186,7 +187,13 @@ public final class CompanionStateTag {
         private State state;
 
         public Filter(Consumer<String> out) {
+            this(out, ignored -> {});
+        }
+
+        /** Reports the first valid state before any following text is delivered. */
+        public Filter(Consumer<String> out, Consumer<State> onState) {
             this.out = out;
+            this.onState = onState;
         }
 
         public void accept(String piece) {
@@ -277,7 +284,11 @@ public final class CompanionStateTag {
 
         private void absorb(String body) {
             State parsed = parseBody(body);
-            if (parsed != null) state = parsed;
+            // One state per turn: persistence and the streamed cue must agree.
+            if (parsed != null && state == null) {
+                state = parsed;
+                onState.accept(parsed);
+            }
         }
 
         /** Remove and return the first {@code length} chars of the buffer. */

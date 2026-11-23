@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { companionAPI } from '@/services/api'
+import { useUserStore } from '@/stores/user'
 import { API_BASE_URL } from '@/services/runtimeConfig'
 import { retryAtOf } from '@/stores/agentProviders'
 
@@ -60,6 +61,16 @@ export const useCompanionStore = defineStore('companion', () => {
     const modelStatus = ref(null)
     const isFallback = ref(false)
     const isLoading = ref(false)
+    const isLoadingRoleData = ref(false)
+    const userStore = useUserStore()
+    const ownerUserId = ref(null)
+    const ownerEpoch = ref(0)
+    const isInviting = ref(false)
+    let rolesReadSequence = 0
+    let selectionEpoch = 0
+    const readSequences = new Map()
+    const previewMessageIds = new Map()
+    const pendingTurns = new Map()
 
     // ── What the stage reads ───────────────────────────────────────────────
     // Mood / motion / doing as the model reported them with the reply that is
@@ -88,8 +99,6 @@ export const useCompanionStore = defineStore('companion', () => {
     const isRoleBusy = (roleId) => sendingRoleIds.value.includes(roleId) ||
         closingRoleIds.value.includes(roleId) || openingRoleIds.value.includes(roleId) ||
         clearingRoleIds.value.includes(roleId)
-    const canApplyHistory = (roleId, revision) => isCurrent(roleId) &&
-        historyRevision(roleId) === revision && !clearingRoleIds.value.includes(roleId)
     const beginSending = (roleId) => {
         if (!sendingRoleIds.value.includes(roleId)) sendingRoleIds.value = [...sendingRoleIds.value, roleId]
     }
@@ -116,55 +125,184 @@ export const useCompanionStore = defineStore('companion', () => {
     // Server role bindings are the only model source. Legacy local overrides
     // remain inert; no init/refresh/update path merges them into real data.
 
+    const accountKey = (id) => id == null ? null : String(id)
+
+    function resetOwner(id) {
+        const next = accountKey(id)
+        if (next === ownerUserId.value) return
+        ownerEpoch.value += 1
+        ownerUserId.value = next
+        for (const abort of streamAborts.values()) abort.abort()
+        streamAborts.clear()
+        pendingTurns.clear()
+        previewMessageIds.clear()
+        readSequences.clear()
+        historyRevisions.clear()
+        historyEpoch += 1
+        rolesReadSequence += 1
+        roles.value = []
+        rolesOwnerId.value = null
+        activeRoleId.value = null
+        messages.value = []
+        memories.value = []
+        growth.value = null
+        status.value = null
+        modelStatus.value = null
+        activeSession.value = null
+        sessionHistory.value = []
+        liveState.value = null
+        lastContext.value = null
+        speaking.value = false
+        isFallback.value = false
+        isLoading.value = false
+        isLoadingRoleData.value = false
+        isInviting.value = false
+        sendingRoleIds.value = []
+        clearingRoleIds.value = []
+        closingRoleIds.value = []
+        openingRoleIds.value = []
+    }
+
+    watch(() => userStore.currentUser?.id, resetOwner, { immediate: true, flush: 'sync' })
+    watch(activeRoleId, () => { selectionEpoch += 1 }, { flush: 'sync' })
+
+    const isUserCurrent = (userId) => accountKey(userId) != null &&
+        accountKey(userId) === ownerUserId.value &&
+        accountKey(userStore.currentUser?.id) === ownerUserId.value
+    const captureOwner = (userId) => isUserCurrent(userId)
+        ? { userId: accountKey(userId), epoch: ownerEpoch.value } : null
+    const owns = (request) => !!request && request.epoch === ownerEpoch.value &&
+        isUserCurrent(request.userId)
+    const staleError = () => Object.assign(new Error('Account context changed'), { code: 'STALE_USER_CONTEXT' })
+
+    function captureRead(userId, kind, roleId) {
+        const owner = captureOwner(userId)
+        if (!owner) return null
+        const key = `${kind}:${roleId ?? ''}`
+        const sequence = (readSequences.get(key) || 0) + 1
+        readSequences.set(key, sequence)
+        return { ...owner, key, sequence, roleId, revision: historyRevision(roleId), selection: selectionEpoch }
+    }
+
+    function ownsRead(request, view = true) {
+        return owns(request) && readSequences.get(request.key) === request.sequence &&
+            historyRevision(request.roleId) === request.revision &&
+            !clearingRoleIds.value.includes(request.roleId) &&
+            (!view || (isCurrent(request.roleId) && request.selection === selectionEpoch))
+    }
+
+    const persistedId = (message) => {
+        const id = String(message?.id ?? '')
+        return /^[1-9]\d*$/.test(id) ? BigInt(id) : null
+    }
+    const newestPersisted = (list) => list.reduce((newest, message) => {
+        const id = persistedId(message)
+        return id != null && (newest == null || id > persistedId(newest)) ? message : newest
+    }, null)
+
+    // The row's preview is the newest filed message that says something — the
+    // one the server picks for the list — so a blank reply is passed over for
+    // the line before it.
+    const latestLine = (list) => newestPersisted(list.filter(m => typeof m?.content === 'string' && m.content.trim()))
+
+    function orderedMessages(list) {
+        const before = new Map(), tail = []
+        let anchor = null
+        // Unfiled user rows stay before the persisted answer to their request;
+        // sorting every nonnumeric ID to the tail reverses partial exchanges.
+        for (let index = list.length - 1; index >= 0; index -= 1) {
+            const message = list[index], id = persistedId(message)
+            if (id != null) anchor = String(id)
+            else if (anchor == null) tail.unshift(message)
+            else {
+                if (!before.has(anchor)) before.set(anchor, [])
+                before.get(anchor).unshift(message)
+            }
+        }
+        const confirmed = list.filter(m => persistedId(m) != null).sort((a, b) =>
+            persistedId(a) < persistedId(b) ? -1 : persistedId(a) > persistedId(b) ? 1 : 0)
+        return [...confirmed.flatMap(m => [...(before.get(String(persistedId(m))) || []), m]), ...tail]
+    }
+
+    /** Move a row's preview to a filed message picked by {@link latestLine}; never backwards. */
+    function applyPreview(roleId, message, empty = false) {
+        const seat = roles.value.find(role => role.id === roleId)
+        if (!seat) return
+        if (!message) {
+            if (empty) {
+                seat.lastMessage = null
+                seat.lastMessageSender = null
+                seat.lastMessageAt = null
+                previewMessageIds.delete(roleId)
+            }
+            return
+        }
+        const id = persistedId(message)
+        if (id < (previewMessageIds.get(roleId) || 0n)) return
+        previewMessageIds.set(roleId, id)
+        // The line and who said it are read off one message so they always
+        // belong together. A message with no senderType (an older server)
+        // leaves the sender unknown rather than keeping whoever spoke before.
+        seat.lastMessage = message.content
+        seat.lastMessageSender = message.senderType ?? null
+        // A missing server timestamp is not an excuse to substitute the
+        // browser clock for persisted history.
+        if (message.createdAt && Number.isFinite(new Date(message.createdAt).getTime())) {
+            seat.lastMessageAt = message.createdAt
+        }
+    }
+
+    async function reconcilePreview(userId, roleId, owner = captureOwner(userId)) {
+        if (!owns(owner)) return
+        const request = captureRead(userId, 'preview', roleId)
+        try {
+            const response = await companionAPI.getConversation(roleId, userId)
+            if (!ownsRead(request, false)) return
+            if (!Array.isArray(response.data)) return
+            applyPreview(roleId, latestLine(response.data), response.data.length === 0)
+        } catch {
+            // Keep the last confirmed preview if read-only reconciliation fails.
+            // A failed or stopped POST must never be silently retried.
+        }
+    }
+
     const ensureInitialized = async (userId) => {
-        if (!userId) return
-        if (roles.value.length === 0) {
-            await initRoles(userId)
-        } else {
-            await fetchRoles(userId)
-        }
-        if (!activeRole.value) {
-            await setActiveRole(userId, conversationRoles.value[0]?.id || null)
-        } else {
-            await loadRoleData(userId, activeRoleId.value)
-        }
+        const owner = captureOwner(userId)
+        if (!owner) return
+        if (roles.value.length === 0) await initRoles(userId)
+        else await fetchRoles(userId)
+        if (!owns(owner)) return
+        if (!activeRole.value) await setActiveRole(userId, conversationRoles.value[0]?.id || null)
+        else await loadRoleData(userId, activeRoleId.value)
     }
 
-    const initRoles = async (userId) => {
+    async function readRoles(userId, initialize = false) {
+        const owner = captureOwner(userId)
+        if (!owner) return false
         const epoch = historyEpoch
+        const sequence = ++rolesReadSequence
         isLoading.value = true
         try {
-            const response = await companionAPI.initRoles(userId)
-            if (epoch !== historyEpoch || clearingRoleIds.value.length || openingRoleIds.value.length) return
+            const response = initialize ? await companionAPI.initRoles(userId) : await companionAPI.getRoles(userId)
+            if (!owns(owner) || sequence !== rolesReadSequence || epoch !== historyEpoch ||
+                clearingRoleIds.value.length || openingRoleIds.value.length) return false
             if (!Array.isArray(response.data)) throw new Error('Invalid role list response')
             roles.value = response.data
             rolesOwnerId.value = userId
             if (activeRoleId.value && !activeRole.value) await setActiveRole(userId, null)
+            return true
         } catch (error) {
-            console.error('Init companion roles failed:', error)
+            if (owns(owner)) console.error('Fetch companion roles failed:', error)
+            return false
         } finally {
-            isLoading.value = false
+            if (owns(owner) && sequence === rolesReadSequence) isLoading.value = false
         }
     }
-
-    const fetchRoles = async (userId) => {
-        const epoch = historyEpoch
-        isLoading.value = true
-        try {
-            const response = await companionAPI.getRoles(userId)
-            if (epoch !== historyEpoch || clearingRoleIds.value.length || openingRoleIds.value.length) return
-            if (!Array.isArray(response.data)) throw new Error('Invalid role list response')
-            roles.value = response.data
-            rolesOwnerId.value = userId
-            if (activeRoleId.value && !activeRole.value) await setActiveRole(userId, null)
-        } catch (error) {
-            console.error('Fetch companion roles failed:', error)
-        } finally {
-            isLoading.value = false
-        }
-    }
+    const initRoles = (userId) => readRoles(userId, true)
+    const fetchRoles = (userId) => readRoles(userId)
 
     const setActiveRole = async (userId, roleId) => {
+        if (!captureOwner(userId)) return
         if (roleId && !conversationRoles.value.some(r => r.id === roleId)) return
         if (roleId !== activeRoleId.value) {
             // Everything below belongs to the character being left. Clearing it
@@ -190,20 +328,53 @@ export const useCompanionStore = defineStore('companion', () => {
     const isCurrent = (roleId) => activeRoleId.value === roleId
 
     const updateRole = async (userId, roleId, data) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
+        const epoch = historyEpoch
+        const sequence = (readSequences.get(`update:${roleId}`) || 0) + 1
+        readSequences.set(`update:${roleId}`, sequence)
         const response = await companionAPI.updateRole(roleId, userId, data)
+        if (!owns(owner)) throw staleError()
         const updated = response.data
+        if (!updated || updated.id !== roleId) throw new Error('Invalid role update response')
         const idx = roles.value.findIndex(r => r.id === roleId)
-        if (idx >= 0 && updated) roles.value[idx] = withKnownPreview(roles.value[idx], updated)
+        if (idx >= 0 && sequence === readSequences.get(`update:${roleId}`)) {
+            const current = roles.value[idx]
+            // The server's answer takes the row's place whole, so its preview is
+            // never mixed with the one it replaces.
+            const next = withKnownPreview(current, updated)
+            // A reply or deletion completed while settings was saving: the
+            // slower settings response may update the shape but not rewind chat.
+            roles.value[idx] = epoch === historyEpoch ? next : {
+                ...next,
+                lastMessage: current.lastMessage,
+                lastMessageSender: current.lastMessageSender,
+                lastMessageAt: current.lastMessageAt,
+                conversationHidden: current.conversationHidden,
+                presence: current.presence
+            }
+            return roles.value[idx]
+        }
         return updated
     }
 
-    // True while a role's data is being pulled in. The conversation is empty
-    // until this finishes, so the view needs it to tell "no messages yet" apart
-    // from "still loading" — otherwise the room looks broken for a second.
-    const isLoadingRoleData = ref(false)
+    // Called only after the server acknowledges a shared asset rename. Keep
+    // every currently cached reference consistent, without changing previews.
+    const syncRenamedModel = (userId, oldFileName, newUrl) => {
+        if (!isUserCurrent(userId) || !oldFileName || typeof newUrl !== 'string') return
+        rolesReadSequence += 1
+        isLoading.value = false
+        const oldUrl = `/models/${oldFileName}`
+        for (const role of roles.value) {
+            if (role.modelUrl === oldUrl || role.modelUrl === oldFileName) role.modelUrl = newUrl
+        }
+    }
 
+    // Only the current selection owns its loading state.
     const loadRoleData = async (userId, roleId) => {
-        if (!roleId) return
+        const owner = captureOwner(userId)
+        if (!owner || !roleId) return
+        const selection = selectionEpoch
         isLoadingRoleData.value = true
         try {
             await Promise.all([
@@ -218,16 +389,19 @@ export const useCompanionStore = defineStore('companion', () => {
                 fetchSessionHistory(userId, roleId)
             ])
         } finally {
-            if (isCurrent(roleId)) isLoadingRoleData.value = false
+            if (owns(owner) && isCurrent(roleId) && selection === selectionEpoch) isLoadingRoleData.value = false
         }
     }
 
     const fetchConversation = async (userId, roleId) => {
-        const revision = historyRevision(roleId)
+        const request = captureRead(userId, 'conversation', roleId)
+        if (!request) return
         try {
             const response = await companionAPI.getConversation(roleId, userId)
-            if (!canApplyHistory(roleId, revision)) return
-            const stored = response.data || []
+            if (!ownsRead(request, false) || !Array.isArray(response.data)) return
+            const stored = [...response.data]
+            applyPreview(roleId, latestLine(stored), stored.length === 0)
+            if (!ownsRead(request)) return
             // A half reply left by a model failure is the end of history: tie it to the
             // line it answers, so sending that line again replaces it as a live retry does.
             const half = stored.at(-1), asked = stored.at(-2)
@@ -238,8 +412,12 @@ export const useCompanionStore = defineStore('companion', () => {
             // except a line the server has already filed, which it now shows
             // itself, and anything that belongs to another character.
             const filed = new Set(stored.map(m => m.clientMsgId).filter(Boolean))
-            const pending = messages.value.filter(m =>
-                m.pending && m.roleId === roleId && !(m.clientMsgId && filed.has(m.clientMsgId)))
+            const turn = pendingTurns.get(roleId)
+            const inFlight = turn && owns(turn.owner) ? [turn.row, turn.live].filter(Boolean) : []
+            const pending = [...messages.value.filter(m => m.pending), ...inFlight]
+                .filter((m, index, all) => m.roleId === roleId &&
+                    all.findIndex(other => other.id === m.id) === index &&
+                    (m.senderType !== 'user' || !(m.clientMsgId && filed.has(m.clientMsgId))))
             messages.value = [...stored, ...pending]
         } catch (error) {
             console.error('Fetch companion conversation failed:', error)
@@ -247,6 +425,8 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const clearConversation = async (userId, roleId) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         if (isRoleBusy(roleId)) {
             const error = new Error('conversation is busy')
             error.response = { status: 409 }
@@ -257,6 +437,7 @@ export const useCompanionStore = defineStore('companion', () => {
         let cleared = false
         try {
             const response = await companionAPI.clearConversation(roleId, userId)
+            if (!owns(owner)) throw staleError()
             cleared = true
             const seat = roles.value.find(r => r.id === roleId)
             if (seat) {
@@ -265,6 +446,7 @@ export const useCompanionStore = defineStore('companion', () => {
                 // behind would show a sentence from a chat that no longer exists.
                 seat.lastMessage = null
                 seat.lastMessageSender = null
+                previewMessageIds.delete(roleId)
                 seat.presence = null
                 seat.originSessionId = null
                 seat.conversationHidden = true
@@ -272,13 +454,17 @@ export const useCompanionStore = defineStore('companion', () => {
             if (isCurrent(roleId)) await setActiveRole(userId, null)
             return response.data
         } finally {
-            invalidateHistory(roleId)
-            clearingRoleIds.value = clearingRoleIds.value.filter(id => id !== roleId)
-            if (!cleared && isCurrent(roleId)) await loadRoleData(userId, roleId)
+            if (owns(owner)) {
+                invalidateHistory(roleId)
+                clearingRoleIds.value = clearingRoleIds.value.filter(id => id !== roleId)
+                if (!cleared && isCurrent(roleId)) await loadRoleData(userId, roleId)
+            }
         }
     }
 
     const restoreConversation = async (userId, roleId) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         if (isRoleBusy(roleId)) {
             const error = new Error('conversation is busy')
             error.response = { status: 409 }
@@ -288,12 +474,15 @@ export const useCompanionStore = defineStore('companion', () => {
         invalidateHistory(roleId)
         try {
             await companionAPI.restoreConversation(roleId, userId)
+            if (!owns(owner)) throw staleError()
             const role = roles.value.find(r => r.id === roleId)
             if (role) role.conversationHidden = false
             await setActiveRole(userId, roleId)
         } finally {
-            invalidateHistory(roleId)
-            openingRoleIds.value = openingRoleIds.value.filter(id => id !== roleId)
+            if (owns(owner)) {
+                invalidateHistory(roleId)
+                openingRoleIds.value = openingRoleIds.value.filter(id => id !== roleId)
+            }
         }
     }
 
@@ -347,33 +536,26 @@ export const useCompanionStore = defineStore('companion', () => {
 
     /** Put the server's version of an exchange in place of the optimistic rows. */
     const settleExchange = (roleId, data, ...optimisticIds) => {
+        invalidateHistory(roleId)
         // The seat list sorts by last exchange and previews its last line, and
         // the dossier shows what she is doing; all of it just changed, whichever
-        // character is on screen by now.
+        // character is on screen by now. Without this the list keeps showing the
+        // previous exchange until the roles are re-fetched — the timestamp moves
+        // but the sentence under it does not, which reads as stale.
+        const latest = latestLine([data.openingMessage, data.userMessage, data.roleMessage])
+        applyPreview(roleId, latest)
         const seat = roles.value.find(r => r.id === roleId)
-        if (seat && data.roleMessage) {
+        if (seat && latest) {
             seat.conversationHidden = false
-            seat.lastMessageAt = data.roleMessage.createdAt
             if (data.status?.summary) seat.presence = data.status.summary
-            // The row's preview line and who said it. Without this the list keeps
-            // showing the previous exchange until the roles are re-fetched — the
-            // timestamp moves but the sentence under it does not, which reads as
-            // stale. Both are read off one message so they always belong
-            // together: the newest one that says something, as the server picks
-            // it. A message with no senderType (an older server) leaves the
-            // sender unknown rather than keeping whoever spoke before.
-            const latest = [data.roleMessage, data.userMessage].find(m => m?.content?.trim())
-            if (latest) {
-                seat.lastMessage = latest.content
-                seat.lastMessageSender = latest.senderType ?? null
-            }
         }
         if (!isCurrent(roleId)) return
         const serverIds = [data.openingMessage?.id, data.userMessage?.id, data.roleMessage?.id].filter(Boolean)
-        messages.value = messages.value.filter(m => !optimisticIds.includes(m.id) && !serverIds.includes(m.id))
-        if (data.openingMessage) messages.value.push(data.openingMessage)
-        if (data.userMessage) messages.value.push(data.userMessage)
-        if (data.roleMessage) messages.value.push(data.roleMessage)
+        const merged = messages.value.filter(m => !optimisticIds.includes(m.id) && !serverIds.includes(m.id))
+        merged.push(...[data.openingMessage, data.userMessage, data.roleMessage].filter(Boolean))
+        // A replay of an earlier client message must not move its old answer to
+        // the end of history, or rewind the left-hand conversation preview.
+        messages.value = orderedMessages(merged)
         isFallback.value = !!data.fallback
         if (data.status) status.value = data.status
         if (data.sessionId && activeSession.value?.id !== data.sessionId) {
@@ -414,19 +596,18 @@ export const useCompanionStore = defineStore('companion', () => {
         }
         const result = { ...data, userMessage, roleMessage, fallback: false, modelError, partial, clientMsgId }
         settleExchange(roleId, result, row.id, live?.id)
-        // A failure with no reply at all still stamps the conversation (the
-        // server does the same), but the preview must not keep an older sentence
-        // while the timestamp says now — show what the user just sent instead,
-        // as the user's line and not under the sender of the sentence it replaces.
-        if (!roleMessage) {
-            const seat = roles.value.find(r => r.id === roleId)
-            if (seat) {
-                seat.lastMessageAt = userMessage.createdAt || new Date().toISOString()
-                if (userMessage.content.trim()) {
-                    seat.lastMessage = userMessage.content
-                    seat.lastMessageSender = userMessage.senderType
-                }
-            }
+        // What a failed exchange ended on may not be filed: a half reply that
+        // only reached the screen, or a line the server never acknowledged. The
+        // row still shows it — the half reply as hers, the unanswered line as
+        // the user's and not under the sender of the sentence it replaces,
+        // stamped as the server stamps the conversation — until the read-only
+        // reconciliation after a failed send puts the filed history in its place.
+        const last = [roleMessage, userMessage].find(m => m?.content?.trim())
+        const seat = roles.value.find(r => r.id === roleId)
+        if (seat && last && persistedId(last) == null) {
+            seat.lastMessage = last.content
+            seat.lastMessageSender = last.senderType
+            seat.lastMessageAt = last.createdAt
         }
         return result
     }
@@ -436,29 +617,44 @@ export const useCompanionStore = defineStore('companion', () => {
      * endpoint. Resolves to the exchange, or null when the send failed.
      */
     const sendMessage = async (userId, roleId, content, sceneKey = null, clientMsgId = null) => {
-        if (!content || !roleId || isRoleBusy(roleId)) return null
+        const owner = captureOwner(userId)
+        if (!owner || !content || !roleId || isRoleBusy(roleId)) return null
         const clientId = clientMsgId || newClientId()
         const row = userRowFor(roleId, content, clientId)
+        const turn = { owner, row }
+        pendingTurns.set(roleId, turn)
+        let needsReconcile = false
         beginSending(roleId)
         try {
             const response = await companionAPI.sendMessage(roleId, userId, content, sceneKey, clientId)
+            if (!owns(owner)) return null
             const data = response.data
             const failure = modelFailure(data, response.headers, response.status)
-            if (failure) return settleModelFailure(roleId, row, null, data, failure)
+            if (failure) {
+                needsReconcile = true
+                return settleModelFailure(roleId, row, null, data, failure)
+            }
             if (!data?.roleMessage) {
+                needsReconcile = true
                 markFailed(roleId, row)
                 return null
             }
             settleExchange(roleId, data, row.id)
             return data
         } catch (error) {
+            if (!owns(owner)) return null
+            needsReconcile = true
             const response = error.response
             const failure = modelFailure(response?.data, response?.headers, response?.status)
             if (failure) return settleModelFailure(roleId, row, null, response?.data, failure)
             markFailed(roleId, row)
             return null
         } finally {
-            endSending(roleId)
+            if (pendingTurns.get(roleId) === turn) pendingTurns.delete(roleId)
+            if (owns(owner)) {
+                endSending(roleId)
+                if (needsReconcile) await reconcilePreview(userId, roleId, owner)
+            }
         }
     }
 
@@ -480,7 +676,8 @@ export const useCompanionStore = defineStore('companion', () => {
      * already, which filed the message twice and called the model twice.
      */
     const sendMessageStream = async (userId, roleId, content, sceneKey = null, clientMsgId = null) => {
-        if (!content || !roleId || isRoleBusy(roleId)) return null
+        const owner = captureOwner(userId)
+        if (!owner || !content || !roleId || isRoleBusy(roleId)) return null
         // One reply at a time per character.
         if (streamAborts.has(roleId)) return null
         const clientId = clientMsgId || newClientId()
@@ -496,7 +693,8 @@ export const useCompanionStore = defineStore('companion', () => {
             fallback: false,
             createdAt: new Date().toISOString(),
             pending: true,
-            live: true
+            live: true,
+            clientMsgId: clientId
         }
         if (isCurrent(roleId)) {
             messages.value.push(live)
@@ -504,6 +702,9 @@ export const useCompanionStore = defineStore('companion', () => {
         }
 
         const abort = new AbortController()
+        const turn = { owner, row, live }
+        pendingTurns.set(roleId, turn)
+        let needsReconcile = false
         streamAborts.set(roleId, abort)
         beginSending(roleId)
         if (isCurrent(roleId)) liveState.value = null
@@ -513,6 +714,7 @@ export const useCompanionStore = defineStore('companion', () => {
         let responseHeaders
 
         const handle = (frame) => {
+            if (!owns(owner)) return
             const event = parseStreamFrame(frame)
             if (!event) return
             // Words for a character who is no longer on screen go nowhere. The
@@ -563,16 +765,22 @@ export const useCompanionStore = defineStore('companion', () => {
                 }
             )
 
+            if (!owns(owner)) return null
             responseHeaders = response.headers
             if (!response.ok || response.headers.get('content-type')?.includes('json')) {
                 const body = await response.json().catch(() => null)
                 abort.signal.throwIfAborted()
+                if (!owns(owner)) return null
                 const error = modelFailure(body, response.headers, response.status)
-                if (error) return settleModelFailure(roleId, row, live, body, error)
+                if (error) {
+                    needsReconcile = true
+                    return settleModelFailure(roleId, row, live, body, error)
+                }
                 if (missingStreamRoute(response, body)) {
                     if (isCurrent(roleId)) dropRows(live.id)
                     return { unsupported: true, clientMsgId: clientId }
                 }
+                needsReconcile = true
                 markFailed(roleId, row, live.id)
                 return null
             }
@@ -597,7 +805,21 @@ export const useCompanionStore = defineStore('companion', () => {
                 await reader.cancel().catch(() => {})
                 reader.releaseLock()
             }
+            if (!owns(owner)) return null
+            if (failure) {
+                needsReconcile = true
+                return settleModelFailure(roleId, row, live, settled, failure)
+            }
+            if (serverError || !settled?.roleMessage) {
+                needsReconcile = true
+                markFailed(roleId, row, live.id)
+                return null
+            }
+            settleExchange(roleId, settled, row.id, live.id)
+            return settled
         } catch (error) {
+            if (!owns(owner)) return null
+            needsReconcile = true
             if (abort.signal.aborted) {
                 // Stopped by the user. Keep what she had said so far on screen.
                 // The server keeps what it had sent when it noticed, which can
@@ -619,23 +841,17 @@ export const useCompanionStore = defineStore('companion', () => {
             markFailed(roleId, row, live.id)
             return null
         } finally {
-            streamAborts.delete(roleId)
-            endSending(roleId)
-            // The stage's live readings belong to whoever is on screen; a reply
-            // finishing elsewhere must not blank them.
-            if (isCurrent(roleId)) {
-                speaking.value = false
-                liveState.value = null
+            if (streamAborts.get(roleId) === abort) streamAborts.delete(roleId)
+            if (pendingTurns.get(roleId) === turn) pendingTurns.delete(roleId)
+            if (owns(owner)) {
+                endSending(roleId)
+                if (isCurrent(roleId)) {
+                    speaking.value = false
+                    liveState.value = null
+                }
+                if (needsReconcile) await reconcilePreview(userId, roleId, owner)
             }
         }
-
-        if (failure) return settleModelFailure(roleId, row, live, settled, failure)
-        if (serverError || !settled?.roleMessage) {
-            markFailed(roleId, row, live.id)
-            return null
-        }
-        settleExchange(roleId, settled, row.id, live.id)
-        return settled
     }
 
     /** Stop the reply being written for the character on screen, if there is one. */
@@ -668,29 +884,30 @@ export const useCompanionStore = defineStore('companion', () => {
     // ── Tavern sessions ────────────────────────────────────────────────────
     /** The evening in progress, opening one if none. Idempotent on the server. */
     const openSession = async (userId, roleId, sceneKey) => {
-        if (isRoleBusy(roleId)) return null
-        const revision = historyRevision(roleId)
+        const request = captureRead(userId, 'activeSession', roleId)
+        if (!request || isRoleBusy(roleId)) return null
         openingRoleIds.value = [...openingRoleIds.value, roleId]
         try {
             const response = await companionAPI.openSession(userId, roleId, sceneKey)
-            if (!canApplyHistory(roleId, revision)) return null
+            if (!ownsRead(request)) return null
             activeSession.value = response.data || null
             return activeSession.value
         } catch (error) {
             console.error('Open tavern session failed:', error)
             return null
         } finally {
-            openingRoleIds.value = openingRoleIds.value.filter(id => id !== roleId)
+            if (owns(request)) openingRoleIds.value = openingRoleIds.value.filter(id => id !== roleId)
         }
     }
 
     /** Re-read the evening in progress. Used to recover from a timed-out close. */
     const fetchActiveSession = async (userId, roleId) => {
-        const revision = historyRevision(roleId)
+        const request = captureRead(userId, 'activeSession', roleId)
+        if (!request) return null
         try {
             const response = await companionAPI.activeSession(userId, roleId)
             const found = response.status === 204 ? null : (response.data || null)
-            if (!canApplyHistory(roleId, revision)) return null
+            if (!ownsRead(request)) return null
             activeSession.value = found
             return found
         } catch (error) {
@@ -701,28 +918,28 @@ export const useCompanionStore = defineStore('companion', () => {
     /** Close the evening: last line, plus one sentence kept as memory. */
     const closeSession = async (userId, sessionId) => {
         const roleId = activeSession.value?.roleId || activeRoleId.value
-        if (isRoleBusy(roleId)) return null
-        const revision = historyRevision(roleId)
+        const request = captureRead(userId, 'activeSession', roleId)
+        if (!request || !roleId || isRoleBusy(roleId)) return null
         closingRoleIds.value = [...closingRoleIds.value, roleId]
         try {
             const response = await companionAPI.closeSession(sessionId, userId)
-            if (canApplyHistory(roleId, revision) && activeSession.value?.id === sessionId) {
-                activeSession.value = null
-            }
+            if (!owns(request)) return null
+            if (ownsRead(request) && activeSession.value?.id === sessionId) activeSession.value = null
             return response.data || null
         } catch (error) {
             console.error('Close tavern session failed:', error)
             return null
         } finally {
-            closingRoleIds.value = closingRoleIds.value.filter(id => id !== roleId)
+            if (owns(request)) closingRoleIds.value = closingRoleIds.value.filter(id => id !== roleId)
         }
     }
 
     const fetchSessionHistory = async (userId, roleId) => {
-        const revision = historyRevision(roleId)
+        const request = captureRead(userId, 'sessions', roleId)
+        if (!request) return []
         try {
             const response = await companionAPI.sessionHistory(userId, roleId)
-            if (!canApplyHistory(roleId, revision)) return []
+            if (!ownsRead(request)) return []
             sessionHistory.value = response.data || []
             return sessionHistory.value
         } catch (error) {
@@ -737,86 +954,96 @@ export const useCompanionStore = defineStore('companion', () => {
      * no other character is wearing.
      */
     const inviteGuest = async (userId, sceneKey, modelUrl = null) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
+        if (isInviting.value) {
+            const error = new Error('Invitation is already in progress')
+            error.response = { status: 409 }
+            throw error
+        }
+        isInviting.value = true
         try {
             const response = await companionAPI.inviteGuest(userId, sceneKey, modelUrl)
-            return response.data || null
-        } catch (error) {
-            console.error('Invite guest failed:', error)
-            return null
+            if (!owns(owner)) throw staleError()
+            const role = response.data
+            if (!role || !/^[1-9]\d*$/.test(String(role.id)) || role.kind !== 'guest') {
+                throw Object.assign(new Error('Invitation result was not confirmed'), { code: 'INVITE_RESULT_UNKNOWN' })
+            }
+            // Only this POST's real response identifies the invited character.
+            // A failed list refresh must not make us "recover" some other guest.
+            invalidateHistory(role.id)
+            const index = roles.value.findIndex(r => r.id === role.id)
+            if (index >= 0) roles.value[index] = role
+            else roles.value.push(role)
+            return role
+        } finally {
+            if (owns(owner)) isInviting.value = false
         }
     }
 
-    /** The models a guest can wear. Empty when nothing has been uploaded. */
+    /** GET errors are not an empty model library. The caller must show retry. */
     const fetchInviteModels = async (userId) => {
-        try {
-            const response = await companionAPI.inviteModels(userId)
-            return response.data || []
-        } catch (error) {
-            console.error('Fetch invite models failed:', error)
-            return []
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
+        const response = await companionAPI.inviteModels(userId)
+        if (!owns(owner)) throw staleError()
+        if (!Array.isArray(response.data) || response.data.some(model =>
+            !model || typeof model.fileName !== 'string' || typeof model.fileUrl !== 'string')) {
+            throw new Error('Invalid model list response')
         }
+        return response.data
     }
 
-    /** Keep a guest: they stop being a passing face. */
+    /** Keep a guest, without applying another account's late result. */
     const adoptRole = async (userId, roleId, sessionId = null) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         await companionAPI.adoptGuest(roleId, userId, sessionId)
+        if (!owns(owner)) throw staleError()
     }
 
-    /** What this role's model channel resolves to. Read-only, no model call. */
-    const fetchModelChannel = async (userId, roleId) => {
+    async function readRoleResource(userId, roleId, kind, action, apply) {
+        const request = captureRead(userId, kind, roleId)
+        if (!request) return null
         try {
-            const response = await companionAPI.modelStatus(roleId, userId)
-            return response.data || null
+            const response = await action()
+            if (!ownsRead(request)) return null
+            if (apply) apply(response.data)
+            return response.data ?? null
         } catch (error) {
-            console.error('Model channel lookup failed:', error)
+            if (owns(request)) console.error(`Fetch companion ${kind} failed:`, error)
             return null
         }
     }
 
-    /** One tiny round trip through the resolved channel. */
-    const testModelChannel = async (userId, roleId) => {
-        try {
-            const response = await companionAPI.modelTest(roleId, userId)
-            return response.data || null
-        } catch (error) {
-            console.error('Model test failed:', error)
-            return null
-        }
-    }
-
-    /**
-     * Her inner monologue, generated only when asked for. Returns
-     * { text, generated, reason } — `generated: false` means no model is
-     * configured, and the caller should show the figures it already has.
-     */
-    const fetchInnerVoice = async (userId, roleId) => {
-        try {
-            const response = await companionAPI.innerVoice(roleId, userId)
-            return response.data || null
-        } catch (error) {
-            console.error('Inner voice failed:', error)
-            return null
-        }
-    }
-
-    const fetchMemories = async (userId, roleId) => {
-        try {
-            const response = await companionAPI.getMemories(roleId, userId)
-            if (!isCurrent(roleId)) return
-            memories.value = response.data || []
-        } catch (error) {
-            console.error('Fetch memories failed:', error)
-        }
-    }
+    /** These optional model calls are still only made on explicit UI actions. */
+    const fetchModelChannel = (userId, roleId) => readRoleResource(userId, roleId, 'modelChannel',
+        () => companionAPI.modelStatus(roleId, userId))
+    const testModelChannel = (userId, roleId) => readRoleResource(userId, roleId, 'modelTest',
+        () => companionAPI.modelTest(roleId, userId))
+    const fetchInnerVoice = (userId, roleId) => readRoleResource(userId, roleId, 'innerVoice',
+        () => companionAPI.innerVoice(roleId, userId))
+    const fetchMemories = (userId, roleId) => readRoleResource(userId, roleId, 'memories',
+        () => companionAPI.getMemories(roleId, userId), data => { memories.value = Array.isArray(data) ? data : [] })
+    const fetchGrowth = (userId, roleId) => readRoleResource(userId, roleId, 'growth',
+        () => companionAPI.getGrowth(roleId, userId), data => { growth.value = data || null })
+    const fetchStatus = (userId, roleId) => readRoleResource(userId, roleId, 'status',
+        () => companionAPI.getStatus(roleId, userId), data => { status.value = data || null })
 
     const createMemory = async (userId, roleId, type, content) => {
+        const owner = captureOwner(userId), selection = selectionEpoch
+        if (!owner) throw staleError()
         const response = await companionAPI.createMemory(userId, { roleId, type, content })
-        if (response.data) memories.value.unshift(response.data)
+        if (!owns(owner)) throw staleError()
+        if (response.data && isCurrent(roleId) && selection === selectionEpoch) memories.value.unshift(response.data)
         return response.data
     }
 
     const confirmMemory = async (userId, id) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         const response = await companionAPI.confirmMemory(id, userId)
+        if (!owns(owner)) throw staleError()
         const updated = response.data
         if (updated) {
             const idx = memories.value.findIndex(m => m.id === id)
@@ -826,59 +1053,55 @@ export const useCompanionStore = defineStore('companion', () => {
     }
 
     const deleteMemory = async (userId, id) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         await companionAPI.deleteMemory(id, userId)
+        if (!owns(owner)) throw staleError()
         memories.value = memories.value.filter(m => m.id !== id)
     }
 
     const clearMemories = async (userId, roleId) => {
+        const owner = captureOwner(userId), selection = selectionEpoch
+        if (!owner) throw staleError()
         await companionAPI.clearMemories(roleId, userId)
-        memories.value = []
-    }
-
-    const fetchGrowth = async (userId, roleId) => {
-        try {
-            const response = await companionAPI.getGrowth(roleId, userId)
-            if (!isCurrent(roleId)) return
-            growth.value = response.data || null
-        } catch (error) {
-            console.error('Fetch growth failed:', error)
-        }
-    }
-
-    const fetchStatus = async (userId, roleId) => {
-        const revision = historyRevision(roleId)
-        try {
-            const response = await companionAPI.getStatus(roleId, userId)
-            if (!canApplyHistory(roleId, revision)) return
-            status.value = response.data || null
-        } catch (error) {
-            console.error('Fetch status failed:', error)
-        }
+        if (!owns(owner)) throw staleError()
+        if (isCurrent(roleId) && selection === selectionEpoch) memories.value = []
     }
 
     const updateStatus = async (userId, roleId, data) => {
+        const owner = captureOwner(userId), selection = selectionEpoch
+        if (!owner) throw staleError()
         const response = await companionAPI.updateStatus(roleId, userId, data)
-        status.value = response.data
+        if (!owns(owner)) throw staleError()
+        if (isCurrent(roleId) && selection === selectionEpoch) status.value = response.data
         return response.data
     }
 
     const saveCredential = async (userId, data) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         const response = await companionAPI.saveCredential(userId, data)
+        if (!owns(owner)) throw staleError()
         modelStatus.value = response.data
         return response.data
     }
 
     const fetchModelStatus = async (userId) => {
+        const request = captureRead(userId, 'credential')
+        if (!request) return
         try {
             const response = await companionAPI.getCredentialStatus(userId)
-            modelStatus.value = response.data
+            if (ownsRead(request, false)) modelStatus.value = response.data
         } catch (error) {
-            console.error('Fetch model status failed:', error)
+            if (owns(request)) console.error('Fetch model status failed:', error)
         }
     }
 
     const bindModel = async (userId, roleId, data) => {
+        const owner = captureOwner(userId)
+        if (!owner) throw staleError()
         const response = await companionAPI.bindModel(roleId, userId, data)
+        if (!owns(owner)) throw staleError()
         return response.data
     }
 
@@ -895,6 +1118,9 @@ export const useCompanionStore = defineStore('companion', () => {
         sessionHistory,
         status,
         modelStatus,
+        ownerEpoch,
+        isUserCurrent,
+        isInviting,
         isFallback,
         isLoading,
         isLoadingRoleData,
@@ -907,6 +1133,7 @@ export const useCompanionStore = defineStore('companion', () => {
         fetchRoles,
         setActiveRole,
         updateRole,
+        syncRenamedModel,
         fetchConversation,
         clearConversation,
         restoreConversation,

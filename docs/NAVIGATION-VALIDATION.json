@@ -26,7 +26,7 @@
   "mergedBuildSeconds": 3.54,
   "patchApplyCheckExit": 0,
   "originalFilesChangedSinceSnapshot": [],
-  "patchApplied": false,
+  "patchApplied": true,
   "limitations": [
     "No real database/model calls",
     "No real Web/Electron navigation rendering test",
@@ -84,5 +84,110 @@
       "originalSha256": "06b3bcd8151b5a23c97aee4b6ffb296a93961ba855d185ac043fde4c0f40c32c",
       "mergedSha256": "a25028fa6a2372c72a95f10a33a40b1ca2f4cf4bc59f3d5b8d53dfd554f0932a"
     }
-  ]
+  ],
+  "application": {
+    "appliedAt": "2026-11-22T10:59:33.473267+08:00",
+    "target": "/Users/anglv/Nexus",
+    "branch": "feat/settings-redesign",
+    "head": "42a4bbda411ab390468c00006185464a447d160b",
+    "patchApplied": true,
+    "files": [
+      "nexus-chat-frontend/src/router/index.js",
+      "nexus-chat-frontend/src/router/navigation.js",
+      "nexus-chat-frontend/src/router/navigation.test.mjs",
+      "nexus-chat-frontend/src/views/Main.vue",
+      "nexus-chat-frontend/src/views/Settings.vue",
+      "nexus-chat-frontend/src/views/Profile.vue",
+      "nexus-chat-frontend/src/views/UserProfile.vue",
+      "nexus-chat-frontend/src/views/Login.vue",
+      "nexus-chat-frontend/src/views/Setup.vue",
+      "nexus-chat-frontend/src/components/profile/SocialModule.vue"
+    ],
+    "before": {
+      "nexus-chat-frontend/src/router/index.js": "cde1dcab14c5327dcd34ceaf94e469ceb599c6d9c1a438bb006f7123b98b78c4",
+      "nexus-chat-frontend/src/router/navigation.js": null,
+      "nexus-chat-frontend/src/router/navigation.test.mjs": null,
+      "nexus-chat-frontend/src/views/Main.vue": "53a74374f15e60a895dab2a452183c36ad92cbc78a1cbe88ec700db5766b0674",
+      "nexus-chat-frontend/src/views/Settings.vue": "c8362279419f0e282e7a56daa2cb0b9ba10f4e50ee1d13960485ca2c3b690f03",
+      "nexus-chat-frontend/src/views/Profile.vue": "6f30cfb8a6e4806a034891edcc17c47ee43553c355e213dfa5dcf8ef24de8af7",
+      "nexus-chat-frontend/src/views/UserProfile.vue": "ca37888a55d9a6b6c0f2ef2bd65e3c6174bef44efdd080f003060b9fe2f6b28a",
+      "nexus-chat-frontend/src/views/Login.vue": "41192d3f30473774faa6b79efb10399e077cac6849a819cd6102eee529057497",
+      "nexus-chat-frontend/src/views/Setup.vue": "be26fd1479c22312cd233586246a2c92ae442d6e50fb45e4103b2add17bfc3aa",
+      "nexus-chat-frontend/src/components/profile/SocialModule.vue": "06b3bcd8151b5a23c97aee4b6ffb296a93961ba855d185ac043fde4c0f40c32c"
+    },
+    "after": {
+      "nexus-chat-frontend/src/router/index.js": "e116da18683177cc0de466a6b4aa688a9ff268f336e472e78a37bdeb4c5edcd0",
+      "nexus-chat-frontend/src/router/navigation.js": "be78f13397be51102d87c2ab8b14f1bc25d0c9c867d9fab4a9c86e88ab9130d8",
+      "nexus-chat-frontend/src/router/navigation.test.mjs": "8bdb0adae736faa1beaf70ac8006bc3e4ea45e58f1e58aad45f34afd2dc654e8",
+      "nexus-chat-frontend/src/views/Main.vue": "691973af41f9d93980bca8fe990953ec6e51034eef16c7f308057d3cdc01c501",
+      "nexus-chat-frontend/src/views/Settings.vue": "a1a867e0684713f56a2bb16ae482e09c66e177b92dbe5dade795ea09124d44ea",
+      "nexus-chat-frontend/src/views/Profile.vue": "847b1e9636b4c2ac7e9fcafac4fb5d29075e66284030a69aaaddbb9cf11c2426",
+      "nexus-chat-frontend/src/views/UserProfile.vue": "1977f9c8c5ed9b25988719066e496e611d5161b989a55d8dff6915b10f8ee69e",
+      "nexus-chat-frontend/src/views/Login.vue": "6dc7f9d8918e810e9ba7d98f142dabd9373e98473e2ecf3b100cba2a5056ea20",
+      "nexus-chat-frontend/src/views/Setup.vue": "96fcab48c69d2a2e0892e70a735910a8838ed6d14134d7cabb0e7e6e34f86fa8",
+      "nexus-chat-frontend/src/components/profile/SocialModule.vue": "a25028fa6a2372c72a95f10a33a40b1ca2f4cf4bc59f3d5b8d53dfd554f0932a"
+    },
+    "protectedFilesUnchanged": true,
+    "forcedCallCancelPreserved": true,
+    "committed": false,
+    "validated": true,
+    "validatedAt": "2026-11-22T03:22:17.275Z",
+    "navigationTests": {
+      "tests": 42,
+      "pass": 42,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "webBuildSeconds": 4.39,
+    "electronBuildSeconds": 4.21,
+    "reverseCheckExit": 0,
+    "devModuleServed": true,
+    "servicesStartedOrStopped": false
+  },
+  "mainlineIntegration": {
+    "verifiedAt": "2026-11-22T04:16:41.426Z",
+    "userAcceptedAt": "2026-11-22T11:49:47+08:00",
+    "status": "already-merged",
+    "defaultBranch": "feature-branch",
+    "navigationCommit": "a2e4372953010cac2519fe2397216862ecf92989",
+    "mergeCommit": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+    "pullRequest": 16,
+    "changedFiles": [
+      "docs/NAVIGATION-FIXES.patch",
+      "docs/NAVIGATION-PROGRESS.md",
+      "docs/NAVIGATION-VALIDATION.json",
+      "nexus-chat-frontend/src/components/agent/sessionNavigation.test.mjs",
+      "nexus-chat-frontend/src/components/profile/SocialModule.vue",
+      "nexus-chat-frontend/src/router/index.js",
+      "nexus-chat-frontend/src/router/navigation.js",
+      "nexus-chat-frontend/src/router/navigation.test.mjs",
+      "nexus-chat-frontend/src/views/Login.vue",
+      "nexus-chat-frontend/src/views/Main.vue",
+      "nexus-chat-frontend/src/views/Profile.vue",
+      "nexus-chat-frontend/src/views/Settings.vue",
+      "nexus-chat-frontend/src/views/Setup.vue",
+      "nexus-chat-frontend/src/views/UserProfile.vue"
+    ],
+    "scopeVerified": true,
+    "backendTavernWarpMusicExcluded": true,
+    "newMergePerformed": false,
+    "existingDevelopmentChangesPreserved": true,
+    "refs": {
+      "main": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "feature-branch": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "origin/main": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "origin/feature-branch": "8f28a5a5d14d863d5840379cabe4292a59cb886e"
+    },
+    "integrationNotes": [
+      "Mainline additionally restores AI chat activation after mobile navigation",
+      "Session-navigation regression harness now installs a real memory router and auth guard",
+      "The development Main still has uncommitted sound/forced-cancel edits; no checkout or whole-file overwrite performed"
+    ],
+    "reportedCommitValidation": {
+      "frontendTests": 326,
+      "buildSeconds": 5.23,
+      "source": "commit message; not rerun in this verification turn"
+    }
+  }
 }

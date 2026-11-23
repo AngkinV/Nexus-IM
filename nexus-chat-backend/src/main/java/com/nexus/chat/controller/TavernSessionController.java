@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -94,9 +95,12 @@ public class TavernSessionController {
      * configured.
      *
      * {@code modelUrl} is optional: omit it and the tavern picks a model nobody
-     * else is wearing; send one from the asset list to choose it explicitly. An
-     * unknown or missing model is ignored rather than stored, because a URL to a
-     * file that is not there renders an empty stage.
+     * else is wearing; send one from {@code GET /roles/models} to choose it
+     * explicitly. A chosen model that cannot be worn is refused, not replaced:
+     * 400 with {@code message} one of model_url_invalid, model_type_unsupported,
+     * model_not_found, model_file_invalid. 409 invite_in_progress while this
+     * account's previous invite is still running; 500 model_catalog_unavailable
+     * when the models directory cannot be read.
      */
     @PostMapping("/roles/invite")
     public ResponseEntity<CompanionRoleDTO> invite(
@@ -110,6 +114,10 @@ public class TavernSessionController {
                     ? null : request.get("modelUrl").toString();
             return ResponseEntity.ok(companionService.toRoleDTO(
                     sessionService.inviteRole(userId, sceneKey, modelUrl)));
+        } catch (ResponseStatusException e) {
+            // The status and code are the contract; the catch-all below would
+            // flatten them into an empty 400.
+            throw e;
         } catch (Exception e) {
             log.error("Invite tavern guest failed", e);
             return ResponseEntity.badRequest().build();
@@ -117,20 +125,35 @@ public class TavernSessionController {
     }
 
     /**
-     * The models an invited guest can wear: exactly the list the settings panel
-     * shows, so the two cannot drift apart.
+     * The models an invited guest can wear: the shared catalogue narrowed to
+     * what the tavern stage can load (VRM), followed by the ones this account
+     * imported into its own library in settings ({@code owned: true}). An empty
+     * array means there is none; a directory or library that cannot be read is a 500
+     * with {@code message} model_catalog_unavailable, never an empty array.
      */
     @GetMapping("/roles/models")
     public ResponseEntity<List<Map<String, Object>>> inviteModels(
             @RequestParam(name = "userId", required = false) Long claimedUserId) {
-        CurrentUser.require(claimedUserId);
+        Long userId = CurrentUser.require(claimedUserId);
         List<Map<String, Object>> out = new java.util.ArrayList<>();
-        for (CompanionModelAssetCatalog.ModelAsset asset : modelAssetCatalog.list()) {
+        for (CompanionModelAssetCatalog.ModelAsset asset : modelAssetCatalog.listForStage()) {
             Map<String, Object> item = new java.util.LinkedHashMap<>();
             item.put("fileName", asset.fileName());
             item.put("fileUrl", asset.fileUrl());
             item.put("size", asset.size());
             item.put("type", asset.type());
+            item.put("owned", false);
+            out.add(item);
+        }
+        // The models this account imported in settings. They are referenced by a
+        // stable id rather than a file name, and only their owner can wear them.
+        for (CompanionModelAssetCatalog.ModelAsset asset : sessionService.ownStageModels(userId)) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("fileName", asset.fileName());
+            item.put("fileUrl", asset.fileUrl());
+            item.put("size", asset.size());
+            item.put("type", asset.type());
+            item.put("owned", true);
             out.add(item);
         }
         return ResponseEntity.ok(out);

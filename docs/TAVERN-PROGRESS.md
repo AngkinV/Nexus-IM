@@ -1,381 +1,252 @@
-# 酒馆模块 · 进度与边界
+# 酒馆模块：实现、验证证据与修改边界
 
-> 本文是**酒馆（Tavern / Companion）模块**的施工记录，后续修改与扩展以此为准。
-> 最后更新：2026-11-21 15:05（UTC+8）
-> 代码基线：`/Users/anglv/Nexus`，分支 `feat/settings-redesign`，HEAD `3ac2c9e`，含本文所述**未提交改动**
-> 核对方式：改动前后均启动服务做过真实接口与界面验证；测试与构建结果见第 8 节。
-> 凭据约定：本文不记录任何密钥、口令、令牌的值。
+> 关联线程：`mwq0dyxio5rcxrllod5`。
+> 本轮开始于 2026-11-21；后续跨日修补仍属于同轮任务。
+> 工作区：`/Users/anglv/alma/worktrees/nexus/illegal-marlin`，`illegal-marlin @ 24b434d`；源码已在该本地并行提交内，本轮文档后续更新尚未提交。此前验证基线是 `76dc7bf` 加当时 diff。
+> 原项目 `/Users/anglv/Nexus` 当前仍为开发分支 `feat/settings-redesign @ 42a4bbd`，有未提交转场/音乐与已应用导航。**不能混同代码版本，不能整文件覆盖。**
+> 状态：导航已由用户确认，并核实 PR #16 已进入默认主线 `feature-branch`（`main` 同为 `8f28a5a`）。酒馆其余修补没有通过这次导航合并带入主线，也未覆盖开发项目。详见 `NAVIGATION-PROGRESS.md` 6.5；不承诺零缺陷。
 
----
+## 1. 授权与范围
 
-## 1. 这份文档的用法
+### 1.1 用户明确要求
 
-### 1.1 它回答什么
+以下时间是用户消息发送时间，不是工作完成时间。
 
-- 酒馆模块**现在是什么样**（数据从哪来、经过谁、落到哪）。
-- 这一轮**改了什么、为什么改**。
-- **哪些边界不能碰**（第 2 节，最重要）。
-- **还欠什么、哪里有已知缺陷**（第 7 节）。
-
-### 1.2 更新规则
-
-1. 改完一条，把第 7 节对应条目状态改为「已解决」并写上提交号；**不要删编号**。
-2. 新增问题按前缀续号：`BE-`（Java 后端）、`FE-`（前端）、`X-`（跨端契约）。
-3. 每次更新先跑 `git rev-parse --short HEAD`，把新基线写进文首。
-4. 复查时以**符号名**（类名、函数名、接口路径）为准，行号会漂移。
-
-### 1.3 边界优先于本文
-
-本文任何描述与**第 2 节的边界**冲突时，以第 2 节为准。本文不授权任何超出边界的改动。
-
----
-
-## 2. 边界（不可越过的红线）
-
-这一节是用户明确要求过的，不是推测。
-
-### 2.1 服务启停
-
-| 服务 | 端口 | 谁启动 |
+| 时间（UTC+8） | 要求 | 范围解释 |
 |---|---|---|
-| Java 聊天后端 | 8080 | **用户**。助手不得启停 |
-| Python Agent 后端 | 8100 | **用户**。助手不得启停 |
-| 前端 dev server | 5173 | 助手可以自己拉起 |
+| 2026-11-21 14:12 | 排查酒馆选择、会话删除、最近消息 | 排查既有功能，不重建模块 |
+| 14:35 | 左栏时间与最后一句；邀请选择已有建模并接通设置 | 会话删除不是角色删除；形象绑定不是 LLM 配置 |
+| 14:42 | 选 B，做健壮性测试；临时允许启动已关闭的 Java 和前端 | 一次任务授权，不是长期启停权限；没有 Python 启停授权 |
+| 14:53 | 存量角色由用户自行删除，再核查 | 不做存量绑定迁移，不代替用户批量删除 |
+| 15:03 | 停服务并写详细进度文件 | 当时只做收尾，不继续启动服务 |
+| 19:08 | 解决现有缺陷，确保健壮性、完整性和不冲突 | 重新授权本模块原范围修补与隔离回归 |
+| 19:56 | 后端已由用户启动，不要重复启动 | 不启动、重启或关闭用户后端 |
+| 23:43 | 先核对前端使用并停止 | 当时 5173 无监听且无 Electron；未停止其他工作区单测 |
+| 23:51 | 仔细排查并解决全站返回路由 | 导航另记 `NAVIGATION-PROGRESS.md`；不新增页面/路由/store |
 
-- 改了 Python 代码后，**汇报第一段**就要写明「需要重启 Python 服务才生效」。
-- 例外：2026-11-21 15:03 用户明确说「我把 java 后端关闭，前端也关闭，你自己启动即可」，这属于**一次性授权**，不构成长期规矩。
+用户明确选择 B。助手实现了自动选择加可选指定弹窗，不能把“B+”这个助手命名或方案评价写成用户逐项批准的产品决定。
 
-### 2.2 视觉依据
+### 1.2 不可越过的边界
 
-- 唯一依据是用户给的 Stitch 导出（`code.html` + `DESIGN.md`）：**纯黑白灰单色极简**。
-- 设计稿里**没有后端字段支撑的元素不做假的**（好感度、送礼、语音、点赞、沉浸度曲线之类）。
-- 设计稿没覆盖的部分由助手自行设计，但必须贴合单色主题，且**界面上显示的过程和数据必须来自模型与后端的真实返回**，不能用预设脚本冒充。
+- 修改只在当前 worktree。原项目和其他线程的设置、渲染改动仅作只读参考；不提交、不合并、不用整目录同步。
+- 既有界面、路由和 store 保留。允许小型业务 helper/composable，不另建角色/会话系统。
+- 视觉保持原有黑白灰主题，命名平实，过程和数值来自真实返回。没有完整设计材料时不声称像素级还原。
+- 不新增角色删除、场次管理、自动过期、存量迁移、全局建模独占、多人房间、账号设置项。
+- 3D 的 `modelUrl/modelType` 与 LLM provider、模型名、凭据、采样参数分开，不混用配置。
+- 默认 Java/Python 由用户启停。当前修补未启停用户服务，也未运行真实业务数据库、Redis 或模型请求。
+- 没有 embedding 模型，不做知识库上传/向量检索验证，不修改相关配置。
+- 高负载校验串行。测试仅用 mock、内存、工作区内临时目录；不使用真实会话做删除探测，不签用户令牌，不把凭据落盘。
+- 未明确授权的登记项不是下一批开发任务。
 
-### 2.3 改动范围
+## 2. 术语与数据生命周期
 
-- **在现有界面和组件上改**，不新建页面、路由或 store 来「重做」。
-- 改界面时必须同步核对后端：界面用到的接口、字段名、事件要和 Java / Python 后端的真实返回对上。光把界面改好看不算完成。
-- 转场组件（`src/components/warp/`、`src/composables/useTavernEntrance.js`、`src/views/dev/`）属于其他线程，**只能调用，不能改**。
-- `src/components/standby/ComputerEye.vue` 不是本模块的，别动。
-
-### 2.4 命名与文案
-
-- 界面文案和命名要**通用平实**，不要中二或科幻设定式的命名。
-- 文案在 `src/locales/zh.json` / `en.json`，默认语言是 en，两边 key 必须完全对齐。
-- 局部文案用 `useI18n({ useScope: 'local' })` 写在组件内（如 `RoleList.vue`），同样要中英对齐。
-
-### 2.5 依赖限制
-
-- **用户没有可用的向量（embedding）模型**。不要尝试知识库上传、向量检索这类依赖 embedding 的功能验证。
-- 重点放在功能逻辑正确和页面设计上。
-
-### 2.6 验证纪律
-
-- 测试、无头浏览器这类吃 CPU 的东西**必须串行**：一次只开一个，跑完立即关掉。
-- 验证用的测试数据**用完要删**，并还原被改动的真实数据。
-- **不要用用户的真实数据做破坏性验证。**（2026-11-21 违反过一次，见 7.4）
-
-### 2.7 提交
-
-- 用户没要求提交时**不要擅自 `git commit`**。改动留在工作区，由用户决定。
-- 不要 `git add -A`：同一个工作区里可能还有别的线程的未提交改动。
-
----
-
-## 3. 模块地图
-
-### 3.1 三端职责
-
-| 端 | 目录 | 端口 | 职责 |
-|---|---|---|---|
-| 前端 | `nexus-chat-frontend` | 5173 | Vue 3 + Pinia + Element Plus；酒馆界面、3D 舞台、消息流 |
-| Java | `nexus-chat-backend` | 8080 | 角色、会话、消息、场次、模型绑定、凭据加密 |
-| Python | `nexus-agent-backend` | 8100 | 模型网关（酒馆的模型调用经 Java 走这里） |
-
-### 3.2 前端文件
-
-| 文件 | 作用 |
-|---|---|
-| `src/views/companion/RoleChatView.vue` | 酒馆主视图：头部、3D 舞台、消息流、输入坞、场次分隔线 |
-| `src/components/companion/RoleList.vue` | 左栏角色列表：席位、访客、邀请、恢复对话、删除会话 |
-| `src/components/companion/ClearConversationButton.vue` | 删除会话按钮 + 二次确认 |
-| `src/components/companion/RoleDossier.vue` | 角色档案（记忆 + 成长），默认收起 |
-| `src/components/companion/ModelSettingsPanel.vue` | 单个角色的模型绑定与凭据 |
-| `src/components/companion/RoleSettingsPanel.vue` | 设置页「角色与模型」面板：3D 建模、动作、凭据 |
-| `src/components/companion/CompanionAvatar3D.vue` | 桌面宠物（默认关闭，`v-if` 挂载） |
-| `src/components/companion/tavernStage.js` | 舞台绘制 |
-| `src/components/companion/tavernActor.js` | VRM 加载、口型、动作 |
-| `src/stores/companion.js` | 酒馆全部前端状态 |
-| `src/services/api.js` | `companionAPI` 定义 |
-
-### 3.3 后端文件
-
-| 文件 | 作用 |
-|---|---|
-| `controller/CompanionController.java` | `/api/companion/**`：角色 CRUD、消息、记忆、成长、状态、模型绑定 |
-| `controller/CompanionConversationController.java` | `/api/companion/conversations/**`：删除会话、恢复会话 |
-| `controller/TavernSessionController.java` | `/api/tavern/**`：场次开关、历史、邀请访客、收留访客、**可用建模列表** |
-| `controller/CompanionAssetController.java` | `/api/companion/assets/**`：建模与动作文件的上传、列表、改名、删除 |
-| `service/CompanionService.java` | 角色、消息、`getRoles` 聚合、`exchange` 收发主流程 |
-| `service/TavernSessionService.java` | 场次生命周期、邀请访客、收留访客 |
-| `service/CompanionConversationHistoryService.java` | 删除/恢复会话的事务性实现 |
-| `service/CompanionModelAssetCatalog.java` | **本轮新增**：建模目录的唯一读取点 |
-| `service/CompanionConversationGuard.java` | 按 (userId, roleId) 的并发锁 |
-| `model/CompanionRole.java` | 角色实体，含 `modelUrl` / `modelType` / `kind` / `conversationHidden` |
-| `repository/CompanionMessageRepository.java` | 消息查询，含本轮新增的 `findLatestPerRole` |
-
-### 3.4 数据表
-
-| 表 | 说明 |
-|---|---|
-| `companion_roles` | 角色。`kind` = `regular`（常驻）/ `guest`（过客）；`conversation_hidden` = 会话是否被删 |
-| `companion_conversations` | 会话关系，`last_message_at` 驱动列表排序 |
-| `companion_messages` | 消息，`session_id` 关联场次 |
-| `tavern_sessions` | 场次（一场「夜晚」） |
-| `companion_status` | 角色当前状态（presence） |
-| `companion_growths` | 成长数值（注意表名是复数） |
-| `companion_memories` | 独立记忆 |
-| `companion_model_bindings` | 角色与模型的绑定 |
-
----
-
-## 4. 数据流
-
-### 4.1 左栏列表（本轮改动）
-
-```
-GET /api/companion/roles?userId=
-  → CompanionService.getRoles(userId)
-      ├─ roleRepository.findByUserIdOrderByIdAsc        角色本体
-      ├─ conversationRepository.findByUserId            lastMessageAt（排序用）
-      ├─ statusRepository.findByUserId                  presence（在做什么）
-      └─ messageRepository.findLatestPerRole(userId)    lastMessage（预览用，一条 SQL）
-  → CompanionRoleDTO（含 lastMessage）
-  → RoleList.vue 渲染：名字 / 时间 / 预览句
-```
-
-**关键约束**：`findLatestPerRole` 必须是**一条批量查询**。如果退化成每个角色查一次，左栏会变成 N 次往返，打开酒馆就慢——这是历史上踩过的坑。
-
-### 4.2 邀请访客（本轮改动）
-
-```
-POST /api/tavern/roles/invite  { sceneKey, modelUrl? }
-  → TavernSessionService.inviteRole(userId, sceneKey, modelUrl)
-      ├─ 模型调用生成角色人设（名字/性格/背景/开场白）
-      ├─ resolveGuestModelUrl(userId, modelUrl)        ← 本轮新增
-      │     ├─ 指定了 modelUrl 且文件真实存在 → 用它
-      │     └─ 否则 → modelAssetCatalog.pickForGuest(已占用集合)
-      │           优先挑没人用的；全被占用则复用
-      └─ 事务内落库（含 modelUrl / modelType）
-  → CompanionRoleDTO
-```
-
-**为什么要有这一步**：改动前 `inviteRole` 从不设置 `modelUrl`，邀请进来的角色建模永远是 null，舞台空白。同时设置页的建模列表与邀请流程是两条不相干的代码路径。
-
-### 4.3 建模目录（本轮新增的唯一数据源）
-
-```
-CompanionModelAssetCatalog.list()
-  ├─ GET /api/companion/assets/models   （设置页角色面板）
-  └─ GET /api/tavern/roles/models       （邀请弹窗）
-```
-
-两处读同一个类，**保证不会漂移**。在设置里上传一个建模，邀请时立刻能选到。
-
-安全边界：只接受 `models` 目录下的**纯文件名**。带路径分隔符、`..`、或不在该目录的文件一律拒绝。这是防路径穿越的唯一关口。
-
-### 4.4 删除会话
-
-```
-DELETE /api/companion/conversations/{roleId}
-  → CompanionConversationHistoryService.clear()
-      物理删除：messages、tavern_sessions
-      逻辑标记：roles.conversation_hidden = true
-      清空：conversations.last_message_at、status
-```
-
-**注意**：消息和场次是**物理删除，不可恢复**。`POST .../conversations/{roleId}` 只能把角色放回列表，旧消息不会回来。
-
----
-
-## 5. 本轮改动清单
-
-### 5.1 后端
-
-| 文件 | 改动 |
-|---|---|
-| `service/CompanionModelAssetCatalog.java` | **新增**。建模目录唯一读取点：`list()` / `exists()` / `typeOfUrl()` / `pickForGuest()` |
-| `service/TavernSessionService.java` | `inviteRole` 增加 `modelUrl` 参数；新增 `resolveGuestModelUrl`；构造器注入 catalog |
-| `controller/TavernSessionController.java` | `invite` 接受可选 `modelUrl`；新增 `GET /roles/models` |
-| `controller/CompanionAssetController.java` | `listModels` 改为读 catalog，不再自己列目录 |
-| `repository/CompanionMessageRepository.java` | 新增 `findLatestPerRole(userId)` |
-| `service/CompanionService.java` | `getRoles` 填充 `lastMessage`；`toRoleDTO` 增加四参重载 |
-| `dto/CompanionRoleDTO.java` | 新增字段 `lastMessage` |
-| `test/.../CompanionModelAssetCatalogTest.java` | **新增**，10 个用例 |
-| `test/.../TavernSessionServiceTest.java` | 构造器补 catalog mock |
-
-### 5.2 前端
-
-| 文件 | 改动 |
-|---|---|
-| `components/companion/RoleList.vue` | 行内显示时间 + 预览句；邀请改为先弹建模选择器；修掉邀请失败误选旧角色、建模列表缓存不失效 |
-| `stores/companion.js` | `inviteGuest` 支持 `modelUrl`；新增 `fetchInviteModels`；`settleExchange` / `settleModelFailure` 同步 `lastMessage`；`clearConversation` 清 `lastMessage` |
-| `services/api.js` | `inviteGuest` 增加 `modelUrl`；新增 `inviteModels` |
-
-### 5.3 设计决策记录
-
-**为什么选「B+」而不是其他方案**
-
-| 方案 | 结论 |
-|---|---|
-| A · 邀请前强制选建模 | 否决。邀请本该是「推门进来一个陌生人」的随机感，强制弹窗破坏它 |
-| B · 静默复用默认建模 | 采纳为基础。改动最小，复用已有的 `PUT /roles/{id}` |
-| B+ · 默认自动挑，可展开指定 | **最终方案**。不卡流程，也留了控制权 |
-| C · 建模池 + 占用表 | 暂缓。要管「谁在用哪个」，改动量是 B 的三四倍 |
-
-**自动挑选的算法**：优先挑没被占用的建模；全被占用时复用；一个都没有则返回 null（舞台空白，与改动前一致）。
-
----
-
-## 6. 接口契约
-
-### 6.1 新增 / 变更
-
-| 方法 | 路径 | 变更 |
+| 对象 | 含义 | 删除会话后的状态 |
 |---|---|---|
-| `GET` | `/api/companion/roles` | 响应新增 `lastMessage`（String，可为 null） |
-| `POST` | `/api/tavern/roles/invite` | 请求体新增可选 `modelUrl` |
-| `GET` | `/api/tavern/roles/models` | **新增**。返回 `[{ fileName, fileUrl, size, type }]` |
-| `GET` | `/api/companion/assets/models` | 响应新增 `type`；数据源改为 catalog |
+| `CompanionRole` | 人设、归属、常驻/访客分类、形象绑定 | 保留 |
+| `CompanionConversation` | 当前用户与角色的对话关系 | 关系保留，最近时间清空 |
+| `CompanionMessage` | 用户/角色的真实消息 | 全部物理删除 |
+| `TavernSession` | 开场到散场的记录及摘要 | 全部物理删除 |
+| 成长、独立记忆、LLM 绑定 | 对话之外的独立数据 | 保留 |
+| 3D 资产 | 现有共享服务端文件目录 | 保留，不因删除会话删文件 |
 
-### 6.2 `CompanionRoleDTO` 字段顺序
+`POST /api/companion/conversations/{roleId}` 只取消隐藏、重新显示会话；不是撤销删除，不能恢复旧消息/场次。单独删除独立记忆需要另一项明确操作。
 
-`@AllArgsConstructor` 的**位置参数顺序即构造器签名**。新增字段插在 `presence` 之后：
+数据表：`companion_roles`、`companion_conversations`、`companion_messages`、`tavern_sessions`、`companion_status`、`companion_growths`、`companion_memories`、`companion_model_bindings`。酒馆消息和左栏预览来自 Java/MySQL，不来自 Python 的 Redis 短期上下文。
 
-```
-id, name, traits, tone, baselineMood, avatarUrl, modelUrl, modelType, active,
-kind, lastMessageAt, presence, lastMessage, background, greeting, conversationHidden
-```
+## 3. 当前文件地图
 
-**改这个顺序会静默破坏 `toRoleDTO` 的构造调用**，编译能过但字段会错位。改动时必须同步 `CompanionService.toRoleDTO`。
+### 3.1 前端（相对 `nexus-chat-frontend/`）
 
----
+| 文件/符号 | 职责 |
+|---|---|
+| `src/views/Main.vue` | 五个原有主模块入口；返回导航见独立文档 |
+| `src/components/companion/RoleList.vue` | 列表、时间、预览、邀请弹窗、恢复会话 |
+| `src/components/companion/ClearConversationButton.vue` | 删除会话确认，不是删除角色 |
+| `src/stores/companion.js` | 账号/选择代次、数据读取、发送、预览、删除/恢复、邀请、共享改名缓存同步 |
+| `src/composables/useTavernInvite.js` | 弹窗请求版本、错误/空目录区分、邀请结果归属、卸载保护 |
+| `src/composables/useRoleModelTarget.js` | 设置操作的账号归属和选择代次；共享资产回执用 owner-only 判断 |
+| `src/components/companion/modelAssetType.js` | 形象类型映射及酒馆 VRM 能力过滤 |
+| `src/components/companion/RoleSettingsPanel.vue` | 原设置中的形象选择、导入、改名；不重复替换 store 已更新的角色对象 |
+| `src/components/companion/ModelSettingsPanel.vue` | LLM 渠道，不是 3D 建模库 |
+| `src/components/companion/tavernStage.js` / `tavernActor.js` | 既有 VRM 舞台与动作；本轮未新增非 VRM 加载器 |
+| `src/views/companion/RoleChatView.vue` | 对话、场次、舞台、输入；不新增场次管理 |
 
-## 7. 未完成与已知缺陷
+### 3.2 Java（相对 `nexus-chat-backend/src/main/java/com/nexus/chat/`）
 
-### 7.1 已解决（本轮）
+| 文件/符号 | 职责 |
+|---|---|
+| `controller/CompanionController.java` | 角色读取/更新、发送、状态、成长、记忆、模型绑定；校验错误保留状态码 |
+| `controller/CompanionConversationController.java` | 删除/重新显示会话 |
+| `controller/TavernSessionController.java` | 场次、邀请、收留及邀请模型列表 |
+| `controller/CompanionAssetController.java` | 资产上传/改名/列表、模型文件互斥和失败回退 |
+| `service/CompanionService.java` | 列表聚合、单角色预览、形象绑定验证、收发 |
+| `service/CompanionModelAssetCatalog.java` | 目录唯一读取点、规范 URL、能力/容器检查、自动分配 |
+| `service/TavernSessionService.java` | 邀请验证顺序、同账号互斥、形象分配与场次 |
+| `service/CompanionConversationHistoryService.java` | 会话清理事务 |
+| `repository/CompanionMessageRepository.java` | 批量最大消息 ID 和单角色最新消息查询 |
+| `repository/CompanionRoleRepository.java` | 角色查询、隐藏/显示、共享文件改名后的 URL 引用更新 |
 
-| 编号 | 问题 | 处理 |
+## 4. 左栏与异步状态契约
+
+### 4.1 服务端预览
+
+`getRoles()` 每张表一次批量读取：角色、会话、状态、每角色最大消息 ID。没有按角色逐个查消息的 N+1 回退。
+
+- `lastMessage` 是最后一条消息内容，不是生成摘要或虚构句子。
+- 有真实消息时间时，`lastMessageAt` 使用该消息的 `createdAt`，而不是模型完成时间。
+- 没有任何消息时不显示会话关系的创建时间，避免“未聊过却有最近时间”。
+- 单角色映射/`updateRole()` 也返回真实预览；客户端不能通过角色更新改写预览、最近时间、状态、分类或隐藏标记。
+- 最大 ID 口径避免秒级时间的并列；非法/缺失字段不能被浏览器时钟补成已持久化历史。
+
+### 4.2 客户端状态
+
+- `ownerEpoch` 在账号改变时递增，清空旧账号状态、取消旧流；A→B→A 也不能接受最初 A 的返回。
+- 每类读取有请求序号与选择代次。旧角色响应、旧 finally、旧列表不能覆盖新选择/新操作的状态。
+- 完整回复立即更新对应角色预览；离开该角色后完成的回复只更新它的列表行，不写当前角色消息。
+- 旧消息幂等回放按 ID 保持顺序，不移到末尾、不倒退预览。
+- 未落库的用户行保持在其已落库部分回答前，不能简单把所有非数字 ID 排到最后。
+- 停止、普通网络失败及部分模型失败只读对账历史，不自动重发 POST；对账失败保留最后确认过的预览。
+- 删除成功后预览和时间都清空；重新显示不带回旧句子。
+- 设置保存期间完成的回复，不会被较慢的角色设置响应抹掉。
+- 旧本地形象覆盖仅允许形象字段，不能伪造身份、预览或隐藏状态；明确保存新形象时清除该角色旧覆盖。
+
+日期显示仍使用现有 hourCycle 设置：当天时间、同年 `MM-DD`、跨年完整日期。所有跨时区真实浏览器场景尚未验收，不能称与全站每个时间组件完全一致。
+
+## 5. 邀请与设置建模契约
+
+### 5.1 来源与类型
+
+配置项 `companion.assets.models-dir` 是唯一目录来源，默认相对后端工作目录的 `../nexus-chat-frontend/public/models`。换 worktree/容器时需重新确认资产路径。
+
+- 设置资产列表保留实际 VRM/GLB/GLTF/FBX 文件元数据。
+- `type` 为 `vrm`、`gltf`（GLB 和 GLTF）或 `fbx`，设置选择不再一律写成 VRM。
+- 邀请列表只提供当前舞台可用的 VRM 候选，不假称已支持非 VRM。
+- 弹窗每次打开重读，读取失败有错误/重试；刷新期间保留旧行但禁止确认旧选项。
+- 空目录可以文字邀请；读取错误不能解释成“还没上传”。
+
+### 5.2 创建与归属
+
+邀请顺序：验证指定资产 → 事务外生成既有人设 → 选择/规范形象 → 短事务保存角色。
+
+- 指定无效、缺失、错误格式或不支持的资产，在模型调用之前明确拒绝，不静默换另一个。
+- 自动选择优先未被当前账号可见角色使用的形象；隐藏会话不代表全局独占。
+- 有空闲候选随机选；全部占用随机复用；没有可用候选允许文字角色。
+- 同一账号、同一 JVM 同时一个邀请；finally 释放锁；不同账号共享文件不默认视为错误。
+- 前端只用本次 POST 返回的 guest ID 确认结果，移除“最新角色”或 ID 差集猜测。
+- 超时/未知结果提示核实，不自动选择另一个角色、不自动重发。
+- 账号改变、组件卸载和旧请求返回不能切换新页面的角色或弹旧提示。
+
+### 5.3 本地绑定、上传与改名
+
+- 引用统一为 `/models/<文件名>`；裸名与 URL 形式同一身份。
+- 拒绝穿越、嵌套路径、百分号编码、反斜线、控制字符、隐藏文件及子文件符号链接。
+- 设置绑定本地文件也走 catalog，不能绕过邀请路径的验证；类型需匹配实际后缀。
+- 原有 HTTP/HTTPS 形象引用保留，验证 URL、后缀和类型，不发网络请求验证；不接受其他协议或 URL user-info。
+- 空字符串清除形象绑定，不删除角色、历史或资产。
+- 上传使用 CREATE_NEW，不覆盖已有文件；容器不合格的新文件移除。文件名相同不代表内容相同。
+- 改名验证源名和目标名，拒绝符号链接及改变格式后缀；冲突使用新文件名，不覆盖目标。
+- 现有共享文件改名时，在数据库事务内更新精确引用（含旧裸名）。数据库更新失败尝试把文件移回；并非重构资产权限。
+- 前端同步全部已缓存引用且保留预览。共享回执只看账号，切角色/卸载不能漏同步；旧上传后续绑定则必须匹配选择代次。
+
+文件校验仅二进制 glTF 容器层（魔数、版本、长度、JSON 首块），没有完整证明 VRM 扩展、骨骼、材质或渲染有效性。
+
+## 6. 接口摘要
+
+| 接口 | 语义 |
+|---|---|
+| `GET /api/companion/roles` | 含可空预览/时间，批量聚合 |
+| `PUT /api/companion/roles/{roleId}` | 只写角色可写字段，返回真实预览；形象输入校验 |
+| `GET /api/companion/conversations/{roleId}` | 真实历史与只读对账 |
+| `DELETE /api/companion/conversations/{roleId}` | 清消息/场次/状态并隐藏会话 |
+| `POST /api/companion/conversations/{roleId}` | 204；仅重新显示 |
+| `POST /api/tavern/roles/invite` | `{sceneKey, modelUrl?}`，成功返回本次 guest |
+| `GET /api/tavern/roles/models` | 只含可邀请 VRM；同目录的能力过滤子集 |
+| `GET /api/companion/assets/models` | 设置的完整模型元数据列表 |
+| `POST /api/companion/assets/model` | multipart VRM 上传，唯一命名 |
+| `PUT /api/companion/assets/model/rename` | 共享文件改名并保持引用 |
+
+邀请/绑定校验理由：`model_url_invalid`、`model_type_unsupported`、`model_not_found`、`model_file_invalid`（400）；`invite_in_progress`（409）；目录错误 `model_catalog_unavailable`（500）。全局异常响应的理由在 `message`。资产上传/改名原有错误体使用 `error`，前端不可混读；网络错误不可据此自证业务失败或成功。
+
+认证以 `CurrentUser` 的 principal 为准，客户端 userId 只是被核对的声明。不能用“预期会是 403”的 DELETE 探测真实对象。
+
+## 7. 缺陷登记与状态
+
+| 编号 | 本轮处理 | 验收边界 |
 |---|---|---|
-| `FE-01` | 发消息后左栏时间变、预览句不变 | `settleExchange` 同步 `lastMessage`。已实测：发完立刻显示新句子 |
-| `FE-02` | 删除会话后预览句残留 | `clearConversation` 清 `lastMessage`。已实测 |
-| `FE-03` | 邀请失败时误跳到旧访客并提示成功 | 改为只认「操作前不存在的角色」 |
-| `FE-04` | 建模列表缓存永不失效，新上传的看不到 | 每次打开重读，保留旧列表避免闪烁 |
-| `BE-01` | 邀请的角色 `modelUrl` 永远为 null | `resolveGuestModelUrl` 兜底 |
-| `BE-02` | 设置页建模列表与邀请流程两套代码 | 抽出 `CompanionModelAssetCatalog` 作为唯一数据源 |
+| FE-01/FE-02 | 预览更新、旧回放、删除/重新显示一致 | 隔离 store 用例已通过；真实浏览器待用户验证 |
+| FE-03 | 不猜测邀请结果、不自动重发、请求归属 | 隔离 store/helper 已覆盖；没有跨重启幂等 ID |
+| FE-04 | 真实空库和 I/O 失败区分，版本与确认锁 | helper 已覆盖；真实导入后浏览器刷新待验证 |
+| FE-06 | 设置更新保预览、形象类型准确 | Java/store 回归已覆盖 |
+| FE-07 | 账号、角色 A→B→A、卸载保护 | 选择代次补齐，新增三条设置代次回归已通过 |
+| FE-08 | 停止/网络中断只读对账 | 已覆盖，不把 delivered 字符等同落库 |
+| BE-01/BE-02 | 新邀请绑定及 catalog 共用 | 已覆盖，存量角色不迁移 |
+| BE-03 | 同账号单 JVM 邀请互斥 | 已覆盖；多实例部署不提供独占保证 |
+| BE-06 | 全占用随机复用，不再固定选一张脸 | 已覆盖；不是全局占用表 |
+| BE-07 | 邀请能力只 VRM，设置类型映射 | 已覆盖；不新增加载器 |
+| BE-08 | 路径/子符号链接/绑定/改名保护 | 已覆盖；完整 VRM 语义、硬链接与可信目录配置未全面验证 |
+| BE-09 | 目录错误、坏候选与上传部分文件处理 | 已覆盖；校验后被其他进程改名的竞态仍可能发生 |
+| X-02 | 预览时间取对应真实消息，未聊过不显示创建时间 | Java 已覆盖；真实不同客户端时区待验证 |
 
-### 7.2 未解决
+仅登记，不自动扩展：BE-04 存量访客形象、BE-05 逐场删除/过期、FE-05 场次管理界面、X-01 早期 Agent Redis 库记录。本轮未据此改配置或新增产品功能。
 
-| 编号 | 问题 | 影响 | 建议 |
-|---|---|---|---|
-| `BE-03` | 并发邀请可能撞建模 | 两人同时邀请会挑到同一个建模。不崩溃，只是撞脸 | 需占用表或按用户加锁。改动不小，待定 |
-| `BE-04` | 存量角色的 `modelUrl` 为 null | 早期创建的角色（如 4 个「无名的旅人」）进房仍是空舞台 | 用户 2026-11-21 表示「我把他们删除就可以了」，故不做迁移 |
-| `BE-05` | 场次无删除接口 | `tavern_sessions` 只能靠删除整个会话清掉。挂着的 `active` 场次不会自动结束 | 需要 `DELETE /api/tavern/sessions/{id}` + 前端场次管理 |
-| `FE-05` | 场次列表无界面 | 后端有 `GET /api/tavern/sessions`，前端只用来画分隔线，没有管理页 | 与 `BE-05` 一起做 |
-| `X-01` | 对话记忆的 Redis 库不一致 | Python 写 2 号库，Java 读删用 0 号库；历史接口永远返回空 | 待用户拍板，属于配置层面 |
+## 8. 验证证据
 
-### 7.3 用户已拍板、不要重提
+### 8.1 已实跑结果
 
-- 存量角色不补 `modelUrl`：用户自己删除。
-- 不做建模占用表（`BE-03`）：暂缓，用户未要求。
+- 2026-11-21 23:08 的工作区 Java 回归：10 类、230 测试，失败/错误/跳过均 0，Maven 退出码 0。
+- 最后前端相关串行回归：179 测试，失败/取消/跳过均 0，退出码 0；含 42 个导航用例、酒馆/设置/3D 相关回归及原转场用例。
+- 最后前端生产构建成功，4.17 秒，退出码 0；保留既有大 chunk 警告。原项目导航合并快照另通过 42 用例和 3.54 秒构建，不代表酒馆全部改动已合并。
+- 初次独立只读复核发现两条设置选择遗漏，已写入修补；不是一次“未发现问题”的审查。
+- 原项目旧 333 测试报告仅历史证据，不用于当前树验收。
 
-### 7.4 事故记录
+Java类：catalog 63、场次/邀请 service 29、预览 13、邀请 MVC 36、收发 27、会话 MVC 12、模型绑定 MVC 10、删除 14、资产安全 15、形象绑定 11。
 
-**2026-11-21 14:5x — 误删用户真实数据**
+### 8.2 安全执行规则与命令
 
-- **做了什么**：为验证「删除会话后预览是否清空」，对用户真实角色「理性伙伴」（roleId 29）执行了 `DELETE /api/companion/conversations/29`。
-- **后果**：该角色的 2 条消息和 1 场 `tavern_sessions`（11-19 开始）被**物理删除，不可恢复**。`restore` 只能把角色放回列表。
-- **本该如何**：用测试角色验证，或先备份表。
-- **已写入边界**：见 2.6「不要用用户的真实数据做破坏性验证」。
-
----
-
-## 8. 验证方法
-
-### 8.1 构建与测试（串行，不要并行）
+先确认其他线程没有高负载校验，再逐条执行。fixture 是短容器/模拟消息，不是真用户数据。
 
 ```bash
-# 前端（在 nexus-chat-frontend/ 下）
-./node_modules/.bin/vite build 2>&1 | grep -E "error|✓ built"
-
-# 后端（在 nexus-chat-backend/ 下）
-mvn -o test 2>&1 | grep -E "Tests run:.*Failures|BUILD"
+# 当前工作区内，测试临时目录同样在工作区
+cd nexus-chat-backend
+mkdir -p target/ws-tmp
+export MAVEN_OPTS="-Djava.io.tmpdir=$PWD/target/ws-tmp"
+mvn -o -B -ntp test \
+  -Dtest=CompanionModelAssetCatalogTest,CompanionRolePreviewTest,CompanionShapeBindingTest,CompanionAssetSafetyTest,CompanionExchangeTest,TavernSessionServiceTest,TavernInviteMvcTest,CompanionConversationMvcTest,CompanionModelBindingMvcTest,CompanionConversationDeletionTest \
+  -DargLine="-Djava.io.tmpdir=$PWD/target/ws-tmp"
 ```
-
-**本轮结果**：前端 `✓ built`；后端 `Tests run: 333, Failures: 0, Errors: 0`。
-
-注意：`mvn compile` 的增量编译**不会发现新增的源文件**，加新类后要 `mvn -o clean compile`。
-
-### 8.2 文案对齐（改完 locale 必跑）
 
 ```bash
-cd nexus-chat-frontend && python3 - <<'PY'
-import json
-def flat(o, pre=''):
-    out=set()
-    for k,v in o.items():
-        key=f'{pre}.{k}' if pre else k
-        out |= flat(v,key) if isinstance(v,dict) else {key}
-    return out
-en=flat(json.load(open('src/locales/en.json'))); zh=flat(json.load(open('src/locales/zh.json')))
-print('en',len(en),'zh',len(zh),'diff',sorted(en^zh))
-PY
+cd nexus-chat-frontend
+node --test --test-concurrency=1 \
+  src/router/navigation.test.mjs src/composables/useTavernEntrance.test.mjs \
+  src/stores/companion.test.mjs src/composables/useTavernInvite.test.mjs \
+  src/stores/settings.test.mjs src/components/companion/tavernRig.test.mjs \
+  src/components/companion/tavernSpeech.test.mjs src/components/companion/vrmExpressions.test.mjs
+npm run build
 ```
 
-**本轮结果**：`en 1235 zh 1235 diff []`。
+每条命令以真实退出码与实跑数量验收，不用 grep/tail 的退出码冒充成功。没有运行真实应用上下文、实际 MySQL/Redis/模型。未执行全量 `mvn test`；不靠排除一个类来假定所有剩余测试都安全。
 
-### 8.3 接口验证
+### 8.3 还未证明的范围
 
-需要登录态。签发 token 时读 `application-local.properties` 的 `jwt.secret`（**不要把值写进任何文件**），用 HS512 签 `{userId, username, sub, iat, exp}`。
+- 真实 JPA 解析与数据库事务、部署环境文件行为；mock 回滚不代表物理崩溃原子性。
+- 完整 VRM 内容、GPU 加载、骨骼与材质、完整 Electron/浏览器 UI。
+- 多 JVM 并发、服务重启后重复请求、文件校验后被外部改动。
+- 原项目另一线程的最新设置硬化树与本补丁合并后的整体验证。
+- 无完整设计源时不做像素级一致宣称。
 
-关键验证点：
+## 9. 数据事故与禁止重复的操作
 
-1. `GET /api/companion/roles` → 每个角色都有 `lastMessage` 字段
-2. `GET /api/tavern/roles/models` 与 `GET /api/companion/assets/models` 返回**同一组** `fileUrl`
-3. `POST /api/tavern/roles/invite` 不带 `modelUrl` → 自动挑到未被占用的建模
-4. 带一个存在的 `modelUrl` → 精确使用
-5. 带不存在的 `modelUrl` → 回退到合法建模，**不能存空值**
-6. 带 `../../../etc/passwd` → 拒绝，回退到合法建模
-7. 删除会话后 `lastMessage` 与 `lastMessageAt` 都为空
+2026-11-21 再次核查曾对真实用户 3 的角色 29“理性伙伴”执行 DELETE。已知原有 2 条消息与场次 5 被物理删除；此前还写入过测试消息，不能把原有两条说成删除时全部数量。
 
-### 8.4 界面验证
+恢复接口只恢复列表显示，未恢复历史。未检查所有备份，不能宣称所有恢复途径已排除。早前对真实无消息角色的删除/重新显示也不是隔离测试。
 
-用侧栏浏览器，桌面视口：
+本轮新回归仅使用明确由测试创建的对象与临时文件。此事故记录永久保留：不再用真实对象执行删除或“预期失败”的授权探测，不把重新显示当撤销，不把测试通过当数据已原样还原。
 
-```bash
-alma iab cdp Emulation.setDeviceMetricsOverride '{"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}'
-```
+## 10. 后续接手
 
-注意：输入框在 900 高视口下可能被截在视口外（y≈932），点击会落空。用 `focus()` + 回车发送。
-
----
-
-## 9. 踩过的坑
-
-- **`mvn compile` 不认新文件**：新增 Java 类后必须 `clean compile`，否则报「程序包不存在」。
-- **短类名要 import**：在 controller 里写 `CompanionModelAssetCatalog` 必须加 `import com.nexus.chat.service.CompanionModelAssetCatalog;`，否则编译报「程序包 X 不存在」（这个报错信息很有误导性）。
-- **`@AllArgsConstructor` 的位置参数**：DTO 加字段会改变构造器签名，`toRoleDTO` 不会报错但字段错位。见 6.2。
-- **`companion_growths` 是复数**：写 SQL 清理测试数据时容易写错表名。
-- **Element Plus 的 `el-dialog` 关闭后 DOM 还在**：`v-model=false` 后节点保留、`display:none`。判断「弹窗是否关闭」要看 `display`，不能看节点是否存在。
-- **Pinia 流式更新要改响应式副本**：`messages.value[messages.value.length-1]`，改 push 之前的普通对象不会重绘。
-- **`stores/companion.js` 的 `sendMessage` 失败返回 `null`**，不抛异常，别用 try/catch 接。
-- **WebGL 舞台隐藏时容器宽度为 0**，鼠标换算会除以零，把场景变成 NaN 后永远画不出来。宽度为 0 直接 return。
-- **Tailwind preflight 是关的**：原生 `button`/`h2`/`p` 的默认样式靠 `prism.css` 里的重置。
-
----
-
-## 10. 下一步建议顺序
-
-1. **`BE-05` + `FE-05` 场次管理**：后端加删除场次接口，前端加场次列表。当前 `active` 场次永不过期，会一直累积。
-2. **`BE-03` 并发邀请**：如果要多人同时用，需要处理。单人使用可以先放着。
-3. **`X-01` Redis 库不一致**：属于配置问题，需要用户拍板，不是代码能单方面改的。
+1. 先检查当前目录、HEAD、工作区 diff、服务与其他任务，不把本 worktree当原项目。
+2. 按具体 hunk 与原项目设置硬化合并，禁止整文件拷贝，尤其 Main/Settings/RoleSettingsPanel/companion/api 和渲染相关文件。
+3. 保持上述状态/类型/生命周期契约，增加行为回归后再改变实现。
+4. 返回路由的后续修补看 `NAVIGATION-PROGRESS.md`，不能据此扩展新页面。
+5. 更新实跑命令、数量、退出码、源代码状态和未覆盖项。用户未最终验收之前保留“待用户验证”。
