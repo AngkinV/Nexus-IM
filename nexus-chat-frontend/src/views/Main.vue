@@ -306,7 +306,12 @@ const newAgentSession = async () => {
   try {
     await agentStore.newSession()
     // Don't navigate back into AI if the user left during the request.
-    if (activeView.value === 'ai') openAiAssistant()
+    if (activeView.value === 'ai') {
+      await openAiAssistant()
+      // Visiting AI on mobile shows its list; a successful new session instead
+      // opens that session. Wait for route effects so they cannot clear it again.
+      if (mainAlive && route.name === 'Main' && activeView.value === 'ai') activateAssistantChat()
+    }
     ElMessage.success(t('agent.history.created'))
   } catch (err) {
     ElMessage.error(err.message || t('common.failed'))
