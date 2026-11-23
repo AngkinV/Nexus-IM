@@ -70,9 +70,11 @@ class AgentInternalTokenFilterTest {
     }
 
     @Test
-    void theFilterGuardsOnlyTheMcpPathAndRunsFirst() {
+    void theFilterGuardsTheInternalAgentPathsAndRunsFirst() {
         FilterRegistrationBean<AgentInternalTokenFilter> registration = new AgentMcpConfig().agentMcpTokenFilter(TOKEN);
-        assertEquals(List.of(AgentMcpConfig.MCP_PATH), List.copyOf(registration.getUrlPatterns()));
+        // The scope-validate endpoint is internal too, so it shares the same bearer gate.
+        assertEquals(List.of(AgentMcpConfig.MCP_PATH, "/internal/agent/scope/validate"),
+                List.copyOf(registration.getUrlPatterns()));
         assertEquals(Ordered.HIGHEST_PRECEDENCE, registration.getOrder());
     }
 }

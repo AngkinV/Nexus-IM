@@ -29,7 +29,9 @@ os.environ["REDIS_URL"] = "redis://127.0.0.1:1"
 
 from app.config import get_settings  # noqa: E402
 from app.rag import embeddings as emb_mod  # noqa: E402
-from app.rag import memory_rag, vectorstore as vs  # noqa: E402
+from app.rag import memory_rag
+from app.rag import vectorstore as vs  # noqa: E402
+from scope_support import install_scope_authority, make_scope  # noqa: E402
 
 
 class _DetEmbedding:
@@ -67,6 +69,8 @@ def isolated_chroma(tmp_path: Path, monkeypatch):
     vs.reset_for_testing()
     emb_mod.reset_cache()
     monkeypatch.setattr(memory_rag, "get_embeddings", lambda **kw: _DetEmbedding())
+    # No live Java authority here: accept exactly the synthetic scope each test issues.
+    install_scope_authority(monkeypatch, [memory_rag])
 
     yield tmp_path / "chroma"
 
@@ -87,6 +91,7 @@ async def test_recall_early_topic_after_50_rounds_of_noise(isolated_chroma):
         user_id, session_id,
         f"我们的 {early_token} 是谁负责",
         f"我帮你查一下 {early_token} 的负责人",
+        scope=make_scope(user_id, session_id=session_id),
     )
 
     # Rounds 2..51: 50 rounds of unrelated exchanges to push round 1 far out
@@ -96,11 +101,13 @@ async def test_recall_early_topic_after_50_rounds_of_noise(isolated_chroma):
             user_id, session_id,
             f"第 {i} 轮闲聊：今天天气怎么样",
             f"第 {i} 轮回答：天气晴朗",
+            scope=make_scope(user_id, session_id=session_id),
         )
 
     # Round 52: ask about the early topic using the same unique token.
     results = await memory_rag.retrieve(
         user_id, f"提一下 {early_token}", top_k=3,
+        scope=make_scope(user_id, session_id=session_id),
     )
 
     assert results, "retrieve returned nothing — 50-round recall completely failed"
@@ -117,6 +124,7 @@ async def test_chroma_persists_to_disk(isolated_chroma: Path):
         9999, "s_persist",
         "持久化测试用户消息一段较长内容",
         "持久化测试模型答复也较长",
+        scope=make_scope(9999, session_id='s_persist'),
     )
     assert cid is not None
 
@@ -140,13 +148,13 @@ async def test_chroma_persists_to_disk(isolated_chroma: Path):
 async def test_user_isolation_holds_across_50_rounds(isolated_chroma):
     secret = "USER1-PRIVATE-API-KEY-LEAK-CANARY"
 
-    await memory_rag.write(1, "s1", f"我的密钥是 {secret}", "记下了")
+    await memory_rag.write(1, "s1", f"我的密钥是 {secret}", "记下了", scope=make_scope(1, session_id='s1'))
 
     for i in range(50):
-        await memory_rag.write(2, "s2", f"user 2 round {i} 闲聊问题", f"user 2 round {i} 答复")
+        await memory_rag.write(2, "s2", f"user 2 round {i} 闲聊问题", f"user 2 round {i} 答复", scope=make_scope(2, session_id='s2'))
 
     # User 2 actively tries to retrieve content that includes user 1's secret.
-    results = await memory_rag.retrieve(2, "我的密钥是什么", top_k=10)
+    results = await memory_rag.retrieve(2, "我的密钥是什么", top_k=10, scope=make_scope(2))
     assert not any(secret in r for r in results), (
         f"User isolation broken: user 2 retrieved user 1's secret. results={results}"
     )
@@ -161,10 +169,11 @@ async def test_disabled_flag_yields_no_writes_no_reads(monkeypatch, isolated_chr
 
     cid = await memory_rag.write(
         1, "s_disabled", "this should not be persisted at all", "neither this",
+        scope=make_scope(1, session_id='s_disabled'),
     )
     assert cid is None
 
-    results = await memory_rag.retrieve(1, "anything")
+    results = await memory_rag.retrieve(1, "anything", scope=make_scope(1))
     assert results == []
 
     # And the underlying collection must be empty for this user.
@@ -183,7 +192,9 @@ async def test_top_k_cap_holds_with_large_corpus(isolated_chroma):
             user_id, "s_top_k",
             f"topic-{i:03d} content",
             f"answer-{i:03d}",
-        )
+            scope=make_scope(user_id, session_id='s_top_k'),
+    )
 
-    results = await memory_rag.retrieve(user_id, "topic-007 content", top_k=5)
+    results = await memory_rag.retrieve(user_id, "topic-007 content", top_k=5,
+                                       scope=make_scope(user_id, session_id='s_top_k'))
     assert 0 < len(results) <= 5

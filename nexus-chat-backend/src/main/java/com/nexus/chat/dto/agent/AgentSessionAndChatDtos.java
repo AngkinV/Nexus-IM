@@ -56,6 +56,11 @@ public final class AgentSessionAndChatDtos {
         /** The run this one retries; the old answer stays. */
         @Pattern(regexp = "^[A-Za-z0-9_-]{8,64}$", message = "must be 8-64 of A-Z a-z 0-9 _ -")
         private String retryOfRunId;
+        private com.nexus.chat.service.agent.scope.ScopeDtos.Selection scopeSelection;
+        private Boolean scopeConfirmed;
+        private Long expectedBindingVersion;
+        @JsonIgnore
+        private com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope authorizedScope;
         /** Attachments the client picked; Java resolves them into {@link #resolvedAttachments}. */
         @Size(max = 4, message = "at most 4 attachments")
         private List<String> attachmentIds;
@@ -69,6 +74,8 @@ public final class AgentSessionAndChatDtos {
 
     @Data
     public static class ResumeRequest {
+        private Boolean scopeConfirmed;
+        private Long expectedBindingVersion;
         private Long providerId;
     }
 

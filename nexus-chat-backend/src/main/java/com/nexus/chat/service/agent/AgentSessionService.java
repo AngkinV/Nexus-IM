@@ -47,6 +47,11 @@ public class AgentSessionService {
     }
 
     @Transactional
+    public void bindEntryChat(Long userId,String sessionId,Long chatId) {
+        var entity=mustOwn(userId,sessionId);entity.setBoundChatId(chatId);repository.save(entity);
+    }
+
+    @Transactional
     public AgentSessionDtos.SessionView rename(Long userId, String sessionId, String title) {
         AgentSession entity = mustOwn(userId, sessionId);
         entity.setTitle(truncate(title));
@@ -55,9 +60,10 @@ public class AgentSessionService {
 
     @Transactional
     public void delete(Long userId, String sessionId) {
-        AgentSession entity = mustOwn(userId, sessionId);
-        repository.delete(entity);
-        memoryService.clearShortTerm(userId, sessionId);
+        repository.findBySessionId(sessionId).ifPresent(entity -> {
+            if(!userId.equals(entity.getUserId())) throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301,"session does not belong to this user");
+            repository.delete(entity);
+        });
     }
 
     /**
@@ -70,13 +76,7 @@ public class AgentSessionService {
      */
     @Transactional
     public AgentSession touchAndAutoTitle(Long userId, String sessionId, String titleSeed) {
-        AgentSession entity = repository.findBySessionId(sessionId)
-                .orElseGet(() -> {
-                    AgentSession s = new AgentSession();
-                    s.setUserId(userId);
-                    s.setSessionId(sessionId);
-                    return s;
-                });
+        AgentSession entity = mustOwn(userId,sessionId);
         if (entity.getId() != null && !entity.getUserId().equals(userId)) {
             throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "session does not belong to this user");
         }
@@ -116,6 +116,7 @@ public class AgentSessionService {
     private static AgentSessionDtos.SessionView toView(AgentSession m) {
         AgentSessionDtos.SessionView v = new AgentSessionDtos.SessionView();
         v.setSessionId(m.getSessionId());
+        v.setBoundChatId(m.getBoundChatId());
         v.setTitle(m.getTitle());
         v.setCreatedAt(m.getCreatedAt() == null ? null : m.getCreatedAt().toString());
         v.setUpdatedAt(m.getUpdatedAt() == null ? null : m.getUpdatedAt().toString());

@@ -7,7 +7,9 @@ import socket
 import pytest
 import redis.asyncio as redis
 
+from app import memory as memory_mod
 from app.memory import ShortTermMemory
+from scope_support import install_scope_authority, make_scope
 
 
 @pytest.fixture
@@ -41,27 +43,37 @@ async def isolated_redis(tmp_path):
         await asyncio.wait_for(process.wait(), 5)
 
 
+@pytest.fixture(autouse=True)
+def _accept_scope(monkeypatch):
+    """No live Java authority: accept exactly the synthetic scope these tests issue."""
+    install_scope_authority(monkeypatch, [memory_mod])
+
+
 async def test_run_message_is_atomically_written_once_under_concurrency(isolated_redis):
     memory = ShortTermMemory(isolated_redis)
+    scope = make_scope(7, session_id="s1", run_id="run_001")
     results = await asyncio.gather(*[
-        memory.append(7, "s1", "assistant", "正文", run_id="run_001") for _ in range(20)
+        memory.append(7, "s1", "assistant", "正文", run_id="run_001", scope=scope) for _ in range(20)
     ])
     assert results.count(True) == 1
-    assert await memory.recent(7, "s1") == [{"role": "assistant", "content": "正文"}]
+    assert await memory.recent(7, "s1", scope=scope) == [{"role": "assistant", "content": "正文"}]
 
 
 async def test_deduplication_is_scoped_to_owner_and_session(isolated_redis):
     memory = ShortTermMemory(isolated_redis)
     for user_id, session_id in ((7, "s1"), (8, "s1"), (7, "s2")):
-        await memory.append(user_id, session_id, "user", "你好", run_id="run_001")
-        assert await memory.recent(user_id, session_id) == [{"role": "user", "content": "你好"}]
+        scope = make_scope(user_id, session_id=session_id, run_id="run_001")
+        await memory.append(user_id, session_id, "user", "你好", run_id="run_001", scope=scope)
+        assert await memory.recent(user_id, session_id, scope=scope) == [{"role": "user", "content": "你好"}]
 
 
 async def test_failed_write_does_not_claim_success_or_suppress_retry(isolated_redis):
     memory = ShortTermMemory(isolated_redis)
-    await isolated_redis.set(memory._messages_key(7, "s1"), "wrong-type")
-    await memory.append(7, "s1", "assistant", "正文", run_id="run_001")
-    await isolated_redis.delete(memory._messages_key(7, "s1"))
+    scope = make_scope(7, session_id="s1", run_id="run_001")
+    key = memory._messages_key(7, "s1", scope.scopeKey)
+    await isolated_redis.set(key, "wrong-type")
+    await memory.append(7, "s1", "assistant", "正文", run_id="run_001", scope=scope)
+    await isolated_redis.delete(key)
     memory._skip_until = 0
-    await memory.append(7, "s1", "assistant", "正文", run_id="run_001")
-    assert await memory.recent(7, "s1") == [{"role": "assistant", "content": "正文"}]
+    await memory.append(7, "s1", "assistant", "正文", run_id="run_001", scope=scope)
+    assert await memory.recent(7, "s1", scope=scope) == [{"role": "assistant", "content": "正文"}]

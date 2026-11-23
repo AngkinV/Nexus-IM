@@ -14,7 +14,7 @@ import httpx
 import httpx2
 
 from ..config import get_settings
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 
 @dataclasses.dataclass
@@ -214,6 +214,9 @@ class AnthropicTransport(_PinnedDestination, httpx2.AsyncHTTPTransport):
 class LLMClient(abc.ABC):
     """Abstract base for all LLM adapters."""
 
+    # True for an adapter that awaits `on_dispatch` immediately before its request leaves.
+    signals_dispatch = False
+
     def __init__(self, cfg: ProviderConfig) -> None:
         self.cfg = cfg
 
@@ -227,6 +230,7 @@ class LLMClient(abc.ABC):
         temperature: float = 0.2,
         max_tokens: int = 1024,
         timeout_sec: int = 30,
+        on_dispatch: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncIterator[LLMChunk]:
         """Stream one model turn.
 
@@ -236,6 +240,8 @@ class LLMClient(abc.ABC):
         connection is released when the generator finishes or is closed.
         `timeout_sec` is an idle timeout: the longest silence allowed before the
         first byte and between chunks.
+        `on_dispatch` is awaited once, after the request is built and before it is
+        sent. If it raises, nothing is sent and the exception reaches the caller.
         """
         if False:  # pragma: no cover - mark as async generator
             yield LLMChunk(kind="text", text="")

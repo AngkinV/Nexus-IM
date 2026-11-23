@@ -16,6 +16,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scope_support import install_scope_authority, make_scope, next_run_id  # noqa: E402
+
 # Force mock pathway (no OpenAI key) regardless of host environment.
 os.environ.pop("OPENAI_API_KEY", None)
 os.environ["USE_REAL_MODEL"] = "false"
@@ -39,7 +41,7 @@ class _FakeToolExecutor:
     async def schemas(self):
         return []
 
-    async def execute(self, tool_name: str, args: dict):
+    async def execute(self, tool_name: str, args: dict, *, call_id=None):
         return {
             "chatId": args.get("chat_id"),
             "messages": [
@@ -52,6 +54,7 @@ class _FakeToolExecutor:
 @pytest.fixture(autouse=True)
 def _patch_tools(monkeypatch):
     monkeypatch.setattr(orchestrator, "ToolExecutor", _FakeToolExecutor)
+    install_scope_authority(monkeypatch, [orchestrator])
 
 
 @pytest.mark.asyncio
@@ -62,6 +65,8 @@ async def test_chat_summary_emits_meta_tool_delta_done():
         session=Session(sessionId="as_test_1", operationType="CHAT_SUMMARY"),
         input=InputPayload(text="总结一下", chatId=20001),
         options=Options(),
+        runId=(run_id := next_run_id("run_mock")),
+        scope=make_scope(1001, session_id="as_test_1", run_id=run_id, chats=[20001]),
     )
     events = [e async for e in orchestrator.run_agent(req)]
     names = [e.name for e in events]
@@ -85,6 +90,8 @@ async def test_reply_suggest_returns_structured_draft_and_alternatives():
         session=Session(sessionId="as_test_2", operationType="REPLY_SUGGEST"),
         input=InputPayload(text="生成回复", chatId=20001, targetMessageId=99, tone="PROFESSIONAL", length="SHORT"),
         options=Options(),
+        runId=(run_id := next_run_id("run_mock")),
+        scope=make_scope(1001, session_id="as_test_2", run_id=run_id, chats=[20001]),
     )
     events = [e async for e in orchestrator.run_agent(req)]
     final = events[-1].data["result"]
@@ -100,6 +107,8 @@ async def test_assistant_chat_no_chat_id_skips_tool_call():
         session=Session(sessionId="as_test_3", operationType="ASSISTANT_CHAT"),
         input=InputPayload(text="你好"),
         options=Options(),
+        runId=(run_id := next_run_id("run_mock")),
+        scope=make_scope(1001, session_id="as_test_3", run_id=run_id),
     )
     events = [e async for e in orchestrator.run_agent(req)]
     assert all(e.name != "tool_call" for e in events), "no tool calls expected without chatId"

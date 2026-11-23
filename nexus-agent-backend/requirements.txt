@@ -25,6 +25,8 @@ langchain[mcp]==1.5.2
 # Imported directly by app/mcp_tools.py, so pinned rather than left to the extra.
 fastmcp==4.2.3
 mcp==2.3.0
+# Directly used by the managed MCP schema/argument adapter; no remote schema fetch.
+jsonschema>=4.23,<5
 
 # ----- RAG -----
 langchain-openai==1.1.9

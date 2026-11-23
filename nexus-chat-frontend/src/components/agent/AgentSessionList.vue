@@ -116,12 +116,12 @@ const { t } = useI18n({ messages: {
   en: {
     workbench: 'AI workbench', activeTask: 'Active task', recent: 'Recent sessions', modelUnknown: 'Model not reported',
     modelLatency: 'Model: {ms} ms', kbSources: '{n} KB source | {n} KB sources',
-    state: { idle: 'Idle', queued: 'Queued', running: 'Running', done: 'Completed', interrupted: 'Interrupted', cancelled: 'Cancelled', error: 'Failed', limited: 'Limit reached', skipped: 'Skipped' }
+    state: { unknown: 'Not reported', waiting_tool: 'Waiting for tool', waiting_approval: 'Waiting for approval', stop_requested: 'Stop unconfirmed', partial: 'Partially completed', idle: 'Idle', queued: 'Queued', running: 'Running', done: 'Completed', interrupted: 'Interrupted', cancelled: 'Cancelled', error: 'Failed', limited: 'Limit reached', skipped: 'Skipped' }
   },
   zh: {
     workbench: 'AI 工作台', activeTask: '当前任务', recent: '最近会话', modelUnknown: '模型未报告',
     modelLatency: '模型耗时 {ms} 毫秒', kbSources: '{n} 个知识库来源',
-    state: { idle: '空闲', queued: '排队中', running: '运行中', done: '已完成', interrupted: '已中断', cancelled: '已取消', error: '失败', limited: '已达上限', skipped: '已跳过' }
+    state: { unknown: '未上报', waiting_tool: '等待工具', waiting_approval: '等待审批', stop_requested: '停止待确认', partial: '部分完成', idle: '空闲', queued: '排队中', running: '运行中', done: '已完成', interrupted: '已中断', cancelled: '已取消', error: '失败', limited: '已达上限', skipped: '已跳过' }
   }
 } })
 const agentStore = useAgentStore()

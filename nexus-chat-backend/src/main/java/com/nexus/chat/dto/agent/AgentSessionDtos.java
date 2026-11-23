@@ -21,6 +21,8 @@ public final class AgentSessionDtos {
 
     @Data
     public static class SessionView {
+        private com.nexus.chat.service.agent.scope.ScopeDtos.Binding scope;
+        private Long boundChatId;
         private String sessionId;
         private String title;
         private String createdAt;

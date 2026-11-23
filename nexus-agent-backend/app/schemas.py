@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 from pydantic import BaseModel, Field
+from .scope import AuthorizedScope
 
 
 class Actor(BaseModel):
@@ -59,6 +60,7 @@ RUN_ID_PATTERN = r"^[A-Za-z0-9_-]{8,64}$"
 
 
 class InvokeRequest(BaseModel):
+    scope: AuthorizedScope | None = None
     traceId: str
     actor: Actor
     session: Session
@@ -71,6 +73,7 @@ class InvokeRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
+    scope: AuthorizedScope | None = None
     traceId: str
     actor: Actor
     sessionId: str
@@ -87,12 +90,13 @@ class ToolCallSummary(BaseModel):
     status: str  # SUCCESS | FAILED | TIMEOUT
     latencyMs: int
     error: str | None = None
+    callId: str | None = None
 
 
 class TokenUsage(BaseModel):
-    inputTokens: int = 0
-    outputTokens: int = 0
-    totalTokens: int = 0
+    inputTokens: int | None = 0
+    outputTokens: int | None = 0
+    totalTokens: int | None = 0
 
 
 class TodoItem(BaseModel):
@@ -112,10 +116,17 @@ class ReplySuggestOutput(BaseModel):
 
 
 class InvokeResult(BaseModel):
+    scope: AuthorizedScope | None = None
     answer: str
     toolCalls: list[ToolCallSummary] = Field(default_factory=list)
     usage: TokenUsage = Field(default_factory=TokenUsage)
     finishReason: str = "stop"
+    modelCalls: int = 0
+    usageReported: bool = False
+    usageComplete: bool = False
+    toolCallCount: int = 0
+    reusedToolCallCount: int = 0
+    producerAttemptId: str | None = None
     # Mode B structured outputs
     todos: list[dict[str, Any]] | None = None
     draft: str | None = None

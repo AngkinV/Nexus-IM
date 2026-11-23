@@ -55,6 +55,8 @@ def _to_anthropic(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, A
 
 
 class AnthropicClient(LLMClient):
+    signals_dispatch = True
+
     async def complete(
         self,
         messages: list[dict[str, Any]],
@@ -64,6 +66,7 @@ class AnthropicClient(LLMClient):
         temperature: float = 0.2,
         max_tokens: int = 1024,
         timeout_sec: int = 30,
+        on_dispatch=None,
     ) -> AsyncIterator[LLMChunk]:
         try:
             from anthropic import AsyncAnthropic
@@ -100,6 +103,9 @@ class AnthropicClient(LLMClient):
         stop_reason: str | None = None
         error: LLMError | None = None
         try:
+            if on_dispatch is not None:
+                # Outside the provider error handling: a refusal is the caller's, not the provider's.
+                await on_dispatch()
             try:
                 stream = await asyncio.wait_for(client.messages.create(**kwargs), timeout=timeout_sec)
                 while True:
