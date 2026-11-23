@@ -50,12 +50,16 @@ test('actual stage destroy survives actor/resource failures, stops scheduling fi
   const events = []
   const canvas = { removeEventListener() {}, remove() { events.push('canvas') } }
   const renderer = { domElement: canvas, dispose() { events.push('renderer'); throw Error('dispose') }, forceContextLoss() { events.push('context') } }
-  const context = vm.createContext({ attempt, createResourceOwner, releaseRenderer, canvas, renderer, scene: root([{ geometry: resource({ dispose() { events.push('geometry'); throw Error('geometry') } }) }]), camera: {}, actor: { destroy() { events.push('actor'); throw Error('actor') } }, actorAbort: { abort() { events.push('abort') } }, destroyed: false, actorRequest: 0, frame: 1, cancelFrame() { events.push('stop') }, pause() { events.push('pause') }, stopQualityWatch() {}, sharedMaterials: [], window: { removeEventListener() {} }, document: { removeEventListener() {} }, onMouseMove() {}, onVisibility() {}, onContextLost() {}, onContextRestored() {}, resizeObserver: { disconnect() {} } })
+  const context = vm.createContext({ attempt, createResourceOwner, releaseRenderer, canvas, renderer, scene: root([{ geometry: resource({ dispose() { events.push('geometry'); throw Error('geometry') } }) }]), camera: {}, actor: { destroy() { events.push('actor'); throw Error('actor') } }, actorAbort: { abort() { events.push('abort') } }, destroyed: false, actorRequest: 0, frame: 1, cancelFrame() { events.push('stop') }, pause() { events.push('pause') }, stopQualityWatch() {}, sharedMaterials: [], window: { removeEventListener() {} }, document: { removeEventListener() {} }, onMouseMove() {}, onVisibility() {}, onContextLost() {}, onContextRestored() {}, resizeObserver: { disconnect() {} },
+    // The stage listens for the pointer on its own element and owns a vignette overlay.
+    container: { removeEventListener(type) { events.push(`unlisten:${type}`); if (type === 'pointerleave') throw Error('listener') } }, onPointerLeave() {},
+    vignette: { remove() { events.push('vignette'); throw Error('vignette') } } })
   await vm.runInContext(`globalThis.api = { ${method} }; const retirement = api.destroy(); api.destroy(); retirement`, context)
   assert.ok(events.indexOf('stop') < events.indexOf('canvas'))
   assert.ok(events.indexOf('canvas') < events.indexOf('actor'))
   assert.ok(events.indexOf('canvas') < events.indexOf('geometry'))
-  for (const key of ['renderer', 'context', 'canvas', 'actor']) assert.equal(events.filter(e => e === key).length, 1)
+  for (const key of ['renderer', 'context', 'canvas', 'actor', 'vignette', 'unlisten:pointermove', 'unlisten:pointerleave']) assert.equal(events.filter(e => e === key).length, 1)
+  assert.ok(events.indexOf('stop') < events.indexOf('unlisten:pointermove'))
   assert.equal(context.renderer, null); assert.equal(context.frame, 0)
 })
 

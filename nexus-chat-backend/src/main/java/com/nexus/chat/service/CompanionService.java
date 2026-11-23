@@ -394,14 +394,18 @@ public class CompanionService {
                 reply = parsed.text();
                 state = parsed.state();
             } else {
+                AtomicBoolean stateSent = new AtomicBoolean(false);
                 CompanionStateTag.Filter filter = new CompanionStateTag.Filter(piece -> {
                     try {
                         onDelta.accept(piece);
                     } catch (RuntimeException disconnected) {
                         throw new CompanionModelService.ReaderGone();
                     }
+                }, firstState -> {
+                    if (onEvent != null && stateSent.compareAndSet(false, true)) {
+                        onEvent.accept("state", firstState.toMap());
+                    }
                 });
-                AtomicBoolean stateSent = new AtomicBoolean(false);
                 Runnable sendState = () -> {
                     if (onEvent != null && filter.state() != null && stateSent.compareAndSet(false, true)) {
                         onEvent.accept("state", filter.state().toMap());
