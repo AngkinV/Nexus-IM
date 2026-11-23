@@ -214,6 +214,33 @@ def test_nested_sensitive_keys_and_log_extras_never_reach_log_or_public_envelope
     assert record.exc_info is None and record.stack_info is None
 
 
+def test_a_logged_failure_keeps_where_it_came_from_but_nothing_the_exception_said():
+    redactor = SecretRedactor((INTERNAL,))
+
+    def provider_call():
+        raise RuntimeError(f"upstream replied with Authorization: {INTERNAL}")
+
+    try:
+        try:
+            provider_call()
+        except RuntimeError as inner:
+            raise ValueError("unregistered-but-private detail") from inner
+    except ValueError:
+        import sys
+        record = logging.makeLogRecord({"msg": "run %s failed", "args": ("r1",), "exc_info": sys.exc_info()})
+    assert redactor.log_filter().filter(record)
+    line = record.getMessage()
+    # Class names and code locations: enough to find the failure.
+    assert line.startswith("run r1 failed [ValueError at test_mcp_security_policy.py:")
+    assert "caused by RuntimeError at test_mcp_security_policy.py:" in line and "provider_call" in line
+    # Nothing the exceptions carried, registered secret or not, and no deployment path.
+    assert INTERNAL not in line and "private detail" not in line and "upstream replied" not in line
+    assert "/" not in line and record.exc_info is None and record.exc_text is None
+    # A record without an exception is left exactly as it was.
+    plain = logging.makeLogRecord({"msg": "run %s done", "args": ("r1",)})
+    assert redactor.log_filter().filter(plain) and plain.getMessage() == "run r1 done" and plain.args == ("r1",)
+
+
 def test_a_record_with_nothing_to_remove_keeps_the_arguments_its_formatter_reads():
     from uvicorn.logging import AccessFormatter
     redactor = SecretRedactor((INTERNAL,))

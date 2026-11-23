@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 from collections.abc import Mapping
 from urllib.parse import quote, quote_plus, unquote
@@ -180,6 +181,32 @@ class SecretRedactor:
         return SecretLogFilter(self)
 
 
+def _failure_origin(exc_info, *, frames: int = 6, causes: int = 3) -> str:
+    """Exception class names and code locations only.
+
+    Never the exception's message or arguments (those can carry headers, URLs or
+    provider replies), never local variables. File names are reduced to their
+    base name, so no deployment path is written either.
+    """
+    if not exc_info or exc_info is True or not isinstance(exc_info, tuple) or len(exc_info) < 2:
+        return ""
+    error = exc_info[1]
+    parts: list[str] = []
+    seen: set[int] = set()
+    while isinstance(error, BaseException) and id(error) not in seen and len(parts) < causes:
+        seen.add(id(error))
+        trail: list[str] = []
+        tb = error.__traceback__
+        while tb is not None:
+            code = tb.tb_frame.f_code
+            trail.append(f"{os.path.basename(code.co_filename)}:{tb.tb_lineno} {code.co_name}")
+            tb = tb.tb_next
+        where = " < ".join(reversed(trail[-frames:]))
+        parts.append(f"{type(error).__name__}" + (f" at {where}" if where else ""))
+        error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+    return "; caused by ".join(parts)
+
+
 class SecretLogFilter(logging.Filter):
     """Attach to output handlers, not just parent loggers (child propagation).
 
@@ -203,6 +230,14 @@ class SecretLogFilter(logging.Filter):
             record.msg, record.args = clean, ()
         # Otherwise the record keeps its template and arguments: formatters such as the
         # server's access log read the arguments themselves.
+        origin = _failure_origin(record.exc_info)
+        if origin:
+            # The exception itself is dropped below; where it came from is not a secret,
+            # and without it a failure in production cannot be located at all.
+            try:
+                record.msg, record.args = f"{record.getMessage()} [{origin}]", ()
+            except Exception:
+                record.msg, record.args = f"redacted log entry [{origin}]", ()
         record.exc_info = None
         record.exc_text = None
         record.stack_info = None
