@@ -32,8 +32,8 @@ before(async () => {
         return { contents: compileScript(descriptor, { id: 'role-list', inlineTemplate: true }).content, resolveDir: here }
       })
       b.onResolve({ filter: /^@\/stores\/|^element-plus$/ }, ({ path }) => ({ path, namespace: 'boundary' }))
-      // Plain modules behind the alias (roleText, tavernScenes) are the real files.
-      b.onResolve({ filter: /^@\/components\// }, ({ path }) => ({ path: resolve(src, `${path.slice(2)}.js`) }))
+      // Plain modules behind the alias (roleText, tavernScenes, useTavernInvite) are the real files.
+      b.onResolve({ filter: /^@\/(components|composables)\// }, ({ path }) => ({ path: resolve(src, `${path.slice(2)}.js`) }))
       b.onLoad({ filter: /.*/, namespace: 'boundary' }, ({ path }) => {
         if (path === 'element-plus') {
           return { contents: `const quiet = { name: 'ElStub', inheritAttrs: false, render: () => null }
@@ -89,6 +89,7 @@ async function mount({ roles = seats(), locale = 'en' } = {}) {
   stores = globalThis.roleListTestStores = {
     companion: reactive({
       roles, activeRoleId: 2, isLoading: false, growth: null, clearingRoleIds: [],
+      ownerEpoch: 0, isInviting: false, isUserCurrent: () => true,
       get conversationRoles() { return this.roles.filter(r => !r.conversationHidden) },
       get activeRole() { return this.conversationRoles.find(r => r.id === this.activeRoleId) || null },
       isRoleBusy: () => false,

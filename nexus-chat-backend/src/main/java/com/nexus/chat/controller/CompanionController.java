@@ -53,6 +53,8 @@ public class CompanionController {
         Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.updateRole(userId, roleId, update));
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Update role failed", e);
             return ResponseEntity.badRequest().build();

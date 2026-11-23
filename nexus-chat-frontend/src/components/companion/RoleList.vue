@@ -27,8 +27,10 @@
       <button
         class="w-full flex items-center justify-between py-2 px-3 rounded-lg bg-surface-container-low border border-outline-variant/40 text-primary hover:bg-surface-container hover:border-outline-variant transition-all duration-150 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
         type="button"
-        :disabled="inviting"
+        :disabled="inviting || !userStore.currentUser?.id"
         :title="$t('companion.seats.inviteHint')"
+        aria-haspopup="dialog"
+        :aria-expanded="pickerVisible"
         @click="openInvitePicker"
       >
         <div class="flex items-center gap-2">
@@ -275,11 +277,18 @@
           <span class="font-body-md text-[14px]">{{ localT('loadingModels') }}</span>
         </div>
 
-        <template v-else>
-          <!-- The default. Chosen by default so one click is enough. -->
+        <div v-if="pickerError" class="invite-model-error" role="alert">
+          <span>{{ localT('modelsLoadFailed') }}</span>
+          <el-button :disabled="pickerLoading" @click="openInvitePicker">{{ localT('retry') }}</el-button>
+        </div>
+
+        <template v-if="inviteModels.length || (!pickerLoading && !pickerError)">
+          <!-- No assets is a valid text-only invitation; an I/O failure is not. -->
           <button
             class="invite-model-row"
             :class="{ 'is-active': chosenModelUrl === null }"
+            :aria-pressed="chosenModelUrl === null"
+            :disabled="pickerLoading || !!pickerError"
             type="button"
             @click="chosenModelUrl = null"
           >
@@ -296,6 +305,8 @@
             :key="model.fileUrl"
             class="invite-model-row"
             :class="{ 'is-active': chosenModelUrl === model.fileUrl }"
+            :aria-pressed="chosenModelUrl === model.fileUrl"
+            :disabled="pickerLoading || !!pickerError"
             type="button"
             @click="chosenModelUrl = model.fileUrl"
           >
@@ -308,7 +319,7 @@
           </button>
 
           <!-- Nothing uploaded yet: say so instead of showing an empty box. -->
-          <p v-if="!inviteModels.length" class="text-on-surface-variant text-[13px] px-1 py-2">
+          <p v-if="!inviteModels.length && !pickerLoading && !pickerError" class="text-on-surface-variant text-[13px] px-1 py-2">
             {{ localT('noModelsYet') }}
           </p>
         </template>
@@ -316,7 +327,7 @@
 
       <template #footer>
         <el-button :disabled="inviting" @click="pickerVisible = false">{{ localT('cancel') }}</el-button>
-        <el-button type="primary" :loading="inviting" :disabled="pickerLoading" @click="confirmInvite">
+        <el-button type="primary" :loading="inviting" :disabled="!canConfirmInvite" @click="confirmInvite">
           {{ inviting ? localT('inviting') : localT('inviteAction') }}
         </el-button>
       </template>
@@ -377,7 +388,7 @@
 </template>
 
 <script setup>
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 import { useCompanionStore } from '@/stores/companion'
@@ -386,6 +397,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { ElButton, ElDialog, ElMessage } from 'element-plus'
 import { readSceneKey } from '@/components/companion/tavernScenes'
 import { matchesQuery, previewOf } from '@/components/companion/roleText'
+import { useTavernInvite } from '@/composables/useTavernInvite'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
 import ClearConversationButton from '@/components/companion/ClearConversationButton.vue'
 
@@ -409,11 +421,17 @@ const { t: localT } = useI18n({
       clearSearch: '清除搜索',
       noMatch: '没有匹配“{q}”的会话',
       inviteTitle: '邀请一个人入座',
-      inviteHint: '选一个建模给她，或者让酒馆自己挑一个还没人用的。',
-      letTavernChoose: '让酒馆挑选',
-      letTavernChooseHint: '优先选没人在用的建模',
+      inviteHint: '选择已有的 VRM 建模，或自动选择。',
+      letTavernChoose: '自动选择建模',
+      letTavernChooseHint: '优先选择未使用的形象，全部使用时允许复用',
       loadingModels: '正在读取建模…',
-      noModelsYet: '还没有上传过建模。可以到「设置 → 角色与模型」里导入，或直接邀请——她会先不显示形象。',
+      noModelsYet: '暂无可用于酒馆的 VRM 建模，可以先以文字方式对话。',
+      modelsLoadFailed: '建模列表读取失败，请重试；当前不能确认邀请。',
+      retry: '重试',
+      inviteSucceeded: '已创建对话。',
+      inviteUnknown: '尚未确认邀请结果，请刷新列表核实，不要重复提交。',
+      inviteBusy: '当前账号的另一项邀请仍在处理中，请稍后查看列表。',
+      modelNoLongerAvailable: '所选建模不可用或已变更，请重新选择。',
       inviting: '邀请中…',
       inviteAction: '邀请入座',
       cancel: '取消'
@@ -434,11 +452,17 @@ const { t: localT } = useI18n({
       clearSearch: 'Clear search',
       noMatch: 'No conversations match “{q}”',
       inviteTitle: 'Invite someone to sit down',
-      inviteHint: 'Give her a model, or let the tavern pick one nobody is wearing.',
-      letTavernChoose: 'Let the tavern choose',
-      letTavernChooseHint: 'Prefers a model nobody is wearing',
+      inviteHint: 'Choose an existing VRM model or select automatically.',
+      letTavernChoose: 'Choose automatically',
+      letTavernChooseHint: 'Prefer unused models; reuse is allowed when all are assigned',
       loadingModels: 'Reading models…',
-      noModelsYet: 'No models uploaded yet. Import one in Settings → Roles & Models, or invite anyway — she will appear without a body.',
+      noModelsYet: 'No VRM models are available for the tavern. You can start a text-only conversation.',
+      modelsLoadFailed: 'Could not load the model list. Retry before confirming the invitation.',
+      retry: 'Retry',
+      inviteSucceeded: 'Conversation created.',
+      inviteUnknown: 'The invitation result is not confirmed. Refresh the list to check; do not submit it again.',
+      inviteBusy: 'Another invitation for this account is still in progress. Check the list later.',
+      modelNoLongerAvailable: 'The selected model is unavailable or has changed. Choose again.',
       inviting: 'Inviting…',
       inviteAction: 'Invite',
       cancel: 'Cancel'
@@ -449,6 +473,9 @@ const companionStore = useCompanionStore()
 const toggleList = inject('toggleList', () => {})
 const userStore = useUserStore()
 const settings = useSettingsStore()
+let alive = true
+onBeforeUnmount(() => { alive = false })
+const stillCurrent = (userId, epoch) => alive && companionStore.isUserCurrent(userId) && epoch === companionStore.ownerEpoch
 
 /**
  * The row's timestamp, the same way the chat list reads one: time today, the
@@ -466,8 +493,8 @@ function formatStamp(value) {
 
 /** A model's file size, so two same-named uploads can be told apart. */
 function formatModelSize(bytes) {
-  if (!bytes || bytes <= 0) return ''
-  const mb = bytes / (1024 * 1024)
+  if (!Number.isFinite(Number(bytes)) || Number(bytes) <= 0) return ''
+  const mb = Number(bytes) / (1024 * 1024)
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
@@ -533,19 +560,23 @@ const hiddenRoles = computed(() => companionStore.roles.filter((role) => role.co
 const restoreDialogVisible = ref(false)
 const restoringRoleId = ref(null)
 const isRestoring = computed(() => restoringRoleId.value !== null)
+watch(() => companionStore.ownerEpoch, () => {
+  restoreDialogVisible.value = false
+  restoringRoleId.value = null
+}, { flush: 'sync' })
 
 async function restoreRole(role) {
-  const userId = userStore.currentUser?.id
+  const userId = userStore.currentUser?.id, epoch = companionStore.ownerEpoch
   if (!userId || isRestoring.value || !role.conversationHidden || companionStore.isRoleBusy(role.id)) return
   restoringRoleId.value = role.id
   try {
     // The store reopens and selects the conversation only after the POST succeeds.
     await companionStore.restoreConversation(userId, role.id)
-    if (userStore.currentUser?.id === userId) restoreDialogVisible.value = false
+    if (stillCurrent(userId, epoch)) restoreDialogVisible.value = false
   } catch {
-    if (userStore.currentUser?.id === userId) ElMessage.error(localT('restoreFailed'))
+    if (stillCurrent(userId, epoch)) ElMessage.error(localT('restoreFailed'))
   } finally {
-    restoringRoleId.value = null
+    if (stillCurrent(userId, epoch)) restoringRoleId.value = null
   }
 }
 
@@ -555,87 +586,44 @@ onMounted(async () => {
 })
 
 async function selectRole(role) {
-  if (role.id === companionStore.activeRoleId) return
-  await companionStore.setActiveRole(userStore.currentUser.id, role.id)
-}
-
-// ── Inviting: pick a face, or let the tavern pick ────────────────────────────
-// The models come from the same catalogue the settings panel lists, so one
-// uploaded there is immediately available here. "Let the tavern choose" is the
-// default: a guest walking in should not require a decision, and the server
-// prefers a model nobody else is wearing so the room does not fill with clones.
-const inviteModels = ref([])
-const pickerVisible = ref(false)
-const pickerLoading = ref(false)
-const chosenModelUrl = ref(null)
-
-async function openInvitePicker() {
   const userId = userStore.currentUser?.id
-  if (!userId || inviting.value) return
-  pickerVisible.value = true
-  chosenModelUrl.value = null
-  // Always re-read. A model uploaded in Settings must show up here immediately;
-  // caching the first list meant the picker kept offering a stale set until a
-  // reload. The previous list stays on screen while the new one loads, so the
-  // dialog does not flash empty.
-  pickerLoading.value = !inviteModels.value.length
-  try {
-    inviteModels.value = await companionStore.fetchInviteModels(userId)
-  } finally {
-    pickerLoading.value = false
-  }
+  if (!userId || role.id === companionStore.activeRoleId) return
+  await companionStore.setActiveRole(userId, role.id)
 }
 
-function confirmInvite() {
-  const modelUrl = chosenModelUrl.value
-  pickerVisible.value = false
-  invite(modelUrl)
-}
-
-// Fill the empty seat. Costs one model call when a model is configured; the
-// server falls back to a neutral guest when none is.
-const inviting = ref(false)
-async function invite(modelUrl = null) {
-  const userId = userStore.currentUser?.id
-  if (!userId || inviting.value) return
-  // Which characters existed before this attempt. A timeout does not mean
-  // nothing happened, but it also does not mean the newest guest is ours —
-  // without this, a failed invite jumped to whichever guest was already last.
-  const knownIds = new Set(companionStore.roles.map((r) => r.id))
-  inviting.value = true
-  try {
-    const role = await companionStore.inviteGuest(userId, readSceneKey(companionStore.activeRoleId), modelUrl)
-    if (role) {
-      await companionStore.fetchRoles(userId)
-      await companionStore.setActiveRole(userId, role.id)
-      return
-    }
-    // Re-read the list, then look only at characters that did not exist before.
-    await companionStore.fetchRoles(userId)
-    const created = companionStore.roles
-      .filter((r) => !knownIds.has(r.id))
-      .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0]
-    if (created) {
-      await companionStore.setActiveRole(userId, created.id)
-      ElMessage.success(t('companion.seats.invitedSlow'))
-    } else {
-      ElMessage.error(t('companion.seats.inviteFailed'))
-    }
-  } finally {
-    inviting.value = false
+// The shared helper is also exercised by deferred-response regression tests.
+const inviting = computed(() => companionStore.isInviting)
+const inviteFlow = useTavernInvite({
+  store: companionStore,
+  getUserId: () => userStore.currentUser?.id,
+  getSceneKey: () => readSceneKey(companionStore.activeRoleId),
+  onSuccess: () => ElMessage.success(localT('inviteSucceeded')),
+  onUnknown: () => ElMessage.warning(localT('inviteUnknown')),
+  onError: error => {
+    const status = Number(error?.response?.status)
+    const code = error?.response?.data?.message
+    if (status === 409) ElMessage.warning(localT('inviteBusy'))
+    else if (['model_url_invalid', 'model_type_unsupported', 'model_not_found', 'model_file_invalid'].includes(code)) {
+      ElMessage.error(localT('modelNoLongerAvailable'))
+    } else ElMessage.error(t('companion.seats.inviteFailed'))
   }
-}
+})
+const { models: inviteModels, visible: pickerVisible, loading: pickerLoading, error: pickerError,
+  selectedUrl: chosenModelUrl, canConfirm: canConfirmInvite,
+  open: openInvitePicker, confirm: confirmInvite } = inviteFlow
+onBeforeUnmount(() => inviteFlow.dispose())
 
 // Keep a guest: they move from 过往相逢 into the household.
 async function adopt(role) {
-  const userId = userStore.currentUser?.id
+  const userId = userStore.currentUser?.id, epoch = companionStore.ownerEpoch
   if (!userId) return
   try {
     await companionStore.adoptRole(userId, role.id)
+    if (!stillCurrent(userId, epoch)) return
     await companionStore.fetchRoles(userId)
-    ElMessage.success(t('companion.seats.adopted'))
+    if (stillCurrent(userId, epoch)) ElMessage.success(t('companion.seats.adopted'))
   } catch {
-    ElMessage.error(t('common.operationFailed'))
+    if (stillCurrent(userId, epoch)) ElMessage.error(t('common.operationFailed'))
   }
 }
 </script>
@@ -740,33 +728,48 @@ async function adopt(role) {
 .invite-model-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+  min-height: 44px;
   padding: 8px 12px;
-  border: 1px solid rgba(68, 71, 72, 0.4);
+  border: 1px solid var(--el-border-color);
   border-radius: 8px;
-  background: #1b1b1e;
-  color: #e4e1e6;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
   font-size: 14px;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s, background-color 0.15s;
 }
 
-.invite-model-row:hover {
-  border-color: rgba(255, 255, 255, 0.4);
-  background: #232326;
+.invite-model-row:not(:disabled):hover {
+  border-color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
 }
 
 .invite-model-row.is-active {
-  border-color: rgba(255, 255, 255, 0.7);
-  background: #2a2a2d;
-  color: #ffffff;
+  border-color: var(--el-text-color-primary);
+  background: var(--el-fill-color);
+}
+
+.invite-model-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .invite-model-row:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline: 2px solid var(--el-text-color-primary);
   outline-offset: 2px;
+}
+
+.invite-model-error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  color: var(--el-text-color-regular);
 }
 
 .role-scroll::-webkit-scrollbar {

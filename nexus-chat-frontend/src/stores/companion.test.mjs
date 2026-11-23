@@ -5,7 +5,7 @@ import { createServer } from 'vite'
 import { createPinia, setActivePinia } from 'pinia'
 import { watch } from 'vue'
 
-let server, useCompanionStore, api, store
+let server, useCompanionStore, useUserStore, api, store, user
 const originalStorage = globalThis.localStorage
 const deferred = () => {
   let resolve, reject
@@ -23,6 +23,7 @@ before(async () => {
     logLevel: 'error'
   })
   ;({ useCompanionStore } = await server.ssrLoadModule('/src/stores/companion.js'))
+  ;({ useUserStore } = await server.ssrLoadModule('/src/stores/user.js'))
   ;({ companionAPI: api } = await server.ssrLoadModule('/src/services/api.js'))
 })
 
@@ -33,8 +34,10 @@ after(async () => {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  user = useUserStore()
+  user.currentUser = { id: 7 }
   store = useCompanionStore()
-  store.roles = [{ id: 1, lastMessageAt: '2026-11-20', presence: 'old state' }, { id: 2 }]
+  store.roles = [{ id: 1, lastMessageAt: '2026-11-20', lastMessage: 'old preview', presence: 'old state' }, { id: 2 }]
   store.activeRoleId = 1
   store.messages = [{ id: 11, roleId: 1, content: 'stored message' }]
   store.activeSession = { id: 21, roleId: 1 }
@@ -72,6 +75,7 @@ test('only removes the conversation after server success and keeps the character
   assert.equal(store.activeSession, null)
   assert.equal(store.status, null)
   assert.equal(store.roles[0].lastMessageAt, null)
+  assert.equal(store.roles[0].lastMessage, null)
   assert.equal(store.roles[0].presence, null)
   assert.equal(store.roles.length, 2)
   assert.equal(store.roles[0].conversationHidden, true)
@@ -151,6 +155,8 @@ test('reload never selects a removed conversation and keeps unused characters vi
   const persisted = [{ id: 1, conversationHidden: true }, { id: 2, conversationHidden: false }]
   api.initRoles = api.getRoles = async () => ({ data: persisted.map(role => ({ ...role })) })
   setActivePinia(createPinia())
+  user = useUserStore()
+  user.currentUser = { id: 7 }
   store = useCompanionStore()
   await store.ensureInitialized(7)
   assert.deepEqual(store.conversationRoles.map(role => role.id), [2])
@@ -430,6 +436,9 @@ test('deleting a conversation removes its preview line and sender', async () => 
 
 test('a failed deletion keeps the preview line and its sender', async () => {
   Object.assign(store.roles[0], { lastMessage: '（笑）bye', lastMessageSender: 'role' })
+  // The conversation is read again after a failed deletion, and that read is
+  // what the row previews: the history here ends on the same line the row shows.
+  api.getConversation = async () => ({ data: [{ id: 11, roleId: 1, senderType: 'role', content: '（笑）bye' }] })
   api.clearConversation = async () => { throw new Error('database unavailable') }
   await assert.rejects(store.clearConversation(7, 1))
   assert.equal(store.roles[0].lastMessage, '（笑）bye')
@@ -495,4 +504,262 @@ test('saving a role keeps what the server returned and neither loses nor misattr
   await save({ lastMessageAt: null, lastMessage: null })
   assert.equal(store.roles[0].lastMessage, null)
   assert.equal(store.roles[0].lastMessageSender, undefined)
+})
+
+const filed = (id, senderType, content, createdAt = '2026-11-21T19:08:00') => ({ id, roleId: 1, senderType, content, createdAt })
+const reply = (id, text = 'new reply') => ({
+  userMessage: filed(id, 'user', 'question'), roleMessage: filed(id + 1, 'role', text)
+})
+
+test('successful replies update preview and timestamp without a role-list refresh', async () => {
+  api.sendMessage = async () => ({ data: reply(20) })
+  await store.sendMessage(7, 1, 'question')
+  assert.equal(store.roles[0].lastMessage, 'new reply')
+  assert.equal(store.roles[0].lastMessageAt, '2026-11-21T19:08:00')
+})
+
+test('an older replay cannot rewind the preview or move an old reply to the end', async () => {
+  api.sendMessage = async () => ({ data: reply(30, 'latest') })
+  await store.sendMessage(7, 1, 'question')
+  api.sendMessage = async () => ({ data: reply(20, 'earlier') })
+  await store.sendMessage(7, 1, 'question')
+  assert.equal(store.roles[0].lastMessage, 'latest')
+  assert.equal(store.messages.at(-1).content, 'latest')
+})
+
+test('a no-text model failure previews its persisted user line, not an optimistic row', async () => {
+  const asked = filed(30, 'user', 'persisted question')
+  api.sendMessage = async () => ({ data: { userMessage: asked, modelError: limited } })
+  api.getConversation = async () => ({ data: [asked] })
+  await store.sendMessage(7, 1, 'persisted question')
+  assert.equal(store.roles[0].lastMessage, 'persisted question')
+  assert.equal(store.roles[0].lastMessageAt, asked.createdAt)
+  assert.equal(store.messages.at(-1).failed, true)
+})
+
+test('network failure performs only a read-only reconciliation, never another POST', async () => {
+  let posts = 0, reads = 0
+  api.sendMessage = async () => { posts += 1; throw new Error('connection lost') }
+  api.getConversation = async () => { reads += 1; return { data: [filed(30, 'user', 'server filed this')] } }
+  assert.equal(await store.sendMessage(7, 1, 'server filed this'), null)
+  assert.equal(posts, 1)
+  assert.equal(reads, 1)
+  assert.equal(store.roles[0].lastMessage, 'server filed this')
+})
+
+test('failed reconciliation keeps confirmed preview instead of inventing a browser timestamp', async () => {
+  api.sendMessage = async () => { throw new Error('offline') }
+  api.getConversation = async () => { throw new Error('still offline') }
+  await store.sendMessage(7, 1, 'not confirmed')
+  assert.equal(store.roles[0].lastMessage, 'old preview')
+  assert.equal(store.roles[0].lastMessageAt, '2026-11-20')
+})
+
+test('a slow role-list read cannot replace a newer completed exchange', async () => {
+  const reading = deferred()
+  api.getRoles = () => reading.promise
+  const pending = store.fetchRoles(7)
+  api.sendMessage = async () => ({ data: reply(30, 'completed while reading') })
+  await store.sendMessage(7, 1, 'question')
+  reading.resolve({ data: [{ id: 1, lastMessage: 'obsolete' }] })
+  await pending
+  assert.equal(store.roles[0].lastMessage, 'completed while reading')
+})
+
+test('an A-B-A account switch rejects the original A response despite the same user ID', async () => {
+  const reading = deferred()
+  api.getConversation = () => reading.promise
+  const pending = store.fetchConversation(7, 1)
+  user.currentUser = { id: 8 }
+  user.currentUser = { id: 7 }
+  store.roles = [{ id: 1, lastMessage: 'current account view' }]
+  store.activeRoleId = 1
+  store.messages = [filed(90, 'user', 'current')]
+  reading.resolve({ data: [filed(30, 'role', 'must not leak')] })
+  await pending
+  assert.equal(store.messages[0].id, 90)
+  assert.equal(store.roles[0].lastMessage, 'current account view')
+})
+
+test('a late clear cannot hide a role or clear messages in the new account', async () => {
+  const clearing = deferred()
+  api.clearConversation = () => clearing.promise
+  const pending = store.clearConversation(7, 1)
+  user.currentUser = { id: 8 }
+  store.roles = [{ id: 1, conversationHidden: false, lastMessage: 'another account' }]
+  store.activeRoleId = 1
+  store.messages = [filed(90, 'role', 'keep')]
+  clearing.resolve({ data: {} })
+  await assert.rejects(pending, error => error.code === 'STALE_USER_CONTEXT')
+  assert.equal(store.roles[0].conversationHidden, false)
+  assert.equal(store.messages[0].id, 90)
+})
+
+test('the old send finally cannot unlock a new-account send for the same role ID', async () => {
+  const old = deferred(), current = deferred()
+  let calls = 0
+  api.sendMessage = () => (++calls === 1 ? old.promise : current.promise)
+  const first = store.sendMessage(7, 1, 'old account')
+  user.currentUser = { id: 8 }
+  store.roles = [{ id: 1 }]
+  store.activeRoleId = 1
+  const second = store.sendMessage(8, 1, 'new account')
+  old.resolve({ data: reply(30, 'old reply') })
+  assert.equal(await first, null)
+  assert.equal(store.isSending, true)
+  assert.ok(!store.messages.some(message => message.content === 'old reply'))
+  current.resolve({ data: reply(40, 'current reply') })
+  await second
+  assert.equal(store.isSending, false)
+  assert.equal(store.roles[0].lastMessage, 'current reply')
+})
+
+test('an A-B-A character switch rejects the first A growth response', async () => {
+  const reading = deferred()
+  api.getGrowth = () => reading.promise
+  const pending = store.fetchGrowth(7, 1)
+  store.activeRoleId = 2
+  store.activeRoleId = 1
+  store.growth = { intimacy: 99 }
+  reading.resolve({ data: { intimacy: 1 } })
+  await pending
+  assert.equal(store.growth.intimacy, 99)
+})
+
+test('settings shape updates preserve server preview and do not rewind a concurrent reply', async () => {
+  const saving = deferred()
+  api.updateRole = () => saving.promise
+  const pending = store.updateRole(7, 1, { modelUrl: '/models/a.vrm', modelType: 'vrm' })
+  api.sendMessage = async () => ({ data: reply(30, 'newest preview') })
+  await store.sendMessage(7, 1, 'question')
+  saving.resolve({ data: { id: 1, modelUrl: '/models/a.vrm', modelType: 'vrm', lastMessage: 'old preview' } })
+  await pending
+  assert.equal(store.roles[0].modelUrl, '/models/a.vrm')
+  assert.equal(store.roles[0].lastMessage, 'newest preview')
+})
+
+test('delete and reopen clear both preview fields without restoring old history', async () => {
+  await store.clearConversation(7, 1)
+  api.getConversation = api.sessionHistory = async () => ({ data: [] })
+  api.activeSession = async () => ({ status: 204 })
+  await store.restoreConversation(7, 1)
+  assert.equal(store.roles[0].lastMessage, null)
+  assert.equal(store.roles[0].lastMessageAt, null)
+  assert.equal(store.roles[0].conversationHidden, false)
+  assert.deepEqual(store.messages, [])
+})
+
+test('stream completion updates only the originating role after switching away', async t => {
+  const response = deferred()
+  t.mock.method(globalThis, 'fetch', () => response.promise)
+  const pending = store.sendMessageStream(7, 1, 'question')
+  store.activeRoleId = 2
+  store.messages = [{ id: 90, roleId: 2, content: 'other role' }]
+  response.resolve(new Response(frame('done', reply(30, 'role one answer'))))
+  await pending
+  assert.equal(store.roles[0].lastMessage, 'role one answer')
+  assert.equal(store.messages[0].content, 'other role')
+  assert.equal(store.activeRoleId, 2)
+})
+
+test('a stopped stream previews persisted partial history, not merely delivered words', async t => {
+  const started = deferred()
+  let reads = 0
+  api.getConversation = async () => {
+    reads += 1
+    return { data: [filed(30, 'user', 'question'), { ...filed(31, 'role', 'persisted partial'), partial: true }] }
+  }
+  t.mock.method(globalThis, 'fetch', async (_, options) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame('delta', 'delivered text')))
+      options.signal.addEventListener('abort', () => controller.error(options.signal.reason))
+    }
+  })))
+  const unwatch = watch(() => store.speaking, value => { if (value) started.resolve() }, { flush: 'sync' })
+  const pending = store.sendMessageStream(7, 1, 'question')
+  await started.promise
+  unwatch()
+  store.stopStreaming()
+  await pending
+  assert.equal(reads, 1)
+  assert.equal(store.roles[0].lastMessage, 'persisted partial')
+  assert.equal(store.messages.at(-1).content, 'delivered text')
+})
+
+test('late status, sessions, memories and credential reads cannot populate a new account', async () => {
+  const reading = deferred()
+  api.getStatus = api.activeSession = api.sessionHistory = api.getMemories = api.getGrowth = api.getCredentialStatus = () => reading.promise
+  const requests = [store.fetchStatus(7, 1), store.fetchActiveSession(7, 1), store.fetchSessionHistory(7, 1),
+    store.fetchMemories(7, 1), store.fetchGrowth(7, 1), store.fetchModelStatus(7)]
+  user.currentUser = { id: 8 }
+  store.roles = [{ id: 1 }]
+  store.activeRoleId = 1
+  reading.resolve({ data: [{ id: 99, content: 'old account' }] })
+  await Promise.all(requests)
+  assert.deepEqual(store.memories, [])
+  assert.equal(store.growth, null)
+  assert.equal(store.status, null)
+  assert.equal(store.modelStatus, null)
+  assert.equal(store.activeSession, null)
+})
+
+test('model list failure is not converted to a successful empty library', async () => {
+  const failure = new Error('cannot read directory')
+  api.inviteModels = async () => { throw failure }
+  await assert.rejects(store.fetchInviteModels(7), failure)
+  api.inviteModels = async () => ({ data: [] })
+  assert.deepEqual(await store.fetchInviteModels(7), [])
+})
+
+test('an invitation uses its POST response directly and blocks duplicate clicks', async () => {
+  const invitation = deferred()
+  let calls = 0
+  api.inviteGuest = () => { calls += 1; return invitation.promise }
+  const pending = store.inviteGuest(7, 'rain-fireplace', '/models/a.vrm')
+  await assert.rejects(store.inviteGuest(7, 'rain-fireplace'), error => error.response.status === 409)
+  invitation.resolve({ data: { id: 99, kind: 'guest', name: 'new', modelUrl: '/models/a.vrm' } })
+  const created = await pending
+  assert.equal(created.id, 99)
+  assert.equal(calls, 1)
+  assert.equal(store.roles.at(-1).id, 99)
+  assert.equal(store.isInviting, false)
+})
+
+test('a late invitation cannot put an old-account character in the new account', async () => {
+  const invitation = deferred()
+  api.inviteGuest = () => invitation.promise
+  const pending = store.inviteGuest(7, 'rain-fireplace')
+  user.currentUser = { id: 8 }
+  store.roles = [{ id: 55, kind: 'regular' }]
+  invitation.resolve({ data: { id: 99, kind: 'guest' } })
+  await assert.rejects(pending, error => error.code === 'STALE_USER_CONTEXT')
+  assert.deepEqual(store.roles.map(role => role.id), [55])
+  assert.equal(store.isInviting, false)
+})
+
+test('renaming an asset updates cached references but leaves all conversation data alone', () => {
+  store.roles = [
+    { id: 1, modelUrl: '/models/a.vrm', lastMessage: 'keep preview', lastMessageAt: '2026-11-20' },
+    { id: 2, modelUrl: 'a.vrm', conversationHidden: true },
+    { id: 3, modelUrl: 'https://example.invalid/a.vrm' }
+  ]
+  store.syncRenamedModel(7, 'a.vrm', '/models/b.vrm')
+  assert.equal(store.roles[0].modelUrl, '/models/b.vrm')
+  assert.equal(store.roles[1].modelUrl, '/models/b.vrm')
+  assert.equal(store.roles[1].conversationHidden, true)
+  assert.equal(store.roles[0].lastMessage, 'keep preview')
+  assert.equal(store.roles[0].lastMessageAt, '2026-11-20')
+  assert.equal(store.roles[2].modelUrl, 'https://example.invalid/a.vrm')
+})
+
+test('a role-list read started before rename cannot reintroduce an obsolete URL', async () => {
+  const reading = deferred()
+  store.roles[0].modelUrl = '/models/a.vrm'
+  api.getRoles = () => reading.promise
+  const pending = store.fetchRoles(7)
+  store.syncRenamedModel(7, 'a.vrm', '/models/b.vrm')
+  reading.resolve({ data: [{ id: 1, modelUrl: '/models/a.vrm' }] })
+  await pending
+  assert.equal(store.roles[0].modelUrl, '/models/b.vrm')
+  assert.equal(store.isLoading, false)
 })

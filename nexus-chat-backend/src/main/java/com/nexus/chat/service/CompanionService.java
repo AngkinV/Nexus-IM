@@ -48,6 +48,11 @@ public class CompanionService {
     private final CompanionCryptoService cryptoService;
     private final TavernSessionRepository sessionRepository;
     private final CompanionModelResolver modelResolver;
+    private final CompanionModelAssetCatalog modelAssetCatalog;
+    private final UserAssetService userAssetService;
+
+    /** How {@link UserAssetService} addresses a model in a user's own library. */
+    private static final String USER_MODEL_URL_PREFIX = "/api/companion/user-assets/file/model/";
 
     public List<CompanionRoleDTO> initDefaultRoles(Long userId) {
         if (roleRepository.countByUserId(userId) > 0) {
@@ -101,7 +106,7 @@ public class CompanionService {
             presence.put(status.getRoleId(), status.getSummary());
         }
         // The row preview: the newest line per character, one query for the list.
-        // The message itself is kept, so the line and its sender are one row's.
+        // The message itself is kept, so the line, its sender and its time are one row's.
         Map<Long, CompanionMessage> lastMessage = new HashMap<>();
         for (CompanionMessage msg : messageRepository.findLatestPerRole(userId)) {
             lastMessage.put(msg.getRoleId(), msg);
@@ -115,9 +120,66 @@ public class CompanionService {
         return result;
     }
 
+    /**
+     * Only the profile fields below are writable. lastMessage, lastMessageAt,
+     * presence, kind and conversationHidden in the request are ignored: they are
+     * derived from history and state, and the response reports the real ones.
+     */
     public CompanionRoleDTO updateRole(Long userId, Long roleId, CompanionRoleDTO update) {
         CompanionRole role = roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
+
+        String shapeUrl = role.getModelUrl(), shapeType = role.getModelType();
+        boolean shapeChanged = update.getModelUrl() != null || update.getModelType() != null;
+        if (shapeChanged) {
+            String requested = update.getModelUrl() == null ? shapeUrl : update.getModelUrl().trim();
+            if (requested == null || requested.isBlank()) {
+                shapeUrl = null;
+                shapeType = null;
+            } else {
+                String inferred;
+                if (requested.startsWith("http://") || requested.startsWith("https://")) {
+                    try {
+                        java.net.URI uri = java.net.URI.create(requested);
+                        if (uri.getHost() == null || uri.getUserInfo() != null) throw new IllegalArgumentException();
+                        String path = uri.getPath().toLowerCase(java.util.Locale.ROOT);
+                        inferred = path.endsWith(".vrm") ? "vrm" :
+                                path.endsWith(".glb") || path.endsWith(".gltf") ? "gltf" :
+                                path.endsWith(".fbx") ? "fbx" : null;
+                        if (inferred == null) throw new IllegalArgumentException();
+                        shapeUrl = uri.toString();
+                    } catch (IllegalArgumentException e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_URL_INVALID);
+                    }
+                } else if (requested.startsWith(USER_MODEL_URL_PREFIX)) {
+                    // A model from this account's own library, imported in settings.
+                    // It is not in the shared catalog; what makes it bindable is
+                    // that the library holds it for this user. Uploads there are VRM only.
+                    try {
+                        userAssetService.file(userId, "model", requested.substring(USER_MODEL_URL_PREFIX.length()));
+                    } catch (ResponseStatusException e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_NOT_FOUND);
+                    } catch (java.io.IOException e) {
+                        throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                                CompanionModelAssetCatalog.CATALOG_UNAVAILABLE);
+                    }
+                    shapeUrl = requested;
+                    inferred = "vrm";
+                } else {
+                    CompanionModelAssetCatalog.ModelAsset asset = modelAssetCatalog.requireAsset(requested);
+                    if ("vrm".equals(asset.type()) && !asset.stageReady()) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_FILE_INVALID);
+                    }
+                    shapeUrl = asset.fileUrl();
+                    inferred = asset.type();
+                }
+                String declared = update.getModelType();
+                if (declared != null && !declared.isBlank() && !declared.trim().equalsIgnoreCase(inferred)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, CompanionModelAssetCatalog.MODEL_TYPE_UNSUPPORTED);
+                }
+                shapeType = inferred;
+            }
+        }
 
         if (update.getName() != null) role.setName(update.getName());
         if (update.getTraits() != null) role.setTraits(JsonUtil.toJson(update.getTraits()));
@@ -127,8 +189,10 @@ public class CompanionService {
         if (update.getBackground() != null) role.setBackground(blankToNull(update.getBackground()));
         if (update.getGreeting() != null) role.setGreeting(blankToNull(update.getGreeting()));
         if (update.getAvatarUrl() != null) role.setAvatarUrl(update.getAvatarUrl());
-        if (update.getModelUrl() != null) role.setModelUrl(update.getModelUrl());
-        if (update.getModelType() != null) role.setModelType(update.getModelType());
+        if (shapeChanged) {
+            role.setModelUrl(shapeUrl);
+            role.setModelType(shapeType);
+        }
         if (update.getActive() != null) role.setActive(update.getActive());
 
         roleRepository.save(role);
@@ -852,7 +916,8 @@ public class CompanionService {
 
     /**
      * One character on its own — after an edit or an invitation. Carries what a
-     * list row carries, so putting it in place of that row loses nothing.
+     * list row carries, so putting it in place of that row loses nothing: its
+     * real recency, presence and last line, in three single-row reads.
      */
     public CompanionRoleDTO toRoleDTO(CompanionRole role) {
         LocalDateTime lastMessageAt = conversationRepository
@@ -868,12 +933,16 @@ public class CompanionService {
     }
 
     /**
-     * Bulk-aware variant — no per-row queries. The preview line and its sender
-     * are both read off {@code lastMessage}, so they always describe the same
-     * message; null means nothing has been said yet.
+     * Bulk-aware variant — no per-row queries. The preview line, its sender and
+     * its time are all read off {@code lastMessage}, so they always describe the
+     * same message; null means nothing has been said yet, and then the row has
+     * no time either — the conversation's own timestamp is not a message.
+     * {@code conversationLastAt} only stands in when the message carries no time.
      */
-    public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime lastMessageAt, String presence,
+    public CompanionRoleDTO toRoleDTO(CompanionRole role, LocalDateTime conversationLastAt, String presence,
                                       CompanionMessage lastMessage) {
+        String lastLine = lastMessage == null || lastMessage.getContent() == null
+                || lastMessage.getContent().isBlank() ? null : lastMessage.getContent();
         return new CompanionRoleDTO(
                 role.getId(),
                 role.getName(),
@@ -885,11 +954,12 @@ public class CompanionService {
                 role.getModelType(),
                 role.getActive(),
                 role.getKind() == null ? CompanionRole.Kind.regular.name() : role.getKind().name(),
-                lastMessageAt,
+                lastMessage == null ? null
+                        : lastMessage.getCreatedAt() != null ? lastMessage.getCreatedAt() : conversationLastAt,
                 presence,
-                lastMessage == null ? null : lastMessage.getContent(),
+                lastLine,
                 // A message that names no sender stays unattributed; the list must not guess one.
-                lastMessage == null || lastMessage.getSenderType() == null
+                lastLine == null || lastMessage.getSenderType() == null
                         ? null : lastMessage.getSenderType().name(),
                 role.getBackground(),
                 role.getGreeting(),
