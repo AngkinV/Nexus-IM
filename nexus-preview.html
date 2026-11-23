@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nexus — 即时通讯 × AI Agent</title>
+<meta name="description" content="Nexus 把会话、消息、群组、在线状态与 Agent 的工具调用、记忆、知识库放进同一套实时链路。" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ══════════ Tokens ══════════ */
+:root{
+  --bg:#08080a;
+  --surface:#0d0d10;
+  --surface-1:#121215;
+  --surface-2:#17171b;
+  --surface-3:#1e1e23;
+  --line:rgba(255,255,255,.075);
+  --line-2:rgba(255,255,255,.13);
+  --ink:#ffffff;
+  --ink-1:#e6e4e9;
+  --ink-2:#a3a6aa;
+  --ink-3:#71757a;
+  --ink-4:#4a4d52;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --ease:cubic-bezier(.16,1,.3,1);
+  --maxw:1160px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg);color:var(--ink-1);
+  font-family:var(--sans);font-size:15.5px;line-height:1.75;
+  font-feature-settings:"cv11","ss01";
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+::selection{background:#fff;color:#08080a}
+a{color:inherit;text-decoration:none}
+code,.mono{font-family:var(--mono);font-size:.85em;letter-spacing:-.01em}
+
+/* 顶部光晕 + 细网格 */
+.glow{
+  position:fixed;top:-320px;left:50%;transform:translateX(-50%);
+  width:1200px;height:700px;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse at center,rgba(255,255,255,.055),transparent 62%);
+}
+.grid-bg{
+  position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(to right,rgba(255,255,255,.02) 1px,transparent 1px),
+    linear-gradient(to bottom,rgba(255,255,255,.02) 1px,transparent 1px);
+  background-size:88px 88px;
+  -webkit-mask-image:radial-gradient(ellipse 100% 55% at 50% 0%,#000 10%,transparent 75%);
+  mask-image:radial-gradient(ellipse 100% 55% at 50% 0%,#000 10%,transparent 75%);
+}
+.wrap{position:relative;z-index:1;max-width:var(--maxw);margin:0 auto;padding:0 40px}
+@media(max-width:720px){.wrap{padding:0 22px}}
+
+/* ══════════ Nav ══════════ */
+nav{
+  position:sticky;top:0;z-index:60;
+  background:rgba(8,8,10,.97);
+  backdrop-filter:blur(20px) saturate(150%);
+  -webkit-backdrop-filter:blur(20px) saturate(150%);
+  border-bottom:1px solid var(--line);
+}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px;max-width:var(--maxw)}
+.brand{display:flex;align-items:center;gap:11px;font-weight:600;letter-spacing:-.02em;color:var(--ink);font-size:15px}
+.brand-mark{
+  width:26px;height:26px;border-radius:7px;
+  border:1px solid var(--line-2);background:linear-gradient(160deg,#1e1e23,#0e0e11);
+  display:grid;place-items:center;font-family:var(--mono);font-size:11.5px;color:var(--ink);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07);
+}
+.navlinks{display:flex;gap:30px;font-size:13px;color:var(--ink-3);letter-spacing:.01em}
+.navlinks a{transition:color .2s var(--ease);position:relative}
+.navlinks a::after{
+  content:"";position:absolute;left:0;right:0;bottom:-5px;height:1px;
+  background:var(--ink);transform:scaleX(0);transform-origin:left;
+  transition:transform .3s var(--ease);
+}
+.navlinks a:hover{color:var(--ink)}
+.navlinks a:hover::after{transform:scaleX(1)}
+@media(max-width:820px){.navlinks{display:none}}
+
+/* ══════════ Hero ══════════ */
+header.hero{padding:110px 0 0;position:relative}
+.hero-inner{max-width:860px}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink-3);margin-bottom:30px;display:flex;align-items:center;gap:12px;
+}
+.eyebrow::before{content:"";width:32px;height:1px;background:var(--ink-4)}
+h1{
+  font-size:clamp(40px,6.2vw,74px);line-height:1.02;letter-spacing:-.045em;
+  font-weight:600;color:var(--ink);margin-bottom:30px;
+}
+h1 .dim{color:var(--ink-3)}
+.lede{
+  font-size:17.5px;line-height:1.72;color:var(--ink-2);max-width:660px;margin-bottom:38px;
+  font-weight:400;
+}
+.lede strong{color:var(--ink);font-weight:500}
+.tags{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:44px}
+.tag{
+  font-family:var(--mono);font-size:10.5px;padding:5px 11px;border-radius:5px;
+  border:1px solid var(--line);color:var(--ink-2);background:var(--surface-1);
+  letter-spacing:.01em;
+}
+.hero-actions{display:flex;gap:11px;flex-wrap:wrap}
+.btn{
+  font-size:13.5px;padding:11px 24px;border-radius:8px;border:1px solid var(--line-2);
+  background:var(--surface-1);color:var(--ink-1);transition:all .22s var(--ease);
+  cursor:pointer;font-family:var(--sans);font-weight:450;letter-spacing:.005em;
+  display:inline-flex;align-items:center;gap:8px;
+}
+.btn:hover{background:var(--surface-3);border-color:rgba(255,255,255,.22);transform:translateY(-1px)}
+.btn.primary{background:var(--ink);color:#08080a;border-color:var(--ink);font-weight:550}
+.btn.primary:hover{background:#e6e4e9;border-color:#e6e4e9}
+.btn .arw{font-size:12px;opacity:.55;transition:transform .22s var(--ease)}
+.btn:hover .arw{transform:translateX(3px)}
+
+/* 眼睛带 */
+.eye-band{position:relative;margin-top:26px;height:400px;overflow:hidden}
+.eye-band::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(to bottom,var(--bg) 0%,transparent 9%,transparent 90%,var(--bg) 100%);
+}
+#eye{width:100%;height:100%;display:block}
+@media(max-width:820px){.eye-band{height:250px;margin-top:14px}}
+
+/* ══════════ 数字条 ══════════ */
+.stats{
+  display:grid;grid-template-columns:repeat(4,1fr);
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  margin:0 0 8px;
+}
+@media(max-width:780px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{padding:30px 24px 30px 0;border-right:1px solid var(--line);position:relative}
+.stat:not(:first-child){padding-left:26px}
+.stat:last-child{border-right:none}
+@media(max-width:780px){
+  .stat:nth-child(2){border-right:none}
+  .stat:nth-child(1),.stat:nth-child(2){border-bottom:1px solid var(--line)}
+  .stat:nth-child(3){padding-left:0}
+}
+.stat b{
+  display:block;font-size:34px;font-weight:600;color:var(--ink);
+  letter-spacing:-.04em;line-height:1;margin-bottom:9px;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum";
+}
+.stat b i{font-style:normal;font-size:16px;font-weight:450;color:var(--ink-2);margin-left:2px}
+.stat span{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.1em;text-transform:uppercase}
+
+/* ══════════ Section 通用（编辑式左栏） ══════════ */
+section{padding:130px 0 0;scroll-margin-top:80px}
+.sec{display:grid;grid-template-columns:200px 1fr;gap:56px;align-items:start}
+@media(max-width:960px){.sec{grid-template-columns:1fr;gap:26px}}
+.rail{position:sticky;top:96px}
+@media(max-width:960px){.rail{position:static}}
+.rail-num{
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.2em;
+  display:block;margin-bottom:12px;
+}
+.rail-title{
+  font-size:12px;color:var(--ink-2);letter-spacing:.12em;text-transform:uppercase;
+  font-family:var(--mono);line-height:1.5;
+}
+.rail-line{margin-top:18px;height:1px;width:38px;background:var(--line-2)}
+h2{
+  font-size:clamp(28px,3.6vw,42px);line-height:1.14;letter-spacing:-.035em;
+  font-weight:600;color:var(--ink);margin-bottom:20px;
+}
+h2 .dim{color:var(--ink-4)}
+.sec-desc{color:var(--ink-2);font-size:15.5px;line-height:1.78;max-width:640px;margin-bottom:52px}
+.sec-desc code{background:var(--surface-2);padding:2px 7px;border-radius:4px;color:var(--ink-1);border:1px solid var(--line)}
+
+/* ══════════ 产品界面模拟 ══════════ */
+.mock-wrap{position:relative;margin-bottom:110px}
+.mock{
+  position:relative;border-radius:14px;overflow:hidden;
+  border:1px solid var(--line-2);background:var(--surface);
+  box-shadow:0 60px 120px -50px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.02) inset;
+}
+.mock-bar{
+  height:38px;display:flex;align-items:center;gap:7px;padding:0 15px;
+  border-bottom:1px solid var(--line);background:var(--surface-1);
+}
+.dot{width:9px;height:9px;border-radius:50%;background:#2c2c30;border:1px solid rgba(255,255,255,.08)}
+.mock-title{
+  margin-left:12px;font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.08em;
+}
+.mock-body{display:grid;grid-template-columns:54px 236px 1fr;height:452px}
+@media(max-width:880px){
+  .mock-body{grid-template-columns:48px 1fr;height:400px}
+  .mock-list{display:none}
+}
+/* 导航栏 */
+.m-rail{
+  border-right:1px solid var(--line);padding:14px 0;display:flex;flex-direction:column;
+  align-items:center;gap:16px;background:var(--surface-1);
+}
+.m-logo{
+  width:24px;height:24px;border-radius:6px;background:#fff;color:#08080a;
+  display:grid;place-items:center;font-family:var(--mono);font-size:10.5px;font-weight:700;margin-bottom:8px;
+}
+.m-ico{
+  width:26px;height:26px;border-radius:7px;background:var(--surface-3);
+  border:1px solid var(--line);position:relative;
+}
+.m-ico.on{background:#fff;border-color:#fff}
+.m-ico.on::after{
+  content:"";position:absolute;left:-13px;top:50%;transform:translateY(-50%);
+  width:2px;height:13px;background:#fff;border-radius:2px;
+}
+/* 会话列表 */
+.m-list{border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+.m-search{
+  margin:12px 12px 8px;height:27px;border-radius:6px;background:var(--surface-2);
+  border:1px solid var(--line);display:flex;align-items:center;padding:0 9px;
+  font-family:var(--mono);font-size:9.5px;color:var(--ink-4);
+}
+.m-item{display:flex;gap:9px;padding:9px 12px;align-items:center;position:relative}
+.m-item.on{background:var(--surface-2)}
+.m-item.on::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;background:#fff}
+.m-av{
+  width:29px;height:29px;border-radius:50%;flex:none;display:grid;place-items:center;
+  font-size:10.5px;font-weight:600;color:#08080a;font-family:var(--mono);
+}
+.m-av.a{background:linear-gradient(150deg,#fff,#c4c7c8)}
+.m-av.b{background:linear-gradient(150deg,#c4c7c8,#8e9192)}
+.m-av.c{background:linear-gradient(150deg,#e2e2e2,#a3a6aa)}
+.m-txt{min-width:0;flex:1}
+.m-name{font-size:11.5px;color:var(--ink-1);font-weight:500;display:flex;justify-content:space-between;gap:6px}
+.m-name em{font-style:normal;font-family:var(--mono);font-size:8.5px;color:var(--ink-4);font-weight:400}
+.m-prev{
+  font-size:10px;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  margin-top:1px;
+}
+.m-badge{
+  font-family:var(--mono);font-size:8.5px;background:#fff;color:#08080a;
+  border-radius:9px;padding:1px 5px;font-weight:600;flex:none;
+}
+/* 会话区 */
+.m-main{display:flex;flex-direction:column;overflow:hidden;position:relative}
+.m-head{
+  height:47px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  padding:0 16px;gap:9px;flex:none;
+}
+.m-head .m-av{width:25px;height:25px;font-size:9.5px}
+.m-head-t{font-size:12.5px;color:var(--ink);font-weight:500}
+.m-head-s{font-family:var(--mono);font-size:9px;color:var(--ink-4);margin-top:-2px}
+.m-feed{flex:1;padding:16px;display:flex;flex-direction:column;gap:11px;overflow:hidden}
+.msg{display:flex;gap:8px;max-width:74%}
+.msg.me{align-self:flex-end;flex-direction:row-reverse}
+.msg .m-av{width:23px;height:23px;font-size:8.5px}
+.bub{
+  padding:8px 12px;border-radius:11px;font-size:11.5px;line-height:1.55;
+  background:var(--surface-3);color:var(--ink-1);border:1px solid var(--line);
+}
+.msg.me .bub{background:#fff;color:#08080a;border-color:#fff;font-weight:450}
+/* AI 思考卡 */
+.ai-card{
+  position:absolute;right:14px;bottom:14px;width:252px;
+  background:rgba(13,13,16,.94);backdrop-filter:blur(12px);
+  border:1px solid var(--line-2);border-radius:11px;padding:12px 13px;
+  box-shadow:0 24px 48px -20px rgba(0,0,0,.9);
+}
+@media(max-width:1100px){.ai-card{display:none}}
+.ai-top{display:flex;align-items:center;gap:7px;margin-bottom:10px}
+.ai-dot{
+  width:5px;height:5px;border-radius:50%;background:#fff;
+  box-shadow:0 0 0 3px rgba(255,255,255,.14);
+  animation:pulse 2s infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.ai-title{font-family:var(--mono);font-size:9.5px;color:var(--ink-2);letter-spacing:.1em;text-transform:uppercase}
+.ai-steps{display:flex;flex-direction:column;gap:6px}
+.ai-step{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--ink-3)}
+.ai-step .tk{
+  width:11px;height:11px;border-radius:3px;border:1px solid var(--line-2);flex:none;
+  display:grid;place-items:center;font-size:7px;color:var(--ink-2);
+}
+.ai-step.done .tk{background:#fff;border-color:#fff;color:#08080a}
+.ai-step.run .tk{border-color:#fff;animation:pulse 1.4s infinite}
+.ai-step b{font-weight:450;color:var(--ink-2);font-family:var(--mono);font-size:9.5px}
+.ai-step span{margin-left:auto;font-family:var(--mono);font-size:8.5px;color:var(--ink-4)}
+.mock-cap{
+  margin-top:18px;font-family:var(--mono);font-size:10.5px;color:var(--ink-4);
+  letter-spacing:.06em;text-align:center;
+}
+
+/* ══════════ 架构图 ══════════ */
+.arch{
+  border:1px solid var(--line);border-radius:16px;background:
+    linear-gradient(180deg,var(--surface-1),var(--surface));
+  padding:44px 36px 30px;overflow:hidden;position:relative;
+}
+.arch::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 60% 50% at 50% 0%,rgba(255,255,255,.03),transparent 70%);
+}
+.arch svg{width:100%;height:auto;display:block;position:relative}
+.arch-legend{
+  display:flex;gap:28px;flex-wrap:wrap;margin-top:32px;padding-top:24px;
+  border-top:1px solid var(--line);font-family:var(--mono);font-size:10.5px;
+  color:var(--ink-3);letter-spacing:.05em;
+}
+.arch-legend i{display:inline-block;width:20px;height:1.5px;vertical-align:middle;margin-right:9px;background:var(--ink-3)}
+.arch-legend .dash{border-top:1.5px dashed var(--ink-3);height:0;background:none}
+@media(max-width:720px){.arch{padding:26px 18px 20px}}
+
+/* 三格说明 */
+.loop{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);margin-top:20px;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+@media(max-width:860px){.loop{grid-template-columns:1fr}}
+.loop-cell{background:var(--surface-1);padding:28px 26px}
+.loop-cell .n{
+  font-family:var(--mono);font-size:10px;color:var(--ink-4);letter-spacing:.16em;
+  display:block;margin-bottom:13px;
+}
+.loop-cell h4{font-size:14.5px;color:var(--ink);margin-bottom:9px;font-weight:550;letter-spacing:-.01em}
+.loop-cell p{font-size:13.5px;color:var(--ink-3);line-height:1.7}
+
+/* ══════════ 实时链路 ══════════ */
+.pipe{border-top:1px solid var(--line)}
+.pipe-row{
+  display:grid;grid-template-columns:132px 1fr;gap:28px;align-items:baseline;
+  padding:24px 0;border-bottom:1px solid var(--line);
+  transition:background .25s var(--ease);
+}
+@media(max-width:720px){.pipe-row{grid-template-columns:1fr;gap:8px;padding:20px 0}}
+.pipe-key{
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.14em;
+  text-transform:uppercase;
+}
+.pipe-val{font-size:14px;color:var(--ink-2);line-height:1.72}
+.pipe-val b{color:var(--ink);font-weight:500}
+.pipe-val .m{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-1);
+  background:var(--surface-2);padding:2px 7px;border-radius:4px;border:1px solid var(--line);
+}
+
+/* ══════════ 亮点 Bento ══════════ */
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+@media(max-width:980px){.bento{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:620px){.bento{grid-template-columns:1fr}}
+.hl{
+  background:linear-gradient(180deg,var(--surface-1),var(--surface));
+  border:1px solid var(--line);border-radius:14px;padding:30px 28px;
+  position:relative;overflow:hidden;transition:border-color .3s var(--ease),transform .3s var(--ease);
+  display:flex;flex-direction:column;
+}
+.hl:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.hl::after{
+  content:"";position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(255,255,255,.04),transparent 70%);
+  transition:opacity .3s var(--ease);
+}
+.hl:hover::after{opacity:1}
+.s4{grid-column:span 4}.s2{grid-column:span 2}.s3{grid-column:span 3}
+@media(max-width:980px){.s4,.s2,.s3{grid-column:span 1}}
+@media(max-width:980px){.s4{grid-column:span 2}}
+@media(max-width:620px){.s4{grid-column:span 1}}
+.hl-idx{
+  font-family:var(--mono);font-size:10px;color:var(--ink-4);letter-spacing:.16em;
+  margin-bottom:16px;display:block;
+}
+.hl h3{
+  font-size:16.5px;color:var(--ink);font-weight:550;margin-bottom:12px;
+  letter-spacing:-.015em;line-height:1.42;
+}
+.hl p{font-size:13.5px;color:var(--ink-3);line-height:1.72}
+.hl p + p{margin-top:9px}
+.hl .why{
+  margin-top:auto;padding-top:16px;font-size:12.5px;color:var(--ink-2);
+  border-top:1px solid var(--line);line-height:1.65;
+}
+.hl .why b{
+  color:var(--ink-1);font-weight:500;font-family:var(--mono);font-size:10px;
+  letter-spacing:.1em;text-transform:uppercase;display:block;margin-bottom:5px;
+}
+.kv{display:flex;flex-wrap:wrap;gap:5px;margin-top:16px}
+.kv span{
+  font-family:var(--mono);font-size:10px;color:var(--ink-2);
+  background:var(--surface-2);border:1px solid var(--line);padding:2.5px 8px;border-radius:4px;
+}
+
+/* 亮点内的迷你步骤图 */
+.mini-steps{display:flex;flex-direction:column;gap:7px;margin:16px 0 4px}
+.mini-step{
+  display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:10px;
+  color:var(--ink-3);
+}
+.mini-step .bar{
+  height:3px;border-radius:2px;background:var(--surface-3);flex:1;overflow:hidden;position:relative;
+}
+.mini-step .bar::after{
+  content:"";position:absolute;inset:0;width:var(--w,60%);background:#fff;border-radius:2px;opacity:.75;
+}
+.mini-step .nm{width:76px;flex:none;color:var(--ink-2);white-space:nowrap;letter-spacing:-.02em;padding-right:10px}
+
+/* ══════════ 技术栈 ══════════ */
+.stack{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+@media(max-width:880px){.stack{grid-template-columns:1fr}}
+.stack-col{background:var(--surface-1);padding:32px 28px}
+.stack-col h4{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;color:var(--ink-4);
+  margin-bottom:22px;text-transform:uppercase;
+}
+.stack-col ul{list-style:none}
+.stack-col li{
+  font-size:13.5px;color:var(--ink-1);padding:11px 0;border-bottom:1px solid var(--line);
+  line-height:1.35;
+}
+.stack-col li:last-child{border-bottom:none}
+.stack-col li em{
+  display:block;font-style:normal;font-family:var(--mono);font-size:10px;
+  color:var(--ink-4);letter-spacing:.04em;margin-top:3px;
+}
+
+/* ══════════ 结尾 ══════════ */
+.closing{padding:150px 0 0;text-align:center}
+.closing-line{
+  font-size:clamp(24px,3.4vw,38px);line-height:1.35;letter-spacing:-.03em;
+  color:var(--ink);font-weight:550;max-width:720px;margin:0 auto 26px;
+}
+.closing-line .dim{color:var(--ink-4)}
+.closing p{color:var(--ink-3);font-size:14.5px;max-width:520px;margin:0 auto}
+
+footer{
+  margin-top:110px;border-top:1px solid var(--line);padding:36px 0 56px;
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.08em;
+}
+
+/* ══════════ 滚动淡入 ══════════ */
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
+.reveal.in{opacity:1;transform:none}
+.reveal.d1{transition-delay:.08s}
+.reveal.d2{transition-delay:.16s}
+.reveal.d3{transition-delay:.24s}
+@media(prefers-reduced-motion:reduce){
+  .reveal{opacity:1;transform:none;transition:none}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<div class="glow"></div>
+<div class="grid-bg"></div>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="brand-mark">N</span>Nexus</div>
+    <div class="navlinks">
+      <a href="#product">产品</a>
+      <a href="#arch">架构</a>
+      <a href="#realtime">实时</a>
+      <a href="#highlights">设计</a>
+      <a href="#agent">Agent</a>
+      <a href="#stack">技术栈</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════ Hero ══════════ -->
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-inner">
+      <div class="eyebrow">IM × AI Agent</div>
+      <h1>一个能思考的<br>即时通讯系统<span class="dim">.</span></h1>
+      <p class="lede">
+        Nexus 不是「聊天软件 + 一个 AI 侧边栏」。它把 <strong>会话、消息、群组、在线状态</strong>
+        和 <strong>Agent 的工具调用、记忆、知识库</strong>放进同一套实时链路 ——
+        模型看到的是真实的聊天上下文，界面上跑的每一步都是后端的真实返回。
+      </p>
+      <div class="tags">
+        <span class="tag">Java 17 · Spring Boot 3.2</span>
+        <span class="tag">Python · FastAPI · LangGraph</span>
+        <span class="tag">Vue 3 · Electron</span>
+        <span class="tag">MySQL · Redis · ChromaDB</span>
+        <span class="tag">STOMP / SockJS</span>
+      </div>
+      <div class="hero-actions">
+        <a class="btn primary" href="#product">看看它长什么样 <span class="arw">→</span></a>
+        <a class="btn" href="#arch">架构思路</a>
+      </div>
+    </div>
+  </div>
+  <div class="eye-band">
+    <canvas id="eye" aria-hidden="true"></canvas>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats reveal">
+    <div class="stat"><b>190</b><span>REST 接口</span></div>
+    <div class="stat"><b>4.6<i>万</i></b><span>前端代码行</span></div>
+    <div class="stat"><b>2.3<i>万</i></b><span>Java 代码行</span></div>
+    <div class="stat"><b>7</b><span>Agent 只读工具</span></div>
+  </div>
+</div>
+
+<!-- ══════════ 产品界面 ══════════ -->
+<section id="product">
+  <div class="wrap">
+    <div class="sec">
+      <div class="rail">
+        <span class="rail-num">01</span>
+        <div class="rail-title">Interface</div>
+        <div class="rail-line"></div>
+      </div>
+      <div>
+        <h2 class="reveal">三栏工作台，<span class="dim">一眼看得懂</span></h2>
+        <p class="sec-desc reveal">
+          导航栏、会话列表、对话区，加上右侧的 Agent 思考过程。
+          界面是纯黑白灰的单色体系 —— 没有彩色标签、没有装饰性图标，
+          所有视觉重量都留给内容和状态本身。
+        </p>
+
+        <div class="mock-wrap reveal">
+          <div class="mock">
+            <div class="mock-bar">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <span class="mock-title">NEXUS</span>
+            </div>
+            <div class="mock-body">
+              <!-- 导航栏 -->
+              <div class="m-rail">
+                <div class="m-logo">N</div>
+                <div class="m-ico on"></div>
+                <div class="m-ico"></div>
+                <div class="m-ico"></div>
+                <div class="m-ico"></div>
+              </div>
+              <!-- 会话列表 -->
+              <div class="m-list">
+                <div class="m-search">搜索会话</div>
+                <div class="m-item on">
+                  <div class="m-av a">L</div>
+                  <div class="m-txt">
+                    <div class="m-name">林澈 <em>14:22</em></div>
+                    <div class="m-prev">这份方案我改完了</div>
+                  </div>
+                  <span class="m-badge">2</span>
+                </div>
+                <div class="m-item">
+                  <div class="m-av b">G</div>
+                  <div class="m-txt">
+                    <div class="m-name">产品组 <em>13:08</em></div>
+                    <div class="m-prev">周会纪要已经上传</div>
+                  </div>
+                </div>
+                <div class="m-item">
+                  <div class="m-av c">C</div>
+                  <div class="m-txt">
+                    <div class="m-name">陈默 <em>昨天</em></div>
+                    <div class="m-prev">好的，明天见</div>
+                  </div>
+                </div>
+                <div class="m-item">
+                  <div class="m-av a">S</div>
+                  <div class="m-txt">
+                    <div class="m-name">苏晚 <em>昨天</em></div>
+                    <div class="m-prev">文件已收到</div>
+                  </div>
+                </div>
+              </div>
+              <!-- 对话区 -->
+              <div class="m-main">
+                <div class="m-head">
+                  <div class="m-av a">L</div>
+                  <div>
+                    <div class="m-head-t">林澈</div>
+                    <div class="m-head-s">在线</div>
+                  </div>
+                </div>
+                <div class="m-feed">
+                  <div class="msg">
+                    <div class="m-av a">L</div>
+                    <div class="bub">这版交互稿你看过了吗</div>
+                  </div>
+                  <div class="msg me">
+                    <div class="m-av c">M</div>
+                    <div class="bub">看了，第三屏的状态切换我想再确认一下</div>
+                  </div>
+                  <div class="msg">
+                    <div class="m-av a">L</div>
+                    <div class="bub">好，我把几种情况都列出来</div>
+                  </div>
+                </div>
+                <!-- AI 思考卡 -->
+                <div class="ai-card">
+                  <div class="ai-top">
+                    <span class="ai-dot"></span>
+                    <span class="ai-title">Agent · 思考</span>
+                  </div>
+                  <div class="ai-steps">
+                    <div class="ai-step done"><span class="tk">✓</span><b>读取上下文</b><span>20 轮</span></div>
+                    <div class="ai-step done"><span class="tk">✓</span><b>检索消息</b><span>1.2s</span></div>
+                    <div class="ai-step run"><span class="tk"></span><b>生成回答</b><span>···</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mock-cap">界面示意 · 黑白灰单色体系</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 架构 ══════════ -->
+<section id="arch">
+  <div class="wrap">
+    <div class="sec">
+      <div class="rail">
+        <span class="rail-num">02</span>
+        <div class="rail-title">Architecture</div>
+        <div class="rail-line"></div>
+      </div>
+      <div>
+        <h2 class="reveal">三个进程，<span class="dim">一条单向闭环</span></h2>
+        <p class="sec-desc reveal">
+          系统被刻意切成三段：Java 网关、Python Agent、客户端。
+          流量只能沿着一个方向流 —— 客户端永远只跟 Java 说话，Java 永远不直接调 LLM，
+          Python 也永远不直接面对客户端。这条约束是后面所有设计的地基。
+        </p>
+
+        <div class="arch reveal">
+          <svg viewBox="0 0 920 430" role="img" aria-label="Nexus 三段式架构图">
+            <defs>
+              <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="2.6" orient="auto">
+                <path d="M0,0 L0,5.2 L7,2.6 z" fill="#71757a"/>
+              </marker>
+              <marker id="arw" markerWidth="8" markerHeight="8" refX="7" refY="2.6" orient="auto">
+                <path d="M0,0 L0,5.2 L7,2.6 z" fill="#e6e4e9"/>
+              </marker>
+              <style>
+                .bx{fill:#17171b;stroke:#2c2c30;stroke-width:1;rx:10}
+                .bx-hi{fill:#1e1e23;stroke:#4a4d52;stroke-width:1;rx:10}
+                .t{fill:#e6e4e9;font-family:"JetBrains Mono",monospace;font-size:11.5px}
+                .ts{fill:#71757a;font-family:"JetBrains Mono",monospace;font-size:9px}
+                .tw{fill:#fff;font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:500}
+                .th{fill:#a3a6aa;font-family:"JetBrains Mono",monospace;font-size:9.5px}
+                .ln{stroke:#4a4d52;stroke-width:1;fill:none;marker-end:url(#ar)}
+                .lnw{stroke:#a3a6aa;stroke-width:1.2;fill:none;marker-end:url(#arw)}
+                .lnd{stroke:#4a4d52;stroke-width:1;fill:none;stroke-dasharray:3.5 4;marker-end:url(#ar)}
+                .cap{fill:#4a4d52;font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:2px}
+              </style>
+            </defs>
+
+            <!-- 列标签 -->
+            <text class="cap" x="28" y="20">CLIENT</text>
+            <text class="cap" x="318" y="20">GATEWAY</text>
+            <text class="cap" x="628" y="20">AI PLANE</text>
+            <line x1="28" y1="30" x2="892" y2="30" stroke="#1e1e23"/>
+
+            <!-- 客户端 -->
+            <rect class="bx" x="28" y="66" width="196" height="58"/>
+            <text class="t" x="46" y="90">Electron 桌面端</text>
+            <text class="ts" x="46" y="108">Vue 3 · WebRTC · Dexie</text>
+
+            <rect class="bx" x="28" y="140" width="196" height="58"/>
+            <text class="t" x="46" y="164">Web 浏览器端</text>
+            <text class="ts" x="46" y="182">同一份前端产物</text>
+
+            <!-- Java -->
+            <rect class="bx-hi" x="318" y="66" width="196" height="132"/>
+            <text class="tw" x="336" y="92">Java 网关 :8080</text>
+            <text class="ts" x="336" y="112">Spring Boot 3.2 · Security</text>
+            <text class="ts" x="336" y="128">STOMP · Redis · JPA</text>
+            <text class="ts" x="336" y="150" fill="#a3a6aa">业务中台 + 唯一数据源</text>
+            <text class="ts" x="336" y="166" fill="#a3a6aa">身份只从 JWT 取</text>
+            <text class="ts" x="336" y="182" fill="#a3a6aa">/internal/agent 内网口</text>
+
+            <!-- Python -->
+            <rect class="bx" x="628" y="66" width="196" height="132"/>
+            <text class="tw" x="646" y="92">Python Agent :8100</text>
+            <text class="ts" x="646" y="112">FastAPI · LangGraph</text>
+            <text class="ts" x="646" y="128">SSE 流式输出</text>
+            <text class="ts" x="646" y="150" fill="#a3a6aa">短期记忆 · RAG</text>
+            <text class="ts" x="646" y="166" fill="#a3a6aa">工具经 MCP 反向发现</text>
+            <text class="ts" x="646" y="182" fill="#a3a6aa">不持久化用户 Key</text>
+
+            <!-- 存储 -->
+            <rect class="bx" x="318" y="272" width="94" height="46"/>
+            <text class="ts" x="334" y="300" fill="#a3a6aa">MySQL</text>
+            <rect class="bx" x="424" y="272" width="94" height="46"/>
+            <text class="ts" x="440" y="300" fill="#a3a6aa">Redis</text>
+            <rect class="bx" x="628" y="272" width="94" height="46"/>
+            <text class="ts" x="644" y="300" fill="#a3a6aa">ChromaDB</text>
+            <rect class="bx" x="734" y="272" width="94" height="46"/>
+            <text class="ts" x="750" y="300" fill="#a3a6aa">LLM API</text>
+
+            <!-- 连线 -->
+            <path class="ln" d="M224,95 C262,95 280,100 314,108"/>
+            <path class="ln" d="M224,169 C262,169 280,160 314,152"/>
+            <path class="lnw" d="M514,120 L624,120"/>
+            <path class="lnd" d="M628,196 L628,226 L416,226 L416,202"/>
+            <text class="ts" x="523" y="104" fill="#a3a6aa" letter-spacing="0">HMAC + X-Model-*</text>
+            <text class="ts" x="452" y="220" fill="#71757a" letter-spacing="0">MCP 工具回调</text>
+
+            <path class="ln" d="M380,198 L380,268"/>
+            <path class="ln" d="M466,198 L466,268"/>
+            <path class="ln" d="M676,198 L676,268"/>
+            <path class="ln" d="M780,198 L780,268"/>
+            <text class="ts" x="390" y="238" fill="#4a4d52">持久化</text>
+
+            <!-- 底注 -->
+            <line x1="28" y1="352" x2="892" y2="352" stroke="#1e1e23"/>
+            <text class="th" x="28" y="376" fill="#71757a">流量单向：客户端 → Java → Python。反向只有一条窄口 —— Python 通过 MCP 只读调用 Java 内部接口。</text>
+            <text class="ts" x="28" y="398" fill="#4a4d52">Java 永不直连 LLM；Python 永不直连客户端。</text>
+          </svg>
+
+          <div class="arch-legend">
+            <span><i></i>REST / STOMP</span>
+            <span><i class="dash"></i>内部 HMAC 调用</span>
+            <span><i style="background:#4a4d52"></i>持久化</span>
+          </div>
+        </div>
+
+        <div class="loop reveal">
+          <div class="loop-cell">
+            <span class="n">01</span>
+            <h4>客户端只认一个入口</h4>
+            <p>桌面端和网页端共用同一份前端产物，所有请求打 Java 网关。鉴权、限流、清洗、校验都在这一层收口。</p>
+          </div>
+          <div class="loop-cell">
+            <span class="n">02</span>
+            <h4>Java 是唯一数据源</h4>
+            <p>用户、会话、消息、群组、好友、文件、同步 —— 只有 Java 能写库。Agent 想要数据，必须反过来问它。</p>
+          </div>
+          <div class="loop-cell">
+            <span class="n">03</span>
+            <h4>Python 只负责推理</h4>
+            <p>它不持业务数据、不存用户密钥、不对外开端口。拿到的是递过来的上下文和一次性的模型凭据。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 实时 ══════════ -->
+<section id="realtime">
+  <div class="wrap">
+    <div class="sec">
+      <div class="rail">
+        <span class="rail-num">03</span>
+        <div class="rail-title">Realtime</div>
+        <div class="rail-line"></div>
+      </div>
+      <div>
+        <h2 class="reveal">一条频道，<span class="dim">承载所有实时事件</span></h2>
+        <p class="sec-desc reveal">
+          大多数 IM 的做法是「每个会话一个 topic」。Nexus 反过来：所有事件都往
+          <code>/topic/user.{id}.messages</code> 这一个频道投。少了一层订阅管理，
+          也让「换设备」「多端在线」不需要重新协商订阅。
+        </p>
+
+        <div class="pipe reveal">
+          <div class="pipe-row">
+            <div class="pipe-key">Channel</div>
+            <div class="pipe-val">
+              <span class="m">/topic/user.{id}.messages</span> 承载新消息、ACK、输入中、已读回执、群成员变化、通话信令、错误事件。一条连接，一个订阅，全量事件。
+            </div>
+          </div>
+          <div class="pipe-row">
+            <div class="pipe-key">Presence</div>
+            <div class="pipe-val">
+              在线状态不落数据库，改用 <b>Redis 90 秒 TTL + 客户端 30 秒心跳</b>。进程崩了状态自己会过期，不会留下「永远在线」的僵尸用户。
+            </div>
+          </div>
+          <div class="pipe-row">
+            <div class="pipe-key">Offline</div>
+            <div class="pipe-val">
+              目标离线时消息先进 <b>Redis 队列</b>，用户上线后按序回放 —— 不丢，也不靠客户端轮询补。
+            </div>
+          </div>
+          <div class="pipe-row">
+            <div class="pipe-key">Ordering</div>
+            <div class="pipe-val">
+              单调递增的 <span class="m">sequenceNumber</span> 由 <b>Redis INCR</b> 生成，多实例并发下顺序也不会乱。
+            </div>
+          </div>
+          <div class="pipe-row">
+            <div class="pipe-key">Scale-out</div>
+            <div class="pipe-val">
+              跨实例靠 <b>Redis Pub/Sub</b> 广播，各实例自己判断目标用户是否挂在本地连接上 —— 加机器不用改协议。
+            </div>
+          </div>
+          <div class="pipe-row">
+            <div class="pipe-key">Security</div>
+            <div class="pipe-val">
+              握手必须带 JWT，已吊销的会话连不进来，也只能订阅自己的频道。连接不再接受「报个 userId 就放行」。
+            </div>
+          </div>
+          <div class="pipe-row">
+            <div class="pipe-key">Offline-first</div>
+            <div class="pipe-val">
+              前端先渲染再等服务端确认：临时消息 → ACK 后合并成正式消息 → 失败则标红可重发。断网期间进本地待发队列，重连后冲出去。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 设计亮点 ══════════ -->
+<section id="highlights">
+  <div class="wrap">
+    <div class="sec">
+      <div class="rail">
+        <span class="rail-num">04</span>
+        <div class="rail-title">Design<br>Decisions</div>
+        <div class="rail-line"></div>
+      </div>
+      <div>
+        <h2 class="reveal">需要做决定，<span class="dim">才做得出来的东西</span></h2>
+        <p class="sec-desc reveal">
+          下面这些不是功能清单，而是设计上真正要取舍的地方。
+        </p>
+
+        <div class="bento">
+
+          <div class="hl s4 reveal">
+            <span class="hl-idx">01</span>
+            <h3>工具定义在 Java，Python 只负责发现</h3>
+            <p>Python 里一个工具都没写。Java 用 MCP 协议暴露工具，Agent 启动时发现后原样交给模型。</p>
+            <p>加一个工具不用改 Python，也不用重新部署 Agent 服务。</p>
+            <div class="why">
+              <b>为什么重要</b>
+              工具需要读业务数据，而业务数据只有 Java 有。把工具留在数据旁边，Agent 就永远不会拿着过期的接口干活。
+            </div>
+            <div class="kv"><span>MCP</span><span>7 个只读工具</span><span>零 Python 改动</span></div>
+          </div>
+
+          <div class="hl s2 reveal d1">
+            <span class="hl-idx">02</span>
+            <h3>密钥进 Java，不进 Agent</h3>
+            <p>用户在网关录入 provider 和 key，Java 加密落库。调 Agent 时通过请求头一次性转发。</p>
+            <p>Python 进程里没有用户密钥的副本。</p>
+            <div class="why">
+              <b>为什么重要</b>
+              Agent 是最容易被拿去加日志、开 debug 的那个服务。让它天然不含密钥，等于把泄露面砍掉一半。
+            </div>
+            <div class="kv"><span>BYOK</span><span>加密落库</span></div>
+          </div>
+
+          <div class="hl s2 reveal">
+            <span class="hl-idx">03</span>
+            <h3>一轮推理被打断，可以从断点续跑</h3>
+            <p>编排只有一套图：准备上下文 → 推理 ⇄ 调工具 → 校验输出。每一步落 checkpoint。</p>
+            <p>模型报错、断线、进程被杀，从最后完成的一步继续。</p>
+            <div class="why">
+              <b>为什么重要</b>
+              一轮可能跑几十秒、调好几次工具。没有 checkpoint，用户按一次重试就是全额重算。
+            </div>
+            <div class="kv"><span>LangGraph</span><span>可续跑</span></div>
+          </div>
+
+          <div class="hl s4 reveal d1">
+            <span class="hl-idx">04</span>
+            <h3>过程可视化是真的，不是动画</h3>
+            <p>回答上方那条「思考」丝带，展示的每个节点都来自后端真实事件流：元信息、工具调用、工具结果、增量、用量、结束、错误。</p>
+            <div class="mini-steps">
+              <div class="mini-step"><span class="nm">准备上下文</span><span class="bar" style="--w:100%"></span></div>
+              <div class="mini-step"><span class="nm">检索消息</span><span class="bar" style="--w:100%"></span></div>
+              <div class="mini-step"><span class="nm">生成回答</span><span class="bar" style="--w:64%"></span></div>
+            </div>
+            <div class="why">
+              <b>为什么重要</b>
+              这是整个项目给自己定的规矩：界面上显示的过程和数据必须来自真实返回，不能用预设脚本冒充。
+            </div>
+            <div class="kv"><span>SSE 7 类事件</span><span>真实工具参数</span><span>运行图</span></div>
+          </div>
+
+          <div class="hl s3 reveal">
+            <span class="hl-idx">05</span>
+            <h3>离线优先，不是「断网即废」</h3>
+            <p>前端有一整套本地库：消息、会话、联系人、同步元信息、待发队列。</p>
+            <p>启动顺序：先开界面 → 连长连接 → 拉增量 → 冲离线队列。重连后靠增量同步对齐，不是全量重拉。</p>
+            <div class="why">
+              <b>为什么重要</b>
+              桌面端会长时间挂着、会睡眠、会切网。薄前端在这种场景下体验会碎得很明显。
+            </div>
+            <div class="kv"><span>IndexedDB</span><span>增量同步</span><span>待发队列</span></div>
+          </div>
+
+          <div class="hl s3 reveal d1">
+            <span class="hl-idx">06</span>
+            <h3>角色会眨眼、呼吸、视线游移</h3>
+            <p>3D 形象不只是静态模型。有一层程序化「生命感」：眨眼间隔随机、偶尔连眨两下、呼吸频率带噪声漂移、视线缓慢游移。</p>
+            <p>支持多种模型格式，动作库可配置，尊重系统「减少动态效果」设置。</p>
+            <div class="why">
+              <b>为什么重要</b>
+              完全静止的模型会让人立刻意识到「这是个贴图」。真正让人觉得「在」的，是这些几像素级的小动作。
+            </div>
+            <div class="kv"><span>three-vrm</span><span>程序化呼吸</span><span>reduced-motion</span></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ Agent ══════════ -->
+<section id="agent">
+  <div class="wrap">
+    <div class="sec">
+      <div class="rail">
+        <span class="rail-num">05</span>
+        <div class="rail-title">Agent</div>
+        <div class="rail-line"></div>
+      </div>
+      <div>
+        <h2 class="reveal">Agent 拿到的是<span class="dim">真实会话</span></h2>
+        <p class="sec-desc reveal">
+          这是 Nexus 和「聊天框旁边挂个 AI」最本质的区别：
+          模型读的上下文来自数据库里的真实消息，它调的工具直接查聊天记录，
+          回答里引用的来源可以点开核对。
+        </p>
+
+        <div class="bento">
+          <div class="hl s3 reveal">
+            <span class="hl-idx">Context</span>
+            <h3>工具读的是真消息</h3>
+            <p>七个只读工具：最近消息、会话资料、用户资料、单条消息、按用户名找人、我的会话列表、与某人的私聊。</p>
+            <p>特定任务强制要求至少调一次「最近消息」—— 从机制上堵住幻觉。</p>
+          </div>
+
+          <div class="hl s3 reveal d1">
+            <span class="hl-idx">Knowledge</span>
+            <h3>知识库是模块化的</h3>
+            <p>文档入库：加载 → 切片 → 向量化 → 写向量库。检索取最相关的几条。</p>
+            <p>支持 PDF / DOCX / TXT / MD。入库失败会把状态写回业务侧，用户在界面上看得到是哪一步断了。</p>
+          </div>
+
+          <div class="hl s3 reveal">
+            <span class="hl-idx">Providers</span>
+            <h3>多类客户端，一套接口</h3>
+            <p>OpenAI 兼容 / Anthropic / Gemini 各有一套适配，外加工厂统一选择。Embedding 侧有六个预设。</p>
+            <p>没配 key 的时候不是崩，而是走确定性回复，让链路仍然可测。</p>
+          </div>
+
+          <div class="hl s3 reveal d1">
+            <span class="hl-idx">Honesty</span>
+            <h3>不知道就说不知道</h3>
+            <p>知识库检索永远返回成功，空结果交给业务侧渲染「我不知道」，而不是伪造一段看起来像答案的东西。</p>
+            <p>回答带来源列表，每条能点开看到原文摘录。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 技术栈 ══════════ -->
+<section id="stack">
+  <div class="wrap">
+    <div class="sec">
+      <div class="rail">
+        <span class="rail-num">06</span>
+        <div class="rail-title">Stack</div>
+        <div class="rail-line"></div>
+      </div>
+      <div>
+        <h2 class="reveal">技术栈</h2>
+        <p class="sec-desc reveal">选型上没有追新，基本都是「这件事上最省事的那个」。</p>
+
+        <div class="stack reveal">
+          <div class="stack-col">
+            <h4>Java 网关</h4>
+            <ul>
+              <li>Spring Boot <em>3.2</em></li>
+              <li>Java <em>17</em></li>
+              <li>Spring Security + JWT <em>JJWT 0.12</em></li>
+              <li>STOMP / SockJS <em>WebSocket</em></li>
+              <li>Spring Data JPA <em>Hibernate</em></li>
+              <li>MySQL <em>8</em></li>
+              <li>Redis <em>presence / queue</em></li>
+              <li>Maven <em>多阶段构建</em></li>
+            </ul>
+          </div>
+          <div class="stack-col">
+            <h4>Python Agent</h4>
+            <ul>
+              <li>FastAPI + uvicorn <em>3.11+</em></li>
+              <li>LangGraph <em>编排引擎</em></li>
+              <li>LangChain <em>1.x</em></li>
+              <li>ChromaDB <em>0.5</em></li>
+              <li>pydantic v2 <em>schemas</em></li>
+              <li>httpx <em>异步</em></li>
+              <li>SSE <em>流式输出</em></li>
+              <li>pytest <em>测试</em></li>
+            </ul>
+          </div>
+          <div class="stack-col">
+            <h4>客户端</h4>
+            <ul>
+              <li>Vue 3 <em>Composition API</em></li>
+              <li>Pinia <em>状态机</em></li>
+              <li>Vite 5 <em>构建</em></li>
+              <li>Electron 28 <em>桌面端</em></li>
+              <li>Element Plus <em>组件</em></li>
+              <li>Dexie <em>IndexedDB</em></li>
+              <li>three.js + three-vrm <em>3D</em></li>
+              <li>WebRTC <em>音视频</em></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ 结尾 ══════════ -->
+<section class="closing" style="padding-top:150px">
+  <div class="wrap">
+    <p class="closing-line reveal">
+      让模型看见<span class="dim">真实的对话</span>，<br>
+      让每一步都<span class="dim">可被核对</span>。
+    </p>
+    <p class="reveal d1">这是 Nexus 在设计上唯一不肯让步的两件事。</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;width:100%">
+    <span>NEXUS — IM × AI AGENT</span>
+    <span>JAVA 17 · PYTHON 3.11 · VUE 3 · ELECTRON 28</span>
+  </div>
+</footer>
+
+<script>
+/* ══════════ 待命屏字符眼睛：只用 0/1 和字母画 ══════════
+   几何比例沿用产品待命屏：上眼睑 0.50A、下眼睑 0.38A（故意不对称，
+   对称会读成镜头）、虹膜 0.40A、瞳孔 0.42·虹膜、视线 0.30A / 0.13A。 */
+(function(){
+  const cv = document.getElementById('eye');
+  if(!cv) return;
+  const ctx = cv.getContext('2d');
+  if(!ctx) return;
+
+  const BITS = '01';
+  const CODE = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ{}[]()<>/\\|=+-*&%$#@;:?!';
+  const INK='#ffffff', INK2='#c4c7c8', MUTED='#8e9192', FAINT='#353438';
+  const MONO = '"JetBrains Mono", ui-monospace, monospace';
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const clamp = v => v < 0 ? 0 : v > 1 ? 1 : v;
+
+  let W=0,H=0,A=0,font='',cw=0,ch=0,c0=0,r0=0,cols=0,rows=0,rnd=null,glyph=null;
+
+  function layout(){
+    W = cv.clientWidth; H = cv.clientHeight;
+    if(!W || !H) return false;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    // 眼睛半宽：受画布宽高约束，同时封顶 —— 太大就糊成一片，读不出眼睛的形状
+    A = Math.min(W*.46, H*.78, 288);
+    const fs = Math.max(8, Math.min(13, A/22));
+    font = fs.toFixed(1) + 'px ' + MONO;
+    ctx.font = '500 ' + font;
+    cw = ctx.measureText('0').width || fs*.6;
+    ch = Math.round(fs*1.2);
+    c0 = Math.ceil(W/2/cw); r0 = Math.ceil(H/2/ch);
+    cols = c0*2+1; rows = r0*2+1;
+    rnd = new Float32Array(cols*rows);
+    glyph = new Uint8Array(cols*rows);
+    for(let i=0;i<rnd.length;i++){ rnd[i]=Math.random(); glyph[i]=Math.random()*256; }
+    return true;
+  }
+
+  let lookX=0, lookY=0, toX=0, toY=0, closed=0;
+
+  function draw(){
+    if(!W) return;
+    const open = 1-closed, a = A;
+    const bu = a*.5*open, bl = a*.38*open;
+    const tu = ch*2.4, tl = ch*1.3;
+    const ao = a + cw*3;
+    const ri = a*.4, rp = ri*.42;
+    const ix = lookX*a*.3, iy = lookY*a*.13;
+    const hx = ix - ri*.3, hy = iy - ri*.32, hr = ri*.14;
+
+    ctx.clearRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = '500 ' + font;
+
+    const bold=[]; let i=0, lastFill=null, lastAlpha=-1;
+    for(let r=0;r<rows;r++){
+      const y = (r-r0)*ch;
+      for(let c=0;c<cols;c++, i++){
+        const x = (c-c0)*cw, p = rnd[i];
+        // 外围字符的密度以眼睛尺寸为基准衰减 —— 用画布尺寸归一的话，
+        // 宽屏下眼睛周围会糊上一层均匀的噪点，把形状冲掉。
+        const nx = x/(a*1.15), ny = y/(a*1.15);
+        const fall = clamp(1.12 - Math.sqrt(nx*nx+ny*ny));
+        let set=BITS, fill=FAINT, alpha=clamp(fall*1.5), heavy=false, on = p < .085*fall;
+
+        const to = x/ao;
+        let inOuter=false, inInner=false;
+        if(to>-1 && to<1){
+          const fo = 1-to*to;
+          inOuter = y > -(bu+tu)*Math.pow(fo,.8) && y < (bl+tl)*fo;
+        }
+        if(inOuter){
+          const ti = x/a;
+          if(ti>-1 && ti<1){
+            const fi = 1-ti*ti;
+            inInner = y > -bu*Math.pow(fi,.8) && y < bl*fi;
+          }
+          alpha = 1;
+          if(!inInner){
+            on = p < .96; set = CODE; fill = INK; heavy = true;
+          } else {
+            const dx = x-ix, dy = y-iy, d = Math.sqrt(dx*dx+dy*dy);
+            if(Math.sqrt((x-hx)*(x-hx)+(y-hy)*(y-hy)) < hr) on = false;
+            else if(d < rp){ on = true; fill = INK; heavy = true; }
+            else if(d < ri){
+              set = CODE;
+              if(d > ri*.88){ on = true; fill = INK; heavy = true; }
+              else { on = p < .9; fill = p < .5 ? INK2 : MUTED; }
+            } else { on = p < .22; fill = FAINT; }
+          }
+        }
+        if(!on) continue;
+        const char = set[glyph[i] % set.length];
+        if(heavy){ bold.push(char, x, y); continue; }
+        if(fill !== lastFill) ctx.fillStyle = lastFill = fill;
+        if(alpha !== lastAlpha) ctx.globalAlpha = lastAlpha = alpha;
+        ctx.fillText(char, W/2+x, H/2+y);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = INK;
+    ctx.font = '700 ' + font;
+    for(let b=0;b<bold.length;b+=3) ctx.fillText(bold[b], W/2+bold[b+1], H/2+bold[b+2]);
+  }
+
+  const BLINK = 240;
+  let raf=0, last=0, visible=true, blinkAt=0, blinkFrom=-1;
+  const running = () => visible && !document.hidden && !reduced.matches;
+
+  function frame(now){
+    raf = 0;
+    if(!running()) return;
+    const dt = Math.min(now-last, 60); last = now;
+    const k = 1 - Math.exp(-dt/110);
+    lookX += (toX-lookX)*k;
+    lookY += (toY-lookY)*k;
+    if(blinkFrom < 0 && now >= blinkAt) blinkFrom = now;
+    if(blinkFrom >= 0){
+      const u = (now-blinkFrom)/BLINK;
+      if(u >= 1){ closed=0; blinkFrom=-1; blinkAt = now + 2800 + Math.random()*4200; }
+      else closed = Math.sin(Math.PI*u);
+    }
+    for(let n=Math.ceil(rnd.length*dt/1000*.5); n>0; n--) glyph[(Math.random()*glyph.length)|0] = Math.random()*256;
+    draw();
+    raf = requestAnimationFrame(frame);
+  }
+  function wake(){
+    if(raf || !running() || !W) return;
+    last = performance.now();
+    if(!blinkAt) blinkAt = last + 2200;
+    raf = requestAnimationFrame(frame);
+  }
+  function still(){
+    if(!reduced.matches) return;
+    lookX = lookY = toX = toY = closed = 0;
+    draw();
+  }
+
+  document.addEventListener('pointermove', e=>{
+    if(e.pointerType === 'touch' || !W) return;
+    const box = cv.getBoundingClientRect();
+    const dx = e.clientX - (box.left + box.width/2);
+    const dy = e.clientY - (box.top + box.height/2);
+    toX = dx / (Math.abs(dx) + 260);
+    toY = dy / (Math.abs(dy) + 200);
+  }, {passive:true});
+
+  cv.addEventListener('pointerdown', ()=>{
+    if(blinkFrom < 0 && !reduced.matches) blinkAt = 0;
+  });
+
+  document.addEventListener('visibilitychange', wake);
+  if(reduced.addEventListener) reduced.addEventListener('change', ()=>{ still(); wake(); });
+  if(window.IntersectionObserver){
+    new IntersectionObserver(es=>{
+      visible = es[es.length-1].isIntersecting;
+      wake();
+    }).observe(cv);
+  }
+  if(window.ResizeObserver) new ResizeObserver(()=>{ if(layout()){ draw(); wake(); } }).observe(cv);
+  else addEventListener('resize', ()=>{ if(layout()){ draw(); wake(); } });
+
+  if(layout()){ draw(); wake(); }
+})();
+
+/* ══════════ 滚动淡入 ══════════ */
+(function(){
+  const els=[...document.querySelectorAll('.reveal')];
+  if(!('IntersectionObserver' in window)){ els.forEach(e=>e.classList.add('in')); return; }
+  const io=new IntersectionObserver(es=>{
+    es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.06,rootMargin:'0px 0px -70px 0px'});
+  els.forEach(e=>io.observe(e));
+})();
+</script>
+</body>
+</html>
