@@ -125,15 +125,16 @@ public class TavernSessionController {
     }
 
     /**
-     * The models an invited guest can wear: the same catalogue the settings
-     * panel lists, narrowed to what the tavern stage can load (VRM). An empty
-     * array means none is uploaded; a directory that cannot be read is a 500
+     * The models an invited guest can wear: the shared catalogue narrowed to
+     * what the tavern stage can load (VRM), followed by the ones this account
+     * imported into its own library in settings ({@code owned: true}). An empty
+     * array means there is none; a directory or library that cannot be read is a 500
      * with {@code message} model_catalog_unavailable, never an empty array.
      */
     @GetMapping("/roles/models")
     public ResponseEntity<List<Map<String, Object>>> inviteModels(
             @RequestParam(name = "userId", required = false) Long claimedUserId) {
-        CurrentUser.require(claimedUserId);
+        Long userId = CurrentUser.require(claimedUserId);
         List<Map<String, Object>> out = new java.util.ArrayList<>();
         for (CompanionModelAssetCatalog.ModelAsset asset : modelAssetCatalog.listForStage()) {
             Map<String, Object> item = new java.util.LinkedHashMap<>();
@@ -141,6 +142,18 @@ public class TavernSessionController {
             item.put("fileUrl", asset.fileUrl());
             item.put("size", asset.size());
             item.put("type", asset.type());
+            item.put("owned", false);
+            out.add(item);
+        }
+        // The models this account imported in settings. They are referenced by a
+        // stable id rather than a file name, and only their owner can wear them.
+        for (CompanionModelAssetCatalog.ModelAsset asset : sessionService.ownStageModels(userId)) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("fileName", asset.fileName());
+            item.put("fileUrl", asset.fileUrl());
+            item.put("size", asset.size());
+            item.put("type", asset.type());
+            item.put("owned", true);
             out.add(item);
         }
         return ResponseEntity.ok(out);

@@ -194,6 +194,31 @@ test('only compatible VRM rows appear and an unknown selection cannot submit', a
   assert.equal(flow.canConfirm.value, false)
 })
 
+test('a model from the account\'s own library is offered, can be chosen, and is what the invitation carries', async () => {
+  const id = '0b0e6f0e-3c1d-4d55-9a53-0c2b8b6a7f11'
+  const own = { fileName: 'mine.vrm', fileUrl: `/api/companion/user-assets/file/model/${id}`, size: 30, type: 'vrm', owned: true }
+  let sent
+  store.fetchInviteModels = async () => [model('a'), own,
+    // Not model references of the library, whatever they are labelled as.
+    { ...own, fileUrl: `/api/companion/user-assets/file/motion/${id}` },
+    { ...own, fileUrl: `${own.fileUrl}/../other` },
+    { ...own, fileUrl: `https://elsewhere.example${own.fileUrl}` },
+    { ...own, fileUrl: '/api/companion/user-assets/file/model/not-an-id' }]
+  store.inviteGuest = async (user, scene, url) => { sent = [user, scene, url]; return { id: 99, kind: 'guest' } }
+  await flow.open()
+  assert.deepEqual(flow.models.value.map(item => item.fileUrl), ['/models/a.vrm', own.fileUrl])
+  assert.equal(flow.models.value[1].owned, true)
+  flow.selectedUrl.value = own.fileUrl
+  assert.equal(flow.canConfirm.value, true)
+  await flow.confirm()
+  assert.deepEqual(sent, [7, 'rain-fireplace', own.fileUrl])
+  assert.deepEqual(selected, [[7, 99]])
+  // Addressed by id, so the format comes from the declared type or the file name.
+  assert.equal(modelAssetType({ fileUrl: own.fileUrl, fileName: 'mine.vrm' }), 'vrm')
+  assert.equal(modelAssetType({ fileUrl: own.fileUrl, fileName: 'mine.fbx' }), 'fbx')
+  assert.equal(modelAssetType({ fileUrl: own.fileUrl }), null)
+})
+
 test('shape types preserve GLB/GLTF/FBX instead of assigning VRM universally', () => {
   assert.equal(modelAssetType({ fileUrl: '/models/a.glb' }), 'gltf')
   assert.equal(modelAssetType({ fileUrl: '/models/a.gltf' }), 'gltf')

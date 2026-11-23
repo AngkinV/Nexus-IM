@@ -52,7 +52,7 @@ public class CompanionService {
     private final UserAssetService userAssetService;
 
     /** How {@link UserAssetService} addresses a model in a user's own library. */
-    private static final String USER_MODEL_URL_PREFIX = "/api/companion/user-assets/file/model/";
+    private static final String USER_MODEL_URL_PREFIX = UserAssetService.MODEL_URL_PREFIX;
 
     public List<CompanionRoleDTO> initDefaultRoles(Long userId) {
         if (roleRepository.countByUserId(userId) > 0) {

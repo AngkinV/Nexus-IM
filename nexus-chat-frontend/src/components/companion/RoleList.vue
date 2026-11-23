@@ -315,6 +315,8 @@
               <span class="block truncate">{{ model.fileName }}</span>
               <span class="block truncate text-[12px] text-on-surface-variant/70">{{ formatModelSize(model.size) }}</span>
             </span>
+            <!-- Imported by this account in settings, as opposed to the shared ones. -->
+            <span v-if="model.owned" class="invite-model-chip">{{ localT('ownModel') }}</span>
             <span v-if="chosenModelUrl === model.fileUrl" class="material-symbols-outlined text-[16px]">check</span>
           </button>
 
@@ -421,11 +423,12 @@ const { t: localT } = useI18n({
       clearSearch: '清除搜索',
       noMatch: '没有匹配“{q}”的会话',
       inviteTitle: '邀请一个人入座',
-      inviteHint: '选择已有的 VRM 建模，或自动选择。',
+      inviteHint: '选择已有的 VRM 建模，或自动选择。在「设置 → 角色与模型」导入的建模也会列在这里。',
+      ownModel: '我的',
       letTavernChoose: '自动选择建模',
-      letTavernChooseHint: '优先选择未使用的形象，全部使用时允许复用',
+      letTavernChooseHint: '优先选择未使用的形象（含我的建模），全部使用时允许复用',
       loadingModels: '正在读取建模…',
-      noModelsYet: '暂无可用于酒馆的 VRM 建模，可以先以文字方式对话。',
+      noModelsYet: '暂无可用于酒馆的 VRM 建模。可在「设置 → 角色与模型」导入，也可以先以文字方式对话。',
       modelsLoadFailed: '建模列表读取失败，请重试；当前不能确认邀请。',
       retry: '重试',
       inviteSucceeded: '已创建对话。',
@@ -452,11 +455,12 @@ const { t: localT } = useI18n({
       clearSearch: 'Clear search',
       noMatch: 'No conversations match “{q}”',
       inviteTitle: 'Invite someone to sit down',
-      inviteHint: 'Choose an existing VRM model or select automatically.',
+      inviteHint: 'Choose an existing VRM model or select automatically. Models imported in Settings → Roles & Models are listed here too.',
+      ownModel: 'Mine',
       letTavernChoose: 'Choose automatically',
-      letTavernChooseHint: 'Prefer unused models; reuse is allowed when all are assigned',
+      letTavernChooseHint: 'Prefers unused models, yours included; reuse is allowed when all are assigned',
       loadingModels: 'Reading models…',
-      noModelsYet: 'No VRM models are available for the tavern. You can start a text-only conversation.',
+      noModelsYet: 'No VRM models are available for the tavern. Import one in Settings → Roles & Models, or start a text-only conversation.',
       modelsLoadFailed: 'Could not load the model list. Retry before confirming the invitation.',
       retry: 'Retry',
       inviteSucceeded: 'Conversation created.',
@@ -760,6 +764,16 @@ async function adopt(role) {
 .invite-model-row:focus-visible {
   outline: 2px solid var(--el-text-color-primary);
   outline-offset: 2px;
+}
+
+.invite-model-chip {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--el-text-color-secondary);
 }
 
 .invite-model-error {

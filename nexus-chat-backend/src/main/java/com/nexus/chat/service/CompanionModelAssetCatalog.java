@@ -210,7 +210,17 @@ public class CompanionModelAssetCatalog {
      * @param inUse canonical URLs already worn by this user's visible characters
      */
     public ModelAsset pickForGuest(Collection<String> inUse) {
-        List<ModelAsset> all = listForStage();
+        return pickForGuest(inUse, List.of());
+    }
+
+    /**
+     * The same choice, made among the shared stage models and {@code alsoWearable}:
+     * models from outside this directory that this guest's account may wear, such
+     * as the ones it imported into its own library.
+     */
+    public ModelAsset pickForGuest(Collection<String> inUse, List<ModelAsset> alsoWearable) {
+        List<ModelAsset> all = new java.util.ArrayList<>(listForStage());
+        if (alsoWearable != null) all.addAll(alsoWearable);
         if (all.isEmpty()) return null;
         List<ModelAsset> free = all.stream().filter(asset -> inUse == null || !inUse.contains(asset.fileUrl())).toList();
         List<ModelAsset> pool = free.isEmpty() ? all : free;

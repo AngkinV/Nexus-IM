@@ -32,6 +32,16 @@ public class UserAssetService {
     @Value("${companion.assets.motions-config:../nexus-chat-frontend/public/motions/motions.json}")
     private String builtInMotionsConfig;
 
+    /** How a model of an account's own library is referenced, e.g. by a role that wears it. */
+    public static final String MODEL_URL_PREFIX = "/api/companion/user-assets/file/model/";
+
+    /** The id inside a reference to a model of this library, or null when the reference is not one. */
+    public static String ownModelId(String url) {
+        if (url == null) return null;
+        String trimmed = url.trim();
+        return trimmed.startsWith(MODEL_URL_PREFIX) ? trimmed.substring(MODEL_URL_PREFIX.length()) : null;
+    }
+
     private static final long MAX_BYTES = 64L * 1024 * 1024;
     // A fixed stripe array avoids retaining one lock forever for every user id.
     private final Object[] locks = java.util.stream.IntStream.range(0, 64).mapToObj(i -> new Object()).toArray();
@@ -97,6 +107,30 @@ public class UserAssetService {
             }
             for (var entry : read(owner)) if ("model".equals(entry.get("kind"))) result.add(view(entry));
             return result;
+        }
+    }
+    /**
+     * Only the models this account imported itself, and only those whose file is
+     * really there. For callers that already list the shared models themselves.
+     */
+    public List<Map<String, Object>> listOwnModels(Long owner) throws IOException {
+        synchronized (lock(owner)) {
+            Path dir = directory(owner);
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (var entry : read(owner)) {
+                if (!"model".equals(entry.get("kind")) || !(entry.get("storedName") instanceof String stored)) continue;
+                Path path = dir.resolve(stored).normalize();
+                if (!dir.equals(path.getParent()) || Files.isSymbolicLink(path) || !Files.isRegularFile(path)) continue;
+                result.add(view(entry));
+            }
+            return result;
+        }
+    }
+    /** One of this account's own models as the library shows it; 404 when this account does not hold it. */
+    public Map<String, Object> ownModel(Long owner, String id) throws IOException {
+        synchronized (lock(owner)) {
+            file(owner, "model", id);
+            return view(find(read(owner), id, "model"));
         }
     }
     public Map<String, Object> listMotions(Long owner) throws IOException {

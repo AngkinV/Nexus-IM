@@ -60,7 +60,8 @@ class TavernSessionServiceTest {
     void setUp() {
         when(transactionManager.getTransaction(any(TransactionDefinition.class))).thenReturn(transaction);
         service = new TavernSessionService(sessions, roles, messages, memories, resolver, model,
-                fallback, conversations, statuses, transactionManager, guard, modelAssets);
+                fallback, conversations, statuses, transactionManager, guard, modelAssets,
+                mock(UserAssetService.class));
         role = new CompanionRole();
         role.setId(ROLE);
         role.setUserId(USER);

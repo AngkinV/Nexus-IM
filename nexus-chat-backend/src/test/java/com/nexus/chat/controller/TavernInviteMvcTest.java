@@ -69,6 +69,9 @@ class TavernInviteMvcTest {
     @TempDir
     Path outsideDir;
 
+    @TempDir
+    Path libraryDir;
+
     private final TavernSessionRepository sessions = mock(TavernSessionRepository.class);
     private final CompanionRoleRepository roles = mock(CompanionRoleRepository.class);
     private final CompanionMessageRepository messages = mock(CompanionMessageRepository.class);
@@ -80,6 +83,8 @@ class TavernInviteMvcTest {
     private final CompanionConversationGuard guard = new CompanionConversationGuard();
     private final CompanionModelAssetCatalog catalog = new CompanionModelAssetCatalog();
     private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
+    /** The real per-account library, on its own temporary directory. */
+    private final UserAssetService library = new UserAssetService(new ObjectMapper());
     private TavernSessionService sessionService;
     private MockMvc mvc;
 
@@ -88,6 +93,10 @@ class TavernInviteMvcTest {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(USER, null, List.of()));
         ReflectionTestUtils.setField(catalog, "modelsDir", modelsDir.toString());
+        ReflectionTestUtils.setField(library, "rootDir", libraryDir.toString());
+        ReflectionTestUtils.setField(library, "builtInModelsDir", modelsDir.toString());
+        ReflectionTestUtils.setField(library, "builtInModelNames", "");
+        ReflectionTestUtils.setField(library, "builtInMotionsConfig", outsideDir.resolve("motions.json").toString());
         when(transactionManager.getTransaction(any(TransactionDefinition.class)))
                 .thenAnswer(invocation -> new SimpleTransactionStatus());
         // No usable channel: every invite here uses the built-in persona, so no model request exists to make.
@@ -104,7 +113,7 @@ class TavernInviteMvcTest {
                 mock(UserAssetService.class));
         sessionService = new TavernSessionService(sessions, roles, messages, mock(CompanionMemoryRepository.class),
                 resolver, model, new CompanionFallbackService(), conversations, statuses, transactionManager,
-                guard, catalog);
+                guard, catalog, library);
         mvc = MockMvcBuilders.standaloneSetup(
                         new TavernSessionController(sessionService, companionService, catalog),
                         new CompanionAssetController(new ObjectMapper(), catalog, roles, transactionManager),
@@ -385,6 +394,116 @@ class TavernInviteMvcTest {
         verify(statuses, never()).save(any());
     }
 
+    @Test
+    void modelsImportedInSettingsFollowTheSharedOnesAndAreMarkedAsTheAccountsOwn() throws Exception {
+        vrm("a.vrm");
+        String mine = imported(USER, "mine.vrm");
+        imported(8L, "someone-elses.vrm");
+
+        mvc.perform(get(INVITE_MODELS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].fileUrl").value("/models/a.vrm"))
+                .andExpect(jsonPath("$[0].owned").value(false))
+                .andExpect(jsonPath("$[1].fileName").value("mine.vrm"))
+                .andExpect(jsonPath("$[1].fileUrl").value(mine))
+                .andExpect(jsonPath("$[1].size").value(ownVrm().length))
+                .andExpect(jsonPath("$[1].type").value("vrm"))
+                .andExpect(jsonPath("$[1].owned").value(true))
+                // Where the bytes are kept is never part of the answer.
+                .andExpect(jsonPath("$[1].storedName").doesNotExist());
+    }
+
+    @Test
+    void anImportedModelWhoseFileIsGoneIsNotOffered() throws Exception {
+        String mine = imported(USER, "mine.vrm");
+        Files.delete(libraryDir.resolve(USER.toString()).resolve(UserAssetService.ownModelId(mine) + ".vrm"));
+
+        mvc.perform(get(INVITE_MODELS)).andExpect(status().isOk()).andExpect(content().json("[]"));
+        mvc.perform(invite(Map.of("modelUrl", mine)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("model_not_found"));
+        verifyNoInteractions(resolver, model, roles, statuses, transactionManager);
+    }
+
+    @Test
+    void aLibraryThatCannotBeReadIsA500WithACodeNotAShorterList() throws Exception {
+        vrm("a.vrm");
+        imported(USER, "mine.vrm");
+        Files.writeString(libraryDir.resolve(USER.toString()).resolve("library.json"), "not json");
+
+        mvc.perform(get(INVITE_MODELS))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.message").value("model_catalog_unavailable"));
+        // Letting the tavern choose would have to read the same library.
+        mvc.perform(invite(Map.of("sceneKey", "rain-fireplace")))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.message").value("model_catalog_unavailable"));
+        verifyNoInteractions(resolver, model, statuses, transactionManager);
+        verify(roles, never()).save(any());
+    }
+
+    @Test
+    void aGuestCanBeInvitedWearingAModelFromTheAccountsOwnLibrary() throws Exception {
+        vrm("a.vrm");
+        String mine = imported(USER, "mine.vrm");
+
+        CompanionRoleDTO invited = read(mvc.perform(invite(Map.of("sceneKey", "rain-fireplace", "modelUrl", mine)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
+
+        assertEquals(ROLE, invited.getId());
+        assertEquals("guest", invited.getKind());
+        assertEquals(mine, invited.getModelUrl());
+        assertEquals("vrm", invited.getModelType());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/companion/user-assets/file/model/00000000-0000-0000-0000-000000000000",
+            "/api/companion/user-assets/file/model/",
+            "/api/companion/user-assets/file/model/../8/library.json",
+            "/api/companion/user-assets/file/model/NOT-AN-ID",
+            "/api/companion/user-assets/file/motion/00000000-0000-0000-0000-000000000000"
+    })
+    void aLibraryReferenceThisAccountDoesNotHoldIsRefusedAndNothingIsStored(String modelUrl) throws Exception {
+        vrm("a.vrm");
+        imported(USER, "mine.vrm");
+
+        mvc.perform(invite(Map.of("modelUrl", modelUrl)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400));
+        verifyNoInteractions(resolver, model, roles, statuses, transactionManager);
+    }
+
+    @Test
+    void anotherAccountsImportedModelCannotBeWorn() throws Exception {
+        String theirs = imported(8L, "someone-elses.vrm");
+
+        mvc.perform(invite(Map.of("modelUrl", theirs)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("model_not_found"));
+        verifyNoInteractions(resolver, model, roles, statuses, transactionManager);
+    }
+
+    @Test
+    void lettingTheTavernChooseCountsTheAccountsOwnModels() throws Exception {
+        // Nothing shared at all: her own model is the only one there is.
+        String mine = imported(USER, "mine.vrm");
+        CompanionRoleDTO first = read(mvc.perform(invite(Map.of("sceneKey", "rain-fireplace")))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
+        assertEquals(mine, first.getModelUrl());
+        assertEquals("vrm", first.getModelType());
+
+        // Once someone visible wears it, a free shared model is preferred over wearing it twice.
+        vrm("a.vrm");
+        when(roles.findByUserIdOrderByIdAsc(USER)).thenReturn(List.of(wearing(mine, false)));
+        for (int attempt = 0; attempt < 12; attempt++) {
+            CompanionRoleDTO next = read(mvc.perform(invite(Map.of("sceneKey", "rain-fireplace")))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
+            assertEquals("/models/a.vrm", next.getModelUrl());
+        }
+    }
+
     private MockHttpServletRequestBuilder invite(Map<String, Object> body) throws Exception {
         return post(INVITE).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(body));
     }
@@ -405,6 +524,22 @@ class TavernInviteMvcTest {
                 .putInt(0x46546C67).putInt(2).putInt(20 + chunk.length)
                 .putInt(chunk.length).putInt(0x4E4F534A).put(chunk)
                 .array();
+    }
+
+    /** A self-contained VRM as the settings library accepts it: a glTF container whose JSON declares the VRM extension. */
+    private static byte[] ownVrm() {
+        byte[] chunk = "{\"extensions\":{\"VRMC_vrm\":{}}}   ".getBytes(StandardCharsets.US_ASCII);
+        return ByteBuffer.allocate(20 + chunk.length).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(0x46546C67).putInt(2).putInt(20 + chunk.length)
+                .putInt(chunk.length).putInt(0x4E4F534A).put(chunk)
+                .array();
+    }
+
+    /** Imports a model into an account's own library the way settings does, and returns its reference. */
+    private String imported(Long owner, String name) throws Exception {
+        Map<String, Object> entry = library.upload(owner, "model",
+                new org.springframework.mock.web.MockMultipartFile("file", name, "model/gltf-binary", ownVrm()));
+        return (String) entry.get("fileUrl");
     }
 
     private void vrm(String name) throws Exception {
