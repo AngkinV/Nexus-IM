@@ -13,6 +13,12 @@ import java.time.LocalDateTime;
 @Data
 public class AgentLongMemory {
 
+    @Column(name = "scope_key", length = 64)
+    private String scopeKey;
+
+    @Column(name = "session_generation")
+    private Long sessionGeneration;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

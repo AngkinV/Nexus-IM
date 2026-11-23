@@ -20,6 +20,8 @@ _FINISH = {"stop": "stop", "tool_calls": "tool_calls", "function_call": "tool_ca
 
 
 class OpenAILikeClient(LLMClient):
+    signals_dispatch = True
+
     async def complete(
         self,
         messages: list[dict[str, Any]],
@@ -29,6 +31,7 @@ class OpenAILikeClient(LLMClient):
         temperature: float = 0.2,
         max_tokens: int = 1024,
         timeout_sec: int = 30,
+        on_dispatch=None,
     ) -> AsyncIterator[LLMChunk]:
         try:
             from openai import AsyncOpenAI
@@ -57,6 +60,9 @@ class OpenAILikeClient(LLMClient):
         finish_reason: str | None = None
         error: LLMError | None = None
         try:
+            if on_dispatch is not None:
+                # Outside the provider error handling: a refusal is the caller's, not the provider's.
+                await on_dispatch()
             try:
                 stream = await asyncio.wait_for(client.chat.completions.create(**kwargs), timeout=timeout_sec)
                 while True:

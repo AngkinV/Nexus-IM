@@ -3,12 +3,17 @@ import pytest
 from app import orchestrator
 from app.config import get_settings
 from app.schemas import InvokeRequest
+from scope_support import install_scope_authority, make_scope
 
 
 async def test_an_incomplete_explicit_channel_never_borrows_the_server_key(monkeypatch):
     monkeypatch.setattr(get_settings(), 'openai_api_key', 'environment-sentinel')
+    # A real (synthetic) scope, so the turn reaches provider resolution instead of authz.
+    install_scope_authority(monkeypatch, [orchestrator])
     req = InvokeRequest.model_validate({'actor': {'userId': 7}, 'traceId': 'selection',
-        'session': {'sessionId': 'session', 'operationType': 'ASSISTANT_CHAT'}, 'input': {'text': 'hi'}})
+        'session': {'sessionId': 'session', 'operationType': 'ASSISTANT_CHAT'}, 'input': {'text': 'hi'},
+        'runId': 'run_select_0001',
+        'scope': make_scope(7, session_id='session', run_id='run_select_0001').model_dump()})
 
     def forbidden(*args, **kwargs):
         pytest.fail('Invalid explicit configuration reached model or storage')

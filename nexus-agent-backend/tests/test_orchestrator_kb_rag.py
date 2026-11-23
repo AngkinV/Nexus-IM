@@ -39,8 +39,19 @@ class _FakeToolExecutor:
     async def schemas(self):
         return []
 
-    async def execute(self, name, args):
+    async def execute(self, name, args, *, call_id=None):
         return {"chatId": args.get("chat_id"), "messages": []}, 5
+
+
+def _scope(session_id="s_kb", run_id="run_kb_0001"):
+    """A synthetic, internally consistent grant: these tests have no Java authority."""
+    from app.scope import AuthorizedScope, scope_hash
+    data = dict(schemaVersion=1, grantId="g_kb", actorUserId=7, sessionId=session_id,
+                runId=run_id, bindingVersion=1, authorizationVersion=1, sessionGeneration=1,
+                chatIds=[], contactUserIds=[],
+                timeRange=dict(fromInclusive=None, toExclusive=None, timeZone="Asia/Shanghai"))
+    data["scopeKey"] = scope_hash(data)
+    return AuthorizedScope.model_validate(data)
 
 
 def _req(*, text="合同里的违约条款是什么", linked_kb_id=None):
@@ -50,12 +61,27 @@ def _req(*, text="合同里的违约条款是什么", linked_kb_id=None):
         session=Session(sessionId="s_kb", operationType="ASSISTANT_CHAT", linkedKbId=linked_kb_id),
         input=InputPayload(text=text),
         options=Options(),
+        runId="run_kb_0001",
+        scope=_scope(),
     )
 
 
 @pytest.fixture(autouse=True)
 def _patch_tools(monkeypatch):
     monkeypatch.setattr(orchestrator, "ToolExecutor", _FakeToolExecutor)
+    # Accept exactly the synthetic scope the requests carry.
+    async def _validate(self, scope, tool=None):
+        from app.scope import ScopeDenied
+        if scope is None:
+            raise ScopeDenied()
+        return scope
+    monkeypatch.setattr(orchestrator.ScopeClient, "validate", _validate)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_checkpoints(tmp_path, monkeypatch):
+    # Every request here carries the same run id, and a run id is only usable once per store.
+    monkeypatch.setattr(get_settings(), "checkpoint_path", str(tmp_path / "runs.sqlite"))
 
 
 @pytest.fixture(autouse=True)

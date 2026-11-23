@@ -226,7 +226,8 @@ async def test_pending_and_purge_require_matching_actor(monkeypatch):
     result = await routes.pending_runs(request, ctx=ctx)
     assert len(result["runs"]) == 1 and result["finished"] == []
     assert await routes.purge_runs(request, ctx=ctx) == {"purged": 1}
-    assert await routes.pending_runs(request, ctx=ctx) == {"runs": [], "finished": []}
+    # finishedScopes carries each finished run's receipt; empty here because nothing finished.
+    assert await routes.pending_runs(request, ctx=ctx) == {"runs": [], "finished": [], "finishedScopes": {}}
 
 
 def test_sse_ids_are_scoped_to_each_response():
@@ -356,8 +357,19 @@ async def test_finished_run_hands_over_its_outcome_without_another_model_call(mo
     again = await rig.resume(run_id)
     assert [e.name for e in again] == ["meta", "delta", "usage", "done", "__final__"]
     assert again[0].data["resumed"] is True
-    assert again[1].data == {"text": "完整回答", "replayed": True}
-    assert again[3].data == {"finishReason": "stop", "runId": run_id, "resumable": False}
+    # v1 adds a mandatory wire envelope; keep every original outcome assertion.
+    assert {key: again[1].data[key] for key in ("text", "replayed")} == {"text": "完整回答", "replayed": True}
+    assert {key: again[3].data[key] for key in ("finishReason", "runId", "resumable")} == {
+        "finishReason": "stop", "runId": run_id, "resumable": False}
+    delivered = again[:-1]  # __final__ is private, not a public wire frame.
+    for event in delivered:
+        assert all(key in event.data for key in ("runId", "attemptId", "sequence", "at", "runtimeContractVersion"))
+        assert event.data["runId"] == run_id and event.data["runtimeContractVersion"] == 1
+        assert isinstance(event.data["at"], int) and event.data["at"] >= 0
+    assert [event.data["sequence"] for event in delivered] == [1, 2, 3, 4]
+    assert len({event.data["attemptId"] for event in delivered}) == 1
+    assert again[0].data["attemptId"] != first[0].data["attemptId"]
+    assert again[0].data["producerAttemptId"] == first[0].data["attemptId"]
     assert again[-1].data["result"] == first[-1].data["result"]
     assert len(rig.model.calls) == 1
     assert rig.memory.turns == [["user", "查询本会话"], ["assistant", "完整回答"]]
@@ -384,9 +396,13 @@ async def test_stored_outcome_is_bound_to_its_user_and_session_and_goes_with_the
         assert rejected[0].data["code"] == "AGENT_RUN_40401"
     request = RunQuery(actor=Actor(userId=ACTOR_ID), sessionId=rig.request().session.sessionId)
     ctx = {"actorUserId": ACTOR_ID, "traceId": "t", "provider": None}
-    assert await routes.pending_runs(request, ctx=ctx) == {"runs": [], "finished": [run_id]}
+    listed = await routes.pending_runs(request, ctx=ctx)
+    assert listed["runs"] == [] and listed["finished"] == [run_id]
+    # The finished run also carries its receipt, which is what a resume re-authorizes against.
+    assert listed["finishedScopes"][run_id]["runId"] == run_id
     await routes.purge_runs(request, ctx=ctx)
-    assert await routes.pending_runs(request, ctx=ctx) == {"runs": [], "finished": []}
+    # finishedScopes carries each finished run's receipt; empty here because nothing finished.
+    assert await routes.pending_runs(request, ctx=ctx) == {"runs": [], "finished": [], "finishedScopes": {}}
     gone = await rig.resume(run_id)
     assert gone[0].data["code"] == "AGENT_RUN_40401"
 
@@ -462,7 +478,17 @@ async def test_run_store_failure_still_ends_the_stream(monkeypatch):
     assert [e.name for e in events] == ["error", "done"]
     assert events[0].data["code"] == "AGENT_SYS_50001"
     assert EVAL_API_KEY not in events[0].data["message"]
-    assert events[1].data == {"finishReason": "error", "runId": events[1].data["runId"], "resumable": False}
+    # Early persistence refusal is still error + done, now with complete v1 identity.
+    assert {key: events[1].data[key] for key in ("finishReason", "runId", "resumable")} == {
+        "finishReason": "error", "runId": events[1].data["runId"], "resumable": False}
+    for event in events:
+        assert all(key in event.data for key in ("runId", "attemptId", "sequence", "at", "runtimeContractVersion"))
+        assert event.data["runtimeContractVersion"] == 1
+        assert isinstance(event.data["at"], int) and event.data["at"] >= 0
+    assert [event.data["sequence"] for event in events] == [1, 2]
+    assert events[0].data["attemptId"] == events[1].data["attemptId"]
+    assert events[0].data["runId"] == events[1].data["runId"]
+    assert events[0].data["scope"] == "run"
     assert not orchestrator.active_thread_ids()
 
 

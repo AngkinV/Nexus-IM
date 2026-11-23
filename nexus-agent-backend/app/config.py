@@ -148,6 +148,9 @@ class Settings(BaseSettings):
     # Operator-managed allow-list of extra MCP servers, as a JSON object of
     # name -> http(s) URL. Empty = only the Java backend's tools are offered.
     mcp_external_servers: str = ""
+    # Operator-approved origins for user-managed services. Empty denies all external probes/calls.
+    mcp_allowed_origins: str = "[]"
+    mcp_allow_http: bool = False
     # Longest result an external tool may hand to the model.
     mcp_external_result_max_chars: int = 8000
 

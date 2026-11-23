@@ -38,6 +38,7 @@ class AgentRunServiceTest {
         request.getOptions().setCollaborationEnabled(true);
         request.getOptions().setWebSearchEnabled(false);
         service.begin(7L, "as_test", "run_test_001", request);
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "meta", Map.of("runId", "run_test_001", "sequence", 1, "at", 0, "provider", "openai", "model", "actual-model"));
         service.record(7L, "as_test", "run_test_001", "reasoning", Map.of("nodeId", "model-1", "agentId", "synth", "text", "原生"));
         service.record(7L, "as_test", "run_test_001", "reasoning", Map.of("nodeId", "model-1", "agentId", "synth", "text", "思考"));
@@ -104,6 +105,7 @@ class AgentRunServiceTest {
     @Test
     void rejectsEventRunIdMismatchWithoutWritingAnotherRun() {
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         assertThrows(AgentException.class, () -> service.record(7L, "as_test", "run_test_001", "delta", Map.of("runId", "run_someone_else", "text", "wrong")));
         assertEquals("", service.finish(7L, "as_test", "run_test_001").get("answer"));
     }
@@ -111,10 +113,12 @@ class AgentRunServiceTest {
     @Test
     void eofWithoutTerminalEventIsInterruptedIncludingAfterRestart() {
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "delta", Map.of("text", "partial"));
         assertEquals("interrupted", service.finish(7L, "as_test", "run_test_001").get("status"));
         assertEquals("partial", store.runService().list(7L, "as_test").get(0).get("answer"));
         service.begin(7L, "as_test", "run_abandoned", request());
+        store.grant(service, "run_abandoned");
         service.record(7L, "as_test", "run_abandoned", "stage", Map.of("phase", "model", "status", "start"));
         List<Map<String, Object>> recovered = store.runService().list(7L, "as_test");
         assertEquals(List.of("run_test_001", "run_abandoned"), recovered.stream().map(r -> r.get("runId")).toList());
@@ -125,6 +129,7 @@ class AgentRunServiceTest {
     @CsvSource({"stop,done", "length,truncated", "max_iterations,truncated", "cancelled,cancelled", "interrupted,interrupted", "error,error"})
     void explicitTerminalReasonsAreNeverUpgradedToSuccess(String reason, String expected) {
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "done", Map.of("finishReason", reason));
         assertEquals(expected, service.finish(7L, "as_test", "run_test_001").get("status"));
     }
@@ -132,9 +137,11 @@ class AgentRunServiceTest {
     @Test
     void globalErrorIsTerminalButRoleLocalErrorDoesNotCloseSynthesis() {
         service.begin(7L, "as_test", "run_error_001", request());
+        store.grant(service, "run_error_001");
         service.record(7L, "as_test", "run_error_001", "error", Map.of("code", "UPSTREAM", "message", "failed"));
         assertEquals("error", service.finish(7L, "as_test", "run_error_001").get("status"));
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "error", Map.of("agentId", "code", "nodeId", "analysis-1", "code", "UPSTREAM", "message", "role failed"));
         service.record(7L, "as_test", "run_test_001", "delta", Map.of("agentId", "synth", "text", "Explained partial result"));
         service.record(7L, "as_test", "run_test_001", "done", Map.of("finishReason", "stop"));
@@ -144,6 +151,7 @@ class AgentRunServiceTest {
     @Test
     void storesOnlyPublicFieldsAndRemovesNestedCredentialAndHeaderMaterial() {
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "meta", Map.of("model", "real", "apiKey", "secret-one", "headers", Map.of("X-Model-Api-Key", "secret-two"), "internalToken", "secret-three"));
         service.record(7L, "as_test", "run_test_001", "tool_call", Map.of("toolName", "lookup", "callId", "call_first", "args", Map.of("query", "safe", "authorization", "secret-four", "nested", Map.of("path", "display only", "api_key", "secret-five"))));
         service.record(7L, "as_test", "run_test_001", "tool_result", Map.of("toolName", "lookup", "callId", "call_first", "result", Map.of("value", "actual", "headers", Map.of("Authorization", "secret-six"))));
@@ -161,6 +169,7 @@ class AgentRunServiceTest {
     @Test
     void persistsAtStagesAndPeriodicallyWithoutSavingEveryTextChunk() throws Exception {
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "delta", Map.of("text", "first"));
         service.record(7L, "as_test", "run_test_001", "stage", Map.of("phase", "model", "status", "start", "nodeId", "model-1"));
         Map<?, ?> checkpoint = store.mapper.readValue(store.savedRuns.get("run_test_001").getPayloadJson(), Map.class);
@@ -177,6 +186,7 @@ class AgentRunServiceTest {
     @Test
     void artifactLookupIsScopedAndReturnsAnIndependentCanonicalSnapshot() throws Exception {
         service.begin(7L, "as_test", "run_test_001", request());
+        store.grant(service, "run_test_001");
         service.record(7L, "as_test", "run_test_001", "artifact", Map.of("artifact", artifact("art_test_001", "code", "actual bytes")));
         service.finish(7L, "as_test", "run_test_001");
         Map<String, Object> found = service.findArtifact(7L, "as_test", "art_test_001");

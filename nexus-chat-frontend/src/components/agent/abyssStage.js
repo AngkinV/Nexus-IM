@@ -4,6 +4,7 @@ import {
   scaledPixelRatio,
   renderScaleFactor,
   onRenderQualityChange,
+  onRenderSuspendChange,
   isRenderSuspended,
   requestFrame,
   cancelFrame
@@ -95,7 +96,9 @@ void main() {
  * Mount the stage into `container` and return a teardown function.
  * @param {HTMLElement} container positioned element that sizes the stage
  */
-export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
+export function mountAbyssStage(container, { shouldRender = () => true, onDemand = false } = {}) {
+  let disposed = false
+  let invalidate = () => {}
   // ── Layer 1: glyph-ring shader ──────────────────────────────────────────────
   const shaderCanvas = document.createElement('canvas')
   shaderCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:0.5;pointer-events:none'
@@ -129,7 +132,13 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(45, 2, 0.1, 100)
   camera.position.set(0, 0, 5.2)
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
+  let renderer
+  try { renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true }) }
+  catch (error) {
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    shaderCanvas.remove()
+    throw error
+  }
   renderer.setPixelRatio(scaledPixelRatio(1.5))
   renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'
   container.appendChild(renderer.domElement)
@@ -196,6 +205,7 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
     camera.updateProjectionMatrix()
     renderer.setPixelRatio(scaledPixelRatio(1.5))
     renderer.setSize(width, height, false)
+    invalidate()
   }
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container)
@@ -208,6 +218,7 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   let gazeY = 0
   const shaderMouse = { x: 0, y: 0 }
   const onMouseMove = (event) => {
+    if (onDemand && (!shouldRender() || document.hidden)) return
     const rect = container.getBoundingClientRect()
     // Hidden on short windows: a zero-size rect would turn the gaze into Infinity.
     if (!rect.width) return
@@ -225,14 +236,17 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
   let elapsed = 0
   let frame = null
   const gate = createFrameGate()
+  const canRender = () => shouldRender() && container.clientWidth && container.clientHeight && !document.hidden && !isRenderSuspended()
   const animate = (now = performance.now()) => {
-    frame = requestFrame(animate)
-    if (!shouldRender() || !container.clientWidth || !container.clientHeight || document.hidden || isRenderSuspended()) {
+    frame = null
+    if (disposed) return
+    if (!canRender()) {
       clock.getDelta() // drop the time spent not drawing, so nothing jumps on the way back
+      if (!onDemand) frame = requestFrame(animate)
       return
     }
     // Honour Settings → 渲染帧率上限.
-    if (!gate.shouldDraw(now)) return
+    if (!gate.shouldDraw(now)) { frame = requestFrame(animate); return }
     // Animation time is accumulated from real, clamped deltas rather than read off
     // the wall clock: a pause never turns into a leap, and motion keeps the same
     // speed whether the cap is 30 or 60.
@@ -261,11 +275,37 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
     dustGeometry.attributes.position.needsUpdate = true
     dust.rotation.y = time * 0.03
     renderer.render(scene, camera)
+    if (!onDemand || !reducedMotion.matches) frame = requestFrame(animate)
+  }
+  // In the workbench, inactive stages have no recurring rAF/timer. The caller
+  // invalidates on expansion/intersection; other stage callers keep old defaults.
+  const refresh = () => {
+    if (disposed) return
+    if (!canRender()) {
+      if (onDemand) { cancelFrame(frame); frame = null }
+      clock.getDelta(); return
+    }
+    clock.getDelta(); gate.reset()
+    if (!frame) frame = requestFrame(animate)
+  }
+  invalidate = refresh
+  const stopSuspendWatch = onDemand ? onRenderSuspendChange(refresh) : () => {}
+  if (onDemand) {
+    document.addEventListener('visibilitychange', refresh)
+    if (reducedMotion.addEventListener) reducedMotion.addEventListener('change', refresh)
+    else reducedMotion.addListener?.(refresh)
   }
   animate()
 
-  return () => {
+  const dispose = () => {
+    disposed = true; invalidate = () => {}
     cancelFrame(frame)
+    stopSuspendWatch()
+    if (onDemand) {
+      document.removeEventListener('visibilitychange', refresh)
+      if (reducedMotion.removeEventListener) reducedMotion.removeEventListener('change', refresh)
+      else reducedMotion.removeListener?.(refresh)
+    }
     stopQualityWatch()
     window.removeEventListener('mousemove', onMouseMove)
     resizeObserver.disconnect()
@@ -278,6 +318,8 @@ export function mountAbyssStage(container, { shouldRender = () => true } = {}) {
     gl.getExtension('WEBGL_lose_context')?.loseContext()
     shaderCanvas.remove()
   }
+  dispose.refresh = refresh
+  return dispose
 }
 
 export function mountMiniHologram(container, { shouldRender = () => true } = {}) {

@@ -26,6 +26,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 from ..config import get_settings
+from ..scope import AuthorizedScope, ScopeClient, ScopeDenied
 from .embeddings import get_embeddings
 from .vectorstore import MEMORY_COLLECTION, get_chroma_client
 
@@ -63,9 +64,12 @@ async def write(
     trace_id: Optional[str] = None,
     run_id: Optional[str] = None,
     provider: Optional[dict] = None,
+    scope: AuthorizedScope | None = None,
 ) -> Optional[str]:
     """Persist one (user, assistant) exchange. Returns chunk_id on success,
     None on degraded paths (disabled / too short / no key / underlying error)."""
+    scope = await ScopeClient().validate(scope)
+    scope.bind(user_id, session_id, scope.runId)
     settings = get_settings()
     if not settings.memory_rag_enabled:
         return None
@@ -82,13 +86,16 @@ async def write(
         return None
 
     if run_id:
-        identity = f"{user_id}:{session_id}:{run_id}".encode()
+        identity = f"{user_id}:{session_id}:{scope.scopeKey}:{run_id}".encode()
         chunk_id = "mem_" + hashlib.sha256(identity).hexdigest()[:32]
     else:
         chunk_id = f"mem_{uuid.uuid4().hex[:16]}"
     metadata: dict = {
         "userId": int(user_id),
         "sessionId": str(session_id),
+        "scopeKey": scope.scopeKey,
+        "sessionGeneration": scope.sessionGeneration,
+        "authorizationVersion": scope.authorizationVersion,
         "chunkId": chunk_id,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -97,6 +104,7 @@ async def write(
 
     doc = Document(page_content=text, metadata=metadata)
 
+    await ScopeClient().validate(scope)
     try:
         await asyncio.to_thread(store.add_documents, [doc], ids=[chunk_id])
         return chunk_id
@@ -111,12 +119,16 @@ async def retrieve(
     top_k: Optional[int] = None,
     *,
     provider: Optional[dict] = None,
+    scope: AuthorizedScope | None = None,
 ) -> list[str]:
     """Return up to top_k semantically similar memory chunks for this user.
 
     Filtered by userId — cross-user retrieval is impossible by construction.
     Returns [] when disabled, query empty, no key, no matches, or on error.
     """
+    scope = await ScopeClient().validate(scope)
+    if scope.actorUserId != user_id:
+        raise ScopeDenied()
     settings = get_settings()
     if not settings.memory_rag_enabled:
         return []
@@ -140,14 +152,33 @@ async def retrieve(
         # Counting is an optimisation, never a reason to skip retrieval.
         pass
 
+    await ScopeClient().validate(scope)
     try:
         results = await asyncio.to_thread(
             store.similarity_search,
             query,
             k=k,
-            filter={"userId": int(user_id)},
+            filter={"$and": [{"userId": int(user_id)},
+                             {"sessionId": scope.sessionId},
+                             {"scopeKey": scope.scopeKey},
+                             {"sessionGeneration": scope.sessionGeneration}]},
         )
-        return [d.page_content for d in results]
+        await ScopeClient().validate(scope)
+        return [d.page_content for d in results
+                if d.metadata.get("userId") == user_id
+                and d.metadata.get("sessionId") == scope.sessionId
+                and d.metadata.get("scopeKey") == scope.scopeKey
+                and d.metadata.get("sessionGeneration") == scope.sessionGeneration]
+    except ScopeDenied:
+        raise
     except Exception:
         log.exception("memory_rag.retrieve failed for user_id=%s", user_id)
         return []
+
+
+async def purge_session(user_id: int, session_id: str) -> None:
+    """Java generation/tombstone must precede best effort physical deletion."""
+    collection = await asyncio.to_thread(
+        get_chroma_client().get_or_create_collection, MEMORY_COLLECTION)
+    await asyncio.to_thread(collection.delete, where={"$and": [
+        {"userId": int(user_id)}, {"sessionId": str(session_id)}]})

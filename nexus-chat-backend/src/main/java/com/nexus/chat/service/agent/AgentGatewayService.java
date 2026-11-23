@@ -38,6 +38,13 @@ public class AgentGatewayService {
     private final ObjectMapper objectMapper;
     private final RestTemplateBuilder restTemplateBuilder;
     private final AgentProviderService providerService;
+    // Optional for contexts without scope authority; one-shot invokes fail closed.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @lombok.Setter
+    private com.nexus.chat.service.agent.scope.AgentScopeService scopeService;
+    @org.springframework.beans.factory.annotation.Autowired
+    @lombok.Setter
+    private com.nexus.chat.service.agent.memory.AgentMemoryService memoryService;
 
     @Value("${agent.python.base-url:http://localhost:8100}")
     private String pythonBaseUrl;
@@ -116,6 +123,14 @@ public class AgentGatewayService {
         String traceId = "tr_" + UUID.randomUUID().toString().replace("-", "");
         String ephemeralSessionId = "as_oneshot_" + UUID.randomUUID().toString().replace("-", "");
 
+        if(scopeService==null) throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301,"Scope authority unavailable");
+        if(extra!=null && extra.keySet().stream().anyMatch(k -> !java.util.Set.of("summaryRangeType","rangeValue","targetMessageId","tone","length").contains(k)))
+            throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301,"Reserved one-shot input");
+        req.setRunId("r_"+UUID.randomUUID().toString().replace("-", ""));
+        req.setAuthorizedScope(scopeService.authorizeOneShotChat(actorUserId,ephemeralSessionId,req.getRunId(),chatId));
+
+        RuntimeException invokeFailure = null;
+        try {
         Map<String, Object> body = buildInvokeBody(actorUserId, username, traceId, ephemeralSessionId, req);
         if (extra != null && !extra.isEmpty()) {
             Map<String, Object> input2 = new LinkedHashMap<>((Map<String, Object>) body.get("input"));
@@ -146,6 +161,20 @@ public class AgentGatewayService {
             log.error("one-shot agent invoke failed", e);
             throw new AgentException(AgentErrorCode.AGENT_MODEL_50202, "Agent service unavailable");
         }
+        } catch(RuntimeException e) { invokeFailure=e; throw e; }
+        finally {
+            // Generation/tombstone commits first; independent cleanup must not mask invoke error.
+            try { scopeService.invalidate(actorUserId,ephemeralSessionId,true); }
+            catch(RuntimeException e) { if(invokeFailure!=null) invokeFailure.addSuppressed(e); else throw e; }
+            finally {
+                for(Runnable cleanup : java.util.List.<Runnable>of(
+                        () -> scopeService.revokeSession(actorUserId,ephemeralSessionId),
+                        () -> purgeRuns(actorUserId,traceId,ephemeralSessionId),
+                        () -> { if(memoryService!=null) memoryService.purgeSession(actorUserId,ephemeralSessionId); })) {
+                    try { cleanup.run(); } catch(RuntimeException e) { log.warn("one-shot cleanup failed",e); }
+                }
+            }
+        }
     }
 
     public Map<String, Object> pendingRuns(Long actorUserId, String traceId, String sessionId) {
@@ -156,6 +185,21 @@ public class AgentGatewayService {
     public void purgeRuns(Long actorUserId, String traceId, String sessionId) {
         postRunRequest("/v1/agent/runs/purge", actorUserId, traceId,
                 Map.of("actor", Map.of("userId", actorUserId), "sessionId", sessionId, "traceId", traceId));
+    }
+
+    /** Lifecycle RPC: no provider resolution or model credentials. Preserve upstream errors. */
+    public ResponseEntity<?> cancelRun(Long actorUserId, String traceId, String sessionId, String runId) {
+        try {
+            String json = objectMapper.writeValueAsString(Map.of("actor", Map.of("userId", actorUserId),
+                    "traceId", traceId, "sessionId", sessionId, "runId", runId));
+            return restTemplate().exchange(pythonBaseUrl + "/v1/agent/runs/cancel", HttpMethod.POST,
+                    new HttpEntity<>(json, buildInternalHeaders(actorUserId, traceId, json)), Map.class);
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            return ResponseEntity.status(e.getStatusCode()).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(e.getResponseBodyAsByteArray());
+        } catch (Exception e) {
+            throw new AgentException(AgentErrorCode.AGENT_MODEL_50202, "Python cancellation service unavailable");
+        }
     }
 
     private Map<String, Object> postRunRequest(String path, Long actorUserId, String traceId, Map<String, Object> body) {
@@ -184,8 +228,13 @@ public class AgentGatewayService {
         if (runId == null || !runId.matches("[A-Za-z0-9_-]{8,64}")) {
             throw new AgentException(AgentErrorCode.AGENT_PARAM_40001, "Invalid run id");
         }
+        throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Resume requires current scope");
+    }
+
+    public void resumePythonRaw(Long actorUserId, String username, String traceId, String sessionId,
+                                String runId, Long providerId, com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope, OutputStream out) throws IOException {
         Map<String, Object> body = Map.of("actor", Map.of("userId", actorUserId, "username", username),
-                "sessionId", sessionId, "runId", runId, "traceId", traceId);
+                "sessionId", sessionId, "runId", runId, "traceId", traceId, "scope", scope);
         streamInternal("/v1/agent/runs/resume/stream", actorUserId, traceId, body, providerId, out);
     }
 
@@ -204,8 +253,20 @@ public class AgentGatewayService {
                 .timeout(Duration.ofMillis(Math.max(readTimeoutMs, 120_000L)))
                 .header("Accept", "text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(bodyJson, StandardCharsets.UTF_8));
+        boolean handover = false;
+        boolean resume = path.equals("/v1/agent/runs/resume/stream");
+        if (resume) {
+            try {
+                Map<String, Object> lifecycle = pendingRuns(actorUserId, traceId, String.valueOf(body.get("sessionId")));
+                Object finished = lifecycle.get("finished");
+                handover = finished instanceof java.util.List<?> ids && ids.contains(body.get("runId"));
+            } catch (AgentException e) {
+                writeGatewayFailure(out, body, e.getCode().name(), "Python run lifecycle unavailable", "transport", null);
+                return;
+            }
+        }
         try {
-            AgentProviderService.ResolvedProvider provider = resolveChannel(actorUserId, providerId);
+            AgentProviderService.ResolvedProvider provider = handover ? null : resolveChannel(actorUserId, providerId);
             for (Map.Entry<String, java.util.List<String>> entry : buildInternalHeaders(actorUserId, traceId, bodyJson, provider).entrySet()) {
                 rb.header(entry.getKey(), entry.getValue().get(0));
             }
@@ -213,27 +274,28 @@ public class AgentGatewayService {
             // The channel cannot be used as configured (e.g. no model set). The response is
             // already an event stream, so say so in-band with the real reason. "CONFIG" is the
             // same reason Python reports for an unusable channel, so the client offers the settings.
-            String payload = "event: error\ndata: " + objectMapper.writeValueAsString(
-                    Map.of("code", e.getCode().name(), "reason", "CONFIG", "message", e.getMessage())) + "\n\n";
-            out.write(payload.getBytes(StandardCharsets.UTF_8));
-            out.flush();
+            // A resume that never reached Python leaves the unfinished run exactly as it was.
+            writeGatewayFailure(out, Map.of("runId", body.get("runId"), "resumable", resume),
+                    e.getCode().name(), e.getMessage(), "run", "CONFIG");
             return;
         } catch (Exception e) {
-            throw new IOException("Failed to authenticate internal request", e);
+            writeGatewayFailure(out, body, "INTERNAL_AUTH", "Failed to authenticate internal request", "transport", null);
+            return;
         }
         HttpResponse<InputStream> response;
         try {
             response = client.send(rb.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while contacting Python", e);
+            writeGatewayFailure(out, body, "PYTHON_INTERRUPTED", "Interrupted while contacting Python", "transport", null);
+            return;
         } catch (IOException e) {
-            writeErrorEvent(out, "PYTHON_UNAVAILABLE", "Python agent service unavailable");
+            writeGatewayFailure(out, body, "PYTHON_UNAVAILABLE", "Python agent service unavailable", "transport", null);
             return;
         }
         try (InputStream in = response.body()) {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                writeErrorEvent(out, "PYTHON_HTTP_" + response.statusCode(), "Python agent returned " + response.statusCode());
+                writeGatewayFailure(out, body, "PYTHON_HTTP_" + response.statusCode(), "Python agent returned " + response.statusCode(), "transport", null);
                 return;
             }
             byte[] buffer = new byte[4096];
@@ -245,9 +307,24 @@ public class AgentGatewayService {
         }
     }
 
-    private void writeErrorEvent(OutputStream out, String code, String message) throws IOException {
-        String payload = "event: error\ndata: " + objectMapper.writeValueAsString(Map.of("code", code, "message", message)) + "\n\n";
-        out.write(payload.getBytes(StandardCharsets.UTF_8));
+    private void writeGatewayFailure(OutputStream out, Map<String, Object> body, String code,
+                                     String message, String scope, String reason) throws IOException {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("runtimeContractVersion", 1);
+        data.put("runId", body.get("runId"));
+        data.put("attemptId", "gateway_" + UUID.randomUUID().toString().replace("-", ""));
+        data.put("sequence", 1); data.put("at", 0);
+        data.put("scope", scope); data.put("code", code); data.put("message", message);
+        if (reason != null) data.put("reason", reason);
+        out.write(("event: error\ndata: " + objectMapper.writeValueAsString(data) + "\n\n").getBytes(StandardCharsets.UTF_8));
+        // An unavailable transport is not a confirmed execution terminal.
+        if ("run".equals(scope)) {
+            data = new LinkedHashMap<>(data);
+            data.remove("scope"); data.remove("code"); data.remove("message"); data.remove("reason");
+            data.put("sequence", 2); data.put("finishReason", "error");
+            data.put("resumable", Boolean.TRUE.equals(body.get("resumable")));
+            out.write(("event: done\ndata: " + objectMapper.writeValueAsString(data) + "\n\n").getBytes(StandardCharsets.UTF_8));
+        }
         out.flush();
     }
 
@@ -257,6 +334,8 @@ public class AgentGatewayService {
                                                 String sessionId,
                                                 AgentSessionAndChatDtos.SessionChatRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
+        if (request.getAuthorizedScope() == null) throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Explicit scope required");
+        body.put("scope", request.getAuthorizedScope());
         // The client's run id when it has one: a retry must be a new run of the same question,
         // and the record of it already exists on this side.
         body.put("runId", request.getRunId() != null && !request.getRunId().isBlank()

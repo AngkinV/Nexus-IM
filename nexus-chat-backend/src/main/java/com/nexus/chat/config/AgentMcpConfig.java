@@ -44,6 +44,7 @@ public class AgentMcpConfig {
                     Map<String, Object> context = new LinkedHashMap<>();
                     Map.of(AgentToolRegistry.CTX_ACTOR, "X-Actor-User-Id",
                             AgentToolRegistry.CTX_TRACE_ID, "X-Trace-Id",
+                            AgentToolRegistry.CTX_SCOPE, "X-Agent-Scope",
                             AgentToolRegistry.CTX_TRACEPARENT, "traceparent"
                     ).forEach((key, header) -> {
                         String value = request.getHeader(header);
@@ -83,7 +84,7 @@ public class AgentMcpConfig {
             @Value("${agent.internal.token}") String internalToken) {
         FilterRegistrationBean<AgentInternalTokenFilter> bean =
                 new FilterRegistrationBean<>(new AgentInternalTokenFilter(internalToken));
-        bean.addUrlPatterns(MCP_PATH);
+        bean.addUrlPatterns(MCP_PATH, "/internal/agent/scope/validate");
         // Ahead of Spring Security and everything else: no JSON-RPC is parsed before the token check.
         bean.setOrder(Ordered.HIGHEST_PRECEDENCE);
         return bean;

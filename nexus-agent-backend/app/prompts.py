@@ -51,6 +51,8 @@ BUSINESS_PROMPT: dict[str, str] = {
     ),
     "REPLY_SUGGEST": (
         "当前任务：为目标消息生成回复草稿。\n"
+        "0. 必须先用 targetMessageId 作为 message_id 调用 get_message_by_id，取得授权目标消息；"
+        "正文须由 Java 先做归属 projection 授权再读取，不能猜测正文或使用旧 raw 正文。\n"
         "1. 输出 1 条主建议（draft）+ 2 条风格略不同的备选（alternatives）。\n"
         "2. 风格遵循 tone 与 length 字段。\n"
         "3. 必须用 JSON：{draft, alternatives:[..]}，禁止额外解释。"
@@ -156,8 +158,6 @@ def build_messages(
         extras.append(f"summaryRangeType={inp.summaryRangeType}, rangeValue={inp.rangeValue}")
     if inp.targetMessageId:
         extras.append(f"targetMessageId={inp.targetMessageId}")
-        if inp.targetMessageContent:
-            extras.append(f'targetMessageContent="""{inp.targetMessageContent}"""')
     if inp.tone:
         extras.append(f"tone={inp.tone}, length={inp.length}")
 

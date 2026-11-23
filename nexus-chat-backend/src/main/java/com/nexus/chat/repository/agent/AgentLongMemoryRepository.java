@@ -8,5 +8,10 @@ import java.util.List;
 
 @Repository
 public interface AgentLongMemoryRepository extends JpaRepository<AgentLongMemory, Long> {
+    /** Legacy repository API retained for fixtures/admin only, never model recall. */
     List<AgentLongMemory> findTop8ByUserIdAndIsActiveTrueOrderByUpdatedAtDesc(Long userId);
+    List<AgentLongMemory> findTop8ByUserIdAndScopeKeyAndSessionGenerationAndIsActiveTrueOrderByUpdatedAtDesc(Long userId, String scopeKey, Long sessionGeneration);
+    List<AgentLongMemory> findByUserIdAndIsActiveTrue(Long userId);
+    List<AgentLongMemory> findByUserIdAndSourceSessionId(Long userId, String sourceSessionId);
+
 }

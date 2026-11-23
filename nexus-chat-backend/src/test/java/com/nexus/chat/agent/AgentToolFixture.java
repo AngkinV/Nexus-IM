@@ -31,8 +31,53 @@ public record AgentToolFixture(ChatMemberRepository members, MessageRepository m
 
     public static final long ALICE = 7, CAROL = 8, BOB = 9, CHAT = 5, FIRST_MESSAGE = 101, SECOND_MESSAGE = 102;
 
+    private static final java.util.Map<AgentToolFixture,Authority> AUTHORITIES = new java.util.IdentityHashMap<>();
+    private record Authority(com.nexus.chat.service.agent.scope.AgentScopeService scopes,
+                             com.nexus.chat.service.agent.scope.AgentScopeResources resources,
+                             java.util.Map<Long,String> headers) {}
+    private Authority authority() {
+        return AUTHORITIES.computeIfAbsent(this,f->{
+            var b=mock(com.nexus.chat.repository.agent.AgentScopeBindingRepository.class);
+            var g=mock(com.nexus.chat.repository.agent.AgentScopeGrantRepository.class);
+            var c=mock(com.nexus.chat.repository.ContactRepository.class);
+            var bs=new java.util.HashMap<String,com.nexus.chat.model.agent.AgentScopeBinding>();
+            var gs=new java.util.HashMap<String,com.nexus.chat.model.agent.AgentScopeGrant>();
+            when(b.lockBySessionId(any())).thenAnswer(i->Optional.ofNullable(bs.get(i.getArgument(0))));
+            when(b.saveAndFlush(any())).thenAnswer(i->{com.nexus.chat.model.agent.AgentScopeBinding v=i.getArgument(0);bs.put(v.sessionId,v);return v;});
+            when(g.findById(any())).thenAnswer(i->Optional.ofNullable(gs.get(i.getArgument(0))));
+            when(g.findBySessionIdAndRunId(any(),any())).thenReturn(List.of());
+            when(g.saveAndFlush(any())).thenAnswer(i->{com.nexus.chat.model.agent.AgentScopeGrant v=i.getArgument(0);gs.put(v.grantId,v);return v;});
+            var json=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+            var scopes=new com.nexus.chat.service.agent.scope.AgentScopeService(b,g,members,chats,c,json);
+            var headers=new java.util.HashMap<Long,String>();
+            for(long actor:List.of(ALICE,BOB)) {
+                long other=actor==ALICE?BOB:ALICE;when(c.existsByUserIdAndContactUserId(actor,other)).thenReturn(true);
+                var selection=new com.nexus.chat.service.agent.scope.ScopeDtos.Selection(List.of(new com.nexus.chat.service.agent.scope.ScopeDtos.Target("contact",other)),com.nexus.chat.service.agent.scope.ScopeDtos.TimeRange.unbounded());
+                String session="fixture_"+actor;scopes.create(actor,session,selection);
+                var scope=scopes.authorize(actor,session,"fixture_run",null,true,1L,null,false);
+                try {headers.put(actor,java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(json.writeValueAsBytes(scope)));} catch(Exception e){throw new IllegalStateException(e);}
+            }
+            return new Authority(scopes,new com.nexus.chat.service.agent.scope.AgentScopeResources(c,chats,members,users),headers);
+        });
+    }
+    public String scopeHeader(long actor) { return authority().headers().get(actor); }
+    /** Candidate listing lives in AgentScopeResources, not on the tool service. */
+    public com.nexus.chat.service.agent.scope.AgentScopeResources resources() { return authority().resources(); }
+
+    /** Run a direct service call under the same runtime scope the MCP registry installs. */
+    public <T> T inScope(long actor, java.util.concurrent.Callable<T> call) {
+        try (var ignored = com.nexus.chat.service.agent.scope.AgentScopeService.runtime(scopeHeader(actor))) {
+            return call.call();
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
     public AgentToolService service() {
-        return new AgentToolService(members, messages, chats, users);
+        var service=new AgentToolService(members, messages, chats, users);
+        service.setScopeService(authority().scopes());
+        org.mockito.Mockito.clearInvocations(members,messages,chats,users);return service;
     }
 
     public static AgentToolFixture create() {
@@ -43,6 +88,10 @@ public record AgentToolFixture(ChatMemberRepository members, MessageRepository m
             when(fixture.users.findById(user.getId())).thenReturn(Optional.of(user));
             when(fixture.users.existsById(user.getId())).thenReturn(true);
             when(fixture.users.findByUsername(user.getUsername())).thenReturn(Optional.of(user));
+            if(user.getId()!=CAROL) {
+                var p=mock(UserRepository.AgentCandidate.class);when(p.getId()).thenReturn(user.getId());when(p.getUsername()).thenReturn(user.getUsername());
+                for(long actor:List.of(ALICE,BOB)) when(fixture.users.findAgentCandidates(actor,user.getUsername())).thenReturn(List.of(p));
+            }
         }
 
         Chat chat = new Chat();
@@ -66,6 +115,12 @@ public record AgentToolFixture(ChatMemberRepository members, MessageRepository m
         when(fixture.messages.findById(SECOND_MESSAGE)).thenReturn(Optional.of(second));
         when(fixture.messages.findByChatIdOrderByCreatedAtDesc(eq(CHAT), any(Pageable.class))).thenAnswer(inv ->
                 new PageImpl<>(List.of(second, first).subList(0, Math.min(2, inv.<Pageable>getArgument(1).getPageSize()))));
+        when(fixture.messages.findScopedMessages(eq(CHAT),any(),any(),any(Pageable.class))).thenAnswer(inv ->
+                new PageImpl<>(List.of(second, first).subList(0,Math.min(2,inv.<Pageable>getArgument(3).getPageSize()))));
+        for(var message:List.of(first,second)) {
+            var p=mock(MessageRepository.ScopeAttribution.class);when(p.getChatId()).thenReturn(CHAT);when(p.getCreatedAt()).thenReturn(message.getCreatedAt());
+            when(fixture.messages.findScopeAttribution(message.getId())).thenReturn(Optional.of(p));
+        }
         return fixture;
     }
 

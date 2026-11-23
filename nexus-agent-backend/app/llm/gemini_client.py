@@ -60,6 +60,8 @@ def _to_gemini(messages: list[dict[str, Any]], types: Any) -> tuple[str, list[An
 
 
 class GeminiClient(LLMClient):
+    signals_dispatch = True
+
     async def complete(
         self,
         messages: list[dict[str, Any]],
@@ -69,6 +71,7 @@ class GeminiClient(LLMClient):
         temperature: float = 0.2,
         max_tokens: int = 1024,
         timeout_sec: int = 30,
+        on_dispatch=None,
     ) -> AsyncIterator[LLMChunk]:
         try:
             from google import genai
@@ -109,6 +112,9 @@ class GeminiClient(LLMClient):
         finish_name: str | None = None
         error: LLMError | None = None
         try:
+            if on_dispatch is not None:
+                # Outside the provider error handling: a refusal is the caller's, not the provider's.
+                await on_dispatch()
             try:
                 stream = await asyncio.wait_for(
                     client.aio.models.generate_content_stream(

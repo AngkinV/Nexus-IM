@@ -76,8 +76,19 @@ public final class AgentWorkbenchTestStore {
         }).when(workspaces).deleteByUserIdAndSessionId(anyLong(), anyString());
     }
 
+    /** One shared authority, so every runService() sees the same grants. */
+    public final com.nexus.chat.agent.AgentScopeTestDouble authority =
+            new com.nexus.chat.agent.AgentScopeTestDouble();
+
     public AgentRunService runService() {
-        return new AgentRunService(mapper, runs, sessions);
+        AgentRunService service = new AgentRunService(mapper, runs, sessions);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scopes", authority.service());
+        return service;
+    }
+
+    /** Record the run's own scope so its output stays readable to its owner. */
+    public void grant(AgentRunService service, String runId) {
+        service.replaceScope(7L, "as_test", runId, authority.grantFor(7L, "as_test", runId, 9L));
     }
 
     private void addSession(Long userId, String sessionId) {

@@ -11,7 +11,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import ClassVar, Any
 
 import httpx2
 
@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.llm import LLMChunk, LLMToolCall, LLMUsage, ProviderConfig
 from app.rag import memory_rag
 from app.schemas import Actor, InputPayload, InvokeRequest, Options, ResumeRequest, Session
+from app.scope import ScopeClient
 
 CASES_PATH = Path(__file__).parent / "cases.jsonl"
 ACTOR_ID = 7
@@ -66,6 +67,7 @@ class ScriptedModel:
         self.calls: list[dict[str, Any]] = []
         self.gates: dict[str, asyncio.Event] = {}
         self.open_streams = 0
+        self.readers: list[set[asyncio.Task]] = []  # per call, every task that advanced its stream
 
     def gate(self, name: str) -> asyncio.Event:
         return self.gates.setdefault(name, asyncio.Event())
@@ -73,6 +75,7 @@ class ScriptedModel:
     async def complete(self, messages, tools=None, **kwargs):
         index = len(self.calls)
         self.calls.append({"messages": copy.deepcopy(messages), "tools": tools, **kwargs})
+        self.readers.append({asyncio.current_task()})
         if index >= len(self.turns):
             # Asserted by check_invariants; raising here would be swallowed as a model error.
             return
@@ -87,6 +90,7 @@ class ScriptedModel:
                 if "exit" in step:
                     os._exit(step["exit"])  # the process dies mid-call, with no cleanup
                 yield _chunk(step)
+                self.readers[index].add(asyncio.current_task())
         finally:
             self.open_streams -= 1
 
@@ -115,6 +119,7 @@ class FakeJava:
         self.http_requests = 0  # everything that reached the server, answered or refused
         self.fail_with: int | None = None  # answer every request with this HTTP status
         self.fail_calls_with: int | None = None  # answer only tools/call with this HTTP status
+        self.fail_tools: set[str] = set()  # answer tools/call for these tools with HTTP 500
         self.hang = False  # accept every request and never answer
         self.delay_sec = 0.0
         self.in_flight = 0
@@ -138,6 +143,8 @@ class FakeJava:
         self.rpc_headers.append(dict(request.headers))
         if method == "tools/call" and self.fail_calls_with is not None:
             return httpx2.Response(self.fail_calls_with)
+        if method == "tools/call" and message["params"]["name"] in self.fail_tools:
+            return httpx2.Response(500)
         if message_id is None:  # a notification
             return httpx2.Response(202)
         if method == "initialize":
@@ -150,6 +157,11 @@ class FakeJava:
             result = {"tools": [{"name": name, "description": f"{name} (fake)", "inputSchema": schema}
                                 for name, schema in self.catalog.items()]}
         elif method == "tools/call":
+            self.requests.append({
+                "tool": message["params"]["name"],
+                "arguments": message["params"].get("arguments") or {},
+                "headers": dict(request.headers),
+            })
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
             try:
@@ -164,11 +176,6 @@ class FakeJava:
 
     def _call(self, request: httpx2.Request, params: dict[str, Any]) -> dict[str, Any]:
         tool_name = params["name"]
-        self.requests.append({
-            "tool": tool_name,
-            "arguments": params.get("arguments") or {},
-            "headers": dict(request.headers),
-        })
         spec = self._responses.get(tool_name)
         if isinstance(spec, list):
             spec = spec.pop(0) if spec else None
@@ -188,11 +195,15 @@ class RecordingMemory:
         self.turns: list[list[str]] = []
         self.recorded: set[tuple[str, str]] = set()
         self.owners: list[tuple[int, str]] = []
+        self.scopes_seen: list[str | None] = []
 
-    async def recent(self, user_id, session_id):
+    async def recent(self, user_id, session_id, *, scope=None):
+        # Every turn runs under a scope now; this fake records which one it saw.
+        self.scopes_seen.append(getattr(scope, "scopeKey", None))
         return list(self.history)
 
-    async def append(self, user_id, session_id, role, content, *, run_id=None):
+    async def append(self, user_id, session_id, role, content, *, run_id=None, scope=None):
+        self.scopes_seen.append(getattr(scope, "scopeKey", None))
         key = (user_id, session_id, run_id, role)
         if run_id and key in self.recorded:
             return False
@@ -210,15 +221,39 @@ class Rig:
     java: FakeJava
     memory: RecordingMemory
     rag_writes: list[tuple[str, str]]
+    run_seq: int = 0
+    runs_issued: ClassVar[int] = 0  # across every rig, so no two turns share a generated run id
 
     def request(self, **overrides) -> InvokeRequest:
         case = self.case
+        session_id = f"s_{case['id']}"
+        # Each turn needs its own run id: a checkpoint store refuses a reused one, also
+        # when a test sets up a second rig for the same case.
+        self.run_seq += 1
+        Rig.runs_issued += 1
+        run_id = case.get("runId") if case.get("runId") and self.run_seq == 1 else f"run_{case['id']}_{Rig.runs_issued}"
+        # Explicit identity overrides must reach the grant too, or the binding fails.
+        run_id = overrides.get("runId") or run_id
+        session_override = overrides.get("session")
+        if session_override is not None:
+            session_id = (session_override.get("sessionId") if isinstance(session_override, dict)
+                          else session_override.sessionId)
+        actor_override = overrides.get("actor")
+        if actor_override is not None:
+            actor_id = actor_override.userId
         return InvokeRequest(**{
             "traceId": f"tr_{case['id']}",
             "actor": Actor(userId=ACTOR_ID, username=ACTOR_NAME),
-            "session": Session(sessionId=f"s_{case['id']}", operationType=case["operation"]),
+            "session": Session(sessionId=session_id, operationType=case["operation"]),
             "input": InputPayload(**case["input"]),
             "options": Options(**case.get("options", {})),
+            # Every run is authorized: the eval rig has no live Java authority, so the
+            # scope is the synthetic grant the case was written against.
+            "runId": run_id,
+            "scope": eval_scope(locals().get("actor_id", ACTOR_ID), session_id, run_id,
+                                chat_id=(case.get("input") or {}).get("chatId"),
+                                extra_chats=declared_chat_ids(case),
+                                contact_ids=declared_user_ids(case)),
             **overrides,
         })
 
@@ -235,13 +270,71 @@ class Rig:
     async def run(self, request: InvokeRequest | None = None, **kwargs) -> list[Any]:
         return await self.collect(orchestrator.run_agent(request or self.request(), **kwargs))
 
-    async def resume(self, run_id: str, *, actor_id: int = ACTOR_ID, session_id: str | None = None) -> list[Any]:
+    async def resume(self, run_id: str, *, actor_id: int = ACTOR_ID, session_id: str | None = None,
+                     scope=None) -> list[Any]:
+        target = session_id or f"s_{self.case['id']}"
+        # A resume carries its own grant; by default the rig re-issues one for this run.
         return await self.collect(orchestrator.resume_agent(ResumeRequest(
             traceId=f"tr_{self.case['id']}_resume",
             actor=Actor(userId=actor_id, username=ACTOR_NAME),
-            sessionId=session_id or f"s_{self.case['id']}",
+            sessionId=target,
             runId=run_id,
+            scope=scope if scope is not None else eval_scope(
+                actor_id, target, run_id,
+                chat_id=(self.case.get("input") or {}).get("chatId"),
+                extra_chats=declared_chat_ids(self.case),
+                contact_ids=declared_user_ids(self.case)),
         )))
+
+
+#: Chat the eval rig is allowed to read when the case names none. It exists only so a
+#: plain question still gets the ordinary tool catalog; it is not a wildcard.
+EVAL_CHAT_ID = 5
+
+
+def declared_chat_ids(case: dict[str, Any]) -> list[int]:
+    """Chats this case's own Java fixture says the actor may read."""
+    found: list[int] = []
+    for spec in (case.get("java") or {}).values():
+        for payload in (spec if isinstance(spec, list) else [spec]):
+            body = (payload or {}).get("json") or {}
+            value = body.get("chatId")
+            if isinstance(value, int) and value not in found:
+                found.append(value)
+    return found
+
+
+def declared_user_ids(case: dict[str, Any]) -> list[int]:
+    """Contacts this case's own Java fixture exposes a profile for."""
+    found: list[int] = []
+    for spec in (case.get("java") or {}).values():
+        for payload in (spec if isinstance(spec, list) else [spec]):
+            body = (payload or {}).get("json") or {}
+            value = body.get("userId")
+            if isinstance(value, int) and value not in found:
+                found.append(value)
+    return found
+
+
+def eval_scope(actor_id: int, session_id: str, run_id: str, *, chat_id: int | None = None,
+               extra_chats=(), contact_ids=()):
+    """A synthetic, internally consistent scope for the eval rig only.
+
+    The scope grants exactly the chats the case declares (its input chat and the chats
+    its own Java fixture returns), so a chat a case never mentions is still refused.
+    """
+    from app.scope import AuthorizedScope, scope_hash
+    chats = [chat_id if chat_id is not None else EVAL_CHAT_ID]
+    for extra in extra_chats:
+        if isinstance(extra, int) and extra not in chats:
+            chats.append(extra)
+    data = dict(schemaVersion=1, grantId="eval-grant", actorUserId=actor_id,
+                sessionId=session_id, runId=run_id, bindingVersion=1,
+                authorizationVersion=1, sessionGeneration=1, chatIds=chats,
+                contactUserIds=sorted(set(contact_ids)),
+                timeRange=dict(fromInclusive=None, toExclusive=None, timeZone="Asia/Shanghai"))
+    data["scopeKey"] = scope_hash(data)
+    return AuthorizedScope.model_validate(data)
 
 
 @dataclass
@@ -266,6 +359,12 @@ def install(case: dict[str, Any], monkeypatch) -> Rig:
     monkeypatch.setattr(settings, "java_internal_base_url", "http://java.test/internal/agent")
     monkeypatch.setattr(settings, "java_internal_token", JAVA_TOKEN)
 
+    async def authorize_fixture(request, kind, call):
+        # Only the isolated fake server: these fixture tools have no side effects.
+        return True
+    monkeypatch.setattr(orchestrator, "reuse_authorizer", authorize_fixture)
+    monkeypatch.setattr(orchestrator, "replay_authorizer", authorize_fixture)
+
     model = ScriptedModel(case.get("model", []))
     java = FakeJava(case.get("java", {}))
     memory = RecordingMemory(case.get("history", []))
@@ -287,6 +386,14 @@ def install(case: dict[str, Any], monkeypatch) -> Rig:
     monkeypatch.setattr(orchestrator, "get_memory", lambda: memory)
     monkeypatch.setattr(memory_rag, "retrieve", _retrieve)
     monkeypatch.setattr(memory_rag, "write", _write)
+    # No live Java authority in this rig: accept exactly the synthetic scope it issues.
+    # Patch only the method: the class itself is still constructed inside the run.
+    async def _validate(self, scope, tool=None):
+        if scope is None:
+            from app.scope import ScopeDenied
+            raise ScopeDenied()
+        return scope
+    monkeypatch.setattr(ScopeClient, "validate", _validate)
     return Rig(case, model, java, memory, rag_writes)
 
 
