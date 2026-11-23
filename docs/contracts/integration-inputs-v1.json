@@ -1,0 +1,172 @@
+{
+  "contractVersion": 1,
+  "sourceUserMessageAt": "2026-11-23T03:47:25.884Z",
+  "integrationWorktree": "/Users/anglv/alma/worktrees/nexus/worthwhile-tuna",
+  "t1Snapshot": "/Users/anglv/alma/worktrees/nexus/worthwhile-tuna/.alma/integration-t1-baseline-20261123-121121",
+  "scope": "T1 and integration/T7 only; merge supplied six deliveries, do not independently rebuild their features",
+  "validationGate": "/Users/anglv/alma/worktrees/nexus/worthwhile-tuna/.alma/runtime-mwrs4rwy60qp7zm91md/validation_gate.py",
+  "serviceRecord": "/Users/anglv/alma/worktrees/nexus/worthwhile-tuna/.alma/runtime-mwrs4rwy60qp7zm91md/services.json",
+  "inputs": [
+    {
+      "role": "T2",
+      "worktree": "/Users/anglv/alma/worktrees/nexus/probable-gayal",
+      "branch": "probable-gayal",
+      "baseline": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "artifacts": [
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/probable-gayal/docs/t2-handoff.md",
+          "sha256": "1b56ada51a026d8889fd6fe30c7aca2dc5013b7457bb8a7aaaa848a93003f3e1",
+          "bytes": 9068
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/probable-gayal/docs/t2-java-handoff.md",
+          "sha256": "80148d48a1beeb68849287b48e694e9fe3d2c526b71ba917495de02aee0c5ec1",
+          "bytes": 13499
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/probable-gayal/docs/t2-python-handoff.md",
+          "sha256": "b8a1a2628008018104e0f1b98673e3379cf366332f1bfaac362870c0b5d1f765",
+          "bytes": 14231
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/probable-gayal/docs/t2-frontend-handoff.md",
+          "sha256": "fb58dd004fe8ee08280b6c1ddd83f5fbed376c50cb799f0576384a56301cf362",
+          "bytes": 12555
+        }
+      ],
+      "status": "integrated_unit_tested_not_live_verified"
+    },
+    {
+      "role": "T3",
+      "worktree": "/Users/anglv/alma/worktrees/nexus/straightforward-panther",
+      "branch": "straightforward-panther",
+      "baseline": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "artifacts": [
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/straightforward-panther/docs/superpowers/handoffs/2026-11-22-t3-efficiency-budget.md",
+          "sha256": "15556cd97771d45bdd54f4ec36084343b6b097b2610904e5e09cff7687b9dc71",
+          "bytes": 20393
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/straightforward-panther/docs/superpowers/handoffs/t3/new-files.patch",
+          "sha256": "a1467498bcab64cd11f979718dd5103b2513fd4fa9093021871daf3c7313919b",
+          "bytes": 211538
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/straightforward-panther/docs/superpowers/handoffs/t3/java-message-tool-integration.patch",
+          "sha256": "10e9904d16bba621e0925b14f34ddf0e55d916115bd8d47fb3eeb44d4bb47026",
+          "bytes": 4632
+        }
+      ],
+      "status": "integrated_unit_tested_not_live_verified"
+    },
+    {
+      "role": "T4A",
+      "worktree": "/Users/anglv/alma/worktrees/nexus/causal-swift",
+      "branch": "causal-swift",
+      "baseline": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "artifacts": [
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/causal-swift/docs/t4a-mcp-delivery.md",
+          "sha256": "a1a252298d701ea8e1ac1d97377d9321550f5bd279cabdb08103d10171df087b",
+          "bytes": 10346
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/causal-swift/artifacts/t4a/exclusive.patch",
+          "sha256": "a9ec58ae8e839e7c2f864a6c134db47aeaabbc9e70bcae2fd38d94f45b4441a1",
+          "bytes": 229363
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/causal-swift/artifacts/t4a/shared.patch",
+          "sha256": "e0e838a6e399195c75cceb5c1073fc66b3103b7a7f1945a2d58cbf46a0db159f",
+          "bytes": 34574
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/causal-swift/artifacts/t4a/manifest.md",
+          "sha256": "2268979fb0a7038822680bfbb422b9622773595675f194247bd42eba86fce4c9",
+          "bytes": 3511
+        }
+      ],
+      "status": "integrated_unit_tested_not_live_verified"
+    },
+    {
+      "role": "T4B",
+      "worktree": "/Users/anglv/alma/worktrees/nexus/firm-cephalopod",
+      "branch": "implement-workbench-mcp-multi-agent-pixel",
+      "baseline": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "artifacts": [
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/firm-cephalopod/docs/t4b-delivery.md",
+          "sha256": "f535682342663a5a848a72ce031dfea51a96eb2a8dba214d40c410952216e44f",
+          "bytes": 9451
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/firm-cephalopod/docs/t4b-security-delivery.patch",
+          "sha256": "41ee211cbe6fcd5067303e2b5a9e58d4f4a784ffd740132795438094ddd96af8",
+          "bytes": 208630
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/firm-cephalopod/docs/t4b-mcp-executor.patch",
+          "sha256": "ea25d12e4ab7119eba0e432497e97d3a6805aafd0502b4d4e2b03cd0941af07d",
+          "bytes": 8269
+        }
+      ],
+      "status": "integrated_unit_tested_not_live_verified"
+    },
+    {
+      "role": "T5",
+      "worktree": "/Users/anglv/alma/worktrees/nexus/zesty-goose",
+      "branch": "implement-workbench-mcp-multi-agent",
+      "baseline": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "artifacts": [
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/zesty-goose/docs/superpowers/handoffs/T5-multi-agent.md",
+          "sha256": "bb2353c4463e7b3ec96f70afe7194ecd9ba2b2877243bfad2c9402884b6f5e24",
+          "bytes": 12131
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/zesty-goose/docs/superpowers/patches/T5-subagents.patch",
+          "sha256": "7d48da35c05fcdf8a29c1113494f3639516eeedb199a93b7a27c7bc33dda5e19",
+          "bytes": 149902
+        }
+      ],
+      "status": "integrated_unit_tested_not_live_verified"
+    },
+    {
+      "role": "T6",
+      "worktree": "/Users/anglv/alma/worktrees/nexus/molecular-pigeon",
+      "branch": "molecular-pigeon",
+      "baseline": "8f28a5a5d14d863d5840379cabe4292a59cb886e",
+      "artifacts": [
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/molecular-pigeon/docs/superpowers/handoffs/T6-pixel-process.md",
+          "sha256": "212a70c01706176a5fa81ade939319c955338b95fbc745c8c8ca3882cfcb9365",
+          "bytes": 17835
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/molecular-pigeon/docs/superpowers/handoffs/T6-frontend.patch",
+          "sha256": "cd216a982e2ffed5160f3241627263e305b477b44d596b5813b8bfb31d9aa245",
+          "bytes": 119723
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/molecular-pigeon/docs/superpowers/handoffs/T6-shared.patch",
+          "sha256": "2cd3ffb04d7f744b17e3e9a49136e198695ab1a24ae342cb22dedf72c233dcde",
+          "bytes": 29796
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/molecular-pigeon/docs/superpowers/handoffs/T6-parent-edits.json",
+          "sha256": "1e228eabdb4f5bcde6041b263c7eb44429c3d8ffe0785247bfa0c9c12bf23d0c",
+          "bytes": 2803
+        },
+        {
+          "path": "/Users/anglv/alma/worktrees/nexus/molecular-pigeon/docs/superpowers/handoffs/T6-manifest.json",
+          "sha256": "80dc291b522e5adb99fa77ad5e8bcdc7fad86d0a0cb34cb34575c532c04efa5a",
+          "bytes": 6456
+        }
+      ],
+      "status": "integrated_unit_tested_not_live_verified"
+    }
+  ],
+  "integratedAt": "2026-11-23T14:30:00Z",
+  "integrationNote": "All six deliveries merged into this tree hunk by hunk; nothing committed. See workbench-runtime-v1.md section 8 for what is merged but not yet called from the run path."
+}

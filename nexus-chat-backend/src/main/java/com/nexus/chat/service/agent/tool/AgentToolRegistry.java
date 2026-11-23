@@ -35,6 +35,7 @@ import java.util.function.BiFunction;
 @Component
 public class AgentToolRegistry {
 
+    public static final String CTX_SCOPE = "authorizedScopeHeader";
     public static final String CTX_ACTOR = "actorUserId";
     public static final String CTX_TRACE_ID = "traceId";
     public static final String CTX_TRACEPARENT = "traceparent";
@@ -145,10 +146,23 @@ public class AgentToolRegistry {
             Long actor = context.get(CTX_ACTOR) instanceof String header && header.matches("[1-9][0-9]{0,17}")
                     ? Long.valueOf(header)
                     : null;
-            Outcome outcome = actor == null
-                    ? failure(AgentToolException.Code.NO_ACTOR, "X-Actor-User-Id header is missing or not a positive integer")
-                    : invoke(provider, method, schema, resolvers, actor,
-                            request.arguments() == null ? Map.of() : request.arguments());
+            Outcome outcome;
+            if (actor == null) {
+                outcome = failure(AgentToolException.Code.NO_ACTOR, "Missing actor");
+            } else {
+                boolean discovery = Set.of("list_my_chats", "find_user_by_username", "find_direct_chat_with_user").contains(annotation.name());
+                try {
+                    if (discovery) {
+                        outcome = invoke(provider, method, schema, resolvers, actor, request.arguments() == null ? Map.of() : request.arguments());
+                    } else {
+                        try (var ignored = com.nexus.chat.service.agent.scope.AgentScopeService.runtime((String) context.get(CTX_SCOPE))) {
+                            outcome = invoke(provider, method, schema, resolvers, actor, request.arguments() == null ? Map.of() : request.arguments());
+                        }
+                    }
+                } catch (Exception rejected) {
+                    outcome = failure(AgentToolException.Code.FORBIDDEN, "Scope denied");
+                }
+            }
             // Arguments and payloads carry chat content; they are deliberately not logged.
             log.info("agent tool call: tool={} actor={} traceId={} traceparent={} tookMs={} result={}",
                     annotation.name(), actor, context.get(CTX_TRACE_ID), context.get(CTX_TRACEPARENT),
@@ -184,6 +198,9 @@ public class AgentToolRegistry {
     }
 
     private static Outcome failure(Method method, Throwable cause) {
+        if (cause instanceof org.springframework.web.server.ResponseStatusException e && e.getStatusCode().value() == 403) {
+            return failure(AgentToolException.Code.FORBIDDEN, "Scope denied");
+        }
         if (cause instanceof AgentToolException e) {
             return failure(e.getCode(), e.getMessage());
         }

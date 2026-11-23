@@ -64,14 +64,19 @@ async def _one(agent_id: str, base: list[dict[str, Any]], client: LLMClient, emi
                 node_id: str, parent_ids: list[str]) -> AnalystResult:
     """One analyst's own call. Its text is its own output, never the turn's answer."""
     started = time.monotonic()
-    await emit("stage", {"phase": "model", "status": "start", "agentId": agent_id,
-                         "nodeId": node_id, "parentIds": parent_ids, "iteration": 1})
+    start_data = {"phase": "model", "status": "start", "agentId": agent_id,
+                  "nodeId": node_id, "parentIds": parent_ids, "iteration": 1}
+    start_options = {}
+    if getattr(client, "runtime_metered", False):
+        start_options["_runtime_start"] = (emit, start_data)
+    else:
+        await emit("stage", start_data)
     messages = [{"role": "system", "content": _BRIEF[agent_id]}, *base]
     result = AnalystResult(agent_id, "")
     parts: list[str] = []
     finish = "stop"
     try:
-        stream = client.complete(messages, tools=None, temperature=options.temperature,
+        stream = client.complete(messages, **start_options, tools=None, temperature=options.temperature,
                                  max_tokens=min(options.maxOutputTokens, 2048), timeout_sec=120)
         async with contextlib.aclosing(stream) as chunks:
             async for chunk in chunks:
@@ -81,13 +86,14 @@ async def _one(agent_id: str, base: list[dict[str, Any]], client: LLMClient, emi
                     result.reasoning += chunk.text
                     await emit("reasoning", {"agentId": agent_id, "nodeId": node_id, "iteration": 1, "text": chunk.text})
                 elif chunk.kind == "usage" and chunk.usage:
-                    result.usage_in += chunk.usage.input_tokens
-                    result.usage_out += chunk.usage.output_tokens
+                    result.usage_in = chunk.usage.input_tokens
+                    result.usage_out = chunk.usage.output_tokens
                 elif chunk.kind == "error":
                     finish = "error"
                     result.error = (chunk.text or "model call failed")[:200]
                 elif chunk.kind == "finish":
-                    finish = chunk.finish_reason or finish
+                    if finish not in ("error", "timeout") or chunk.finish_reason == "timeout":
+                        finish = chunk.finish_reason or finish
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -96,6 +102,9 @@ async def _one(agent_id: str, base: list[dict[str, Any]], client: LLMClient, emi
     result.ms = int((time.monotonic() - started) * 1000)
     if finish not in ("stop",) and not result.error:
         result.error = f"the analyst stopped with {finish}"
+    if result.error:
+        await emit("error", {"code": "AGENT_MODEL_50202", "scope": "agent",
+            "agentId": agent_id, "nodeId": node_id, "message": result.error})
     if result.text:
         await emit("agent_output", {"agentId": agent_id, "nodeId": node_id, "iteration": 1, "text": result.text})
     await emit("stage", {"phase": "model", "status": "failed" if result.error else "done", "agentId": agent_id,
@@ -106,7 +115,8 @@ async def _one(agent_id: str, base: list[dict[str, Any]], client: LLMClient, emi
 
 async def run_collaboration(messages: list[dict[str, Any]], client: LLMClient, tools, emit,
                             *, run_id: str, options, node_id: str = "collaboration",
-                            parent_ids: list[str] | None = None) -> dict[str, Any]:
+                            parent_ids: list[str] | None = None, store=None, attempt_id="", authorize_reuse=None,
+                            authorization=None) -> dict[str, Any]:
     """Fan out to the analysts, join, then synthesize once.
 
     Returns the messages to append, the usage of all four calls, and each
@@ -116,14 +126,40 @@ async def run_collaboration(messages: list[dict[str, Any]], client: LLMClient, t
     await emit("stage", {"phase": "collaboration", "status": "start", "nodeId": node_id, "parentIds": parents})
     started = time.monotonic()
     results: list[AnalystResult] = []
+    import hashlib
+    # `authorization` is what the context was read under: a result is not reused under another.
+    fingerprint = hashlib.sha256(json.dumps(
+        {"messages": messages, "options": options.model_dump(), "authorization": authorization},
+        sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+    for agent_id in ANALYSTS:
+        cached = await store.committed(run_id, "agent", agent_id, fingerprint) if store else None
+        if cached is not None and (authorize_reuse is None or not await authorize_reuse(agent_id)):
+            raise PermissionError("cached analyst result requires current resource authorization")
+
+    async def analyst(agent_id):
+        cached = await store.committed(run_id, "agent", agent_id, fingerprint) if store else None
+        if cached is not None:
+            result = AnalystResult(**cached["result"])
+            source = {"reused": True, "producerAttemptId": cached["attemptId"]}
+            await emit("agent_output", {"agentId": agent_id, "nodeId": f"{node_id}-{agent_id}",
+                "text": result.text, **source})
+            await emit("stage", {"phase": "model", "status": "done", "agentId": agent_id,
+                "nodeId": f"{node_id}-{agent_id}", "ms": result.ms, **source})
+            return result
+        result = await _one(agent_id, messages, client, emit, options, f"{node_id}-{agent_id}", [node_id])
+        if store and not result.error:
+            await store.commit(run_id, "agent", agent_id, fingerprint,
+                {"result": dataclasses.asdict(result), "attemptId": attempt_id})
+        return result
+
+    tasks = [asyncio.create_task(analyst(agent_id)) for agent_id in ANALYSTS]
     try:
-        results = list(await asyncio.gather(*[
-            _one(agent_id, messages, client, emit, options, f"{node_id}-{agent_id}", [node_id])
-            for agent_id in ANALYSTS
-        ]))
-    except BaseException:
-        # Cancelling the turn must close every analyst's provider stream.
-        raise
+        results = list(await asyncio.gather(*tasks))
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     await emit("stage", {"phase": "collaboration", "status": "done", "nodeId": node_id,
                          "ms": int((time.monotonic() - started) * 1000)})
 
@@ -143,41 +179,56 @@ async def run_collaboration(messages: list[dict[str, Any]], client: LLMClient, t
         {"role": "user", "content": brief + (f"\n\n（{'、'.join(skipped)} 未能给出结果）" if skipped else "")},
     ]
     synth_node = f"{node_id}-synth"
-    await emit("stage", {"phase": "model", "status": "start", "agentId": "synth", "nodeId": synth_node,
-                         "parentIds": [f"{node_id}-{r.agent_id}" for r in usable], "iteration": 1})
+    start_data = {"phase": "model", "status": "start", "agentId": "synth", "nodeId": synth_node,
+                  "parentIds": [f"{node_id}-{r.agent_id}" for r in usable], "iteration": 1}
+    start_options = {}
+    if getattr(client, "runtime_metered", False):
+        start_options["_runtime_start"] = (emit, start_data)
+    else:
+        await emit("stage", start_data)
     text_parts: list[str] = []
     usage_in = usage_out = 0
     finish = "stop"
     failure: str | None = None
     synth_started = time.monotonic()
-    stream = client.complete(synth_messages, tools=None, temperature=options.temperature,
-                             max_tokens=options.maxOutputTokens, timeout_sec=120)
-    async with contextlib.aclosing(stream) as chunks:
-        async for chunk in chunks:
-            if chunk.kind == "text" and chunk.text:
-                text_parts.append(chunk.text)
-                # Only the synthesis is the turn's answer.
-                await emit("delta", {"text": chunk.text})
-            elif chunk.kind == "reasoning" and chunk.text:
-                await emit("reasoning", {"agentId": "synth", "nodeId": synth_node, "iteration": 1, "text": chunk.text})
-            elif chunk.kind == "usage" and chunk.usage:
-                usage_in += chunk.usage.input_tokens
-                usage_out += chunk.usage.output_tokens
-            elif chunk.kind == "error":
-                finish, failure = "error", (chunk.text or "model call failed")[:200]
-            elif chunk.kind == "finish":
-                finish = chunk.finish_reason or finish
+    try:
+        stream = client.complete(synth_messages, **start_options, tools=None, temperature=options.temperature,
+                                 max_tokens=options.maxOutputTokens, timeout_sec=120)
+        async with contextlib.aclosing(stream) as chunks:
+            async for chunk in chunks:
+                if chunk.kind == "text" and chunk.text:
+                    text_parts.append(chunk.text)
+                    # Only the synthesis is the turn's answer.
+                    await emit("delta", {"text": chunk.text})
+                elif chunk.kind == "reasoning" and chunk.text:
+                    await emit("reasoning", {"agentId": "synth", "nodeId": synth_node, "iteration": 1, "text": chunk.text})
+                elif chunk.kind == "usage" and chunk.usage:
+                    usage_in = chunk.usage.input_tokens
+                    usage_out = chunk.usage.output_tokens
+                elif chunk.kind == "error":
+                    finish, failure = "error", (chunk.text or "model call failed")[:200]
+                elif chunk.kind == "finish":
+                    if finish not in ("error", "timeout") or chunk.finish_reason == "timeout":
+                        finish = chunk.finish_reason or finish
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        finish, failure = "error", f"{type(exc).__name__}: {str(exc)[:160]}"
+    if finish in ("error", "timeout"):
+        failure = failure or f"synthesis stopped with {finish}"
+        await emit("error", {"code": "AGENT_MODEL_50202", "scope": "run", "agentId": "synth",
+            "nodeId": synth_node, "message": failure})
     await emit("stage", {"phase": "model", "status": "failed" if failure else "done", "agentId": "synth",
                          "nodeId": synth_node, "iteration": 1, "ms": int((time.monotonic() - synth_started) * 1000),
                          "inputTokens": usage_in, "outputTokens": usage_out,
-                         "finishReason": finish if failure else "stop"})
+                         "finishReason": finish})
     return {
         "messages": [{"role": "assistant", "content": "".join(text_parts)}] if text_parts else [],
         "answer": "".join(text_parts),
         "usage_in": sum(r.usage_in for r in results) + usage_in,
         "usage_out": sum(r.usage_out for r in results) + usage_out,
         "agent_results": [r.as_payload() for r in results],
-        "finish_reason": "error" if failure else "stop",
+        "finish_reason": finish,
         "failed": bool(failure) or not text_parts,
         "artifacts": [],
         "sources": [],

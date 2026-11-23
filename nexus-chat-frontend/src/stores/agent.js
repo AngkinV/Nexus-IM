@@ -4,6 +4,9 @@ import { agentAPI, agentData, agentOwnerId, streamAgentChat, streamAgentResume, 
 import { useUserStore } from '@/stores/user'
 import { retryAtOf } from '@/stores/agentProviders'
 import i18n from '@/locales/i18n'
+import { ElMessageBox } from 'element-plus'
+import { useAgentWorkspaceStore } from './agentWorkspace'
+import { normalizeScope, authorizedScope, observeScope, scopeFailure } from '@/components/agent/scopeSelection.mjs'
 
 export const AI_ASSISTANT_CHAT_ID = 'ai-assistant'
 const MAX_CACHED_MESSAGES = 200
@@ -44,9 +47,10 @@ function question(content, runId, createdAt) {
 }
 function terminalStatus(reason, error) {
     if (reason === 'stop') return error ? 'error' : 'done'
-    if (['length', 'max_tokens', 'max_output_tokens', 'max_iterations', 'truncated'].includes(reason)) return 'truncated'
+    if (['length', 'max_tokens', 'max_output_tokens', 'max_iterations', 'truncated', 'content_filter'].includes(reason)) return 'truncated'
     if (reason === 'canceled') return 'cancelled'
-    if (['cancelled', 'interrupted', 'timeout'].includes(reason)) return reason
+    if (reason === 'timeout') return 'interrupted'
+    if (['cancelled', 'interrupted'].includes(reason)) return reason
     return 'error'
 }
 function upsertById(list, items) {
@@ -73,28 +77,33 @@ function mergeStep(entry, next) {
 }
 
 /** The same projection consumes wire frames and persisted Java {name,data,id} trace entries. */
-function eventReducer(msg) {
-    const seen = new Set(), blocks = new Map()
-    let acceptedRunId = null, attemptId = null, traceStart = msg.trace.length, callsStart = msg.toolCalls.length
+function eventReducer(msg, binding = {}) {
+    const seen = new Set(), blocks = new Map(), retired = new Set()
+    // The server may assign the run id on the first frame; until then nothing is bound.
+    let acceptedRunId = null, attemptId = null, legacy = 0, traceStart = msg.trace.length, callsStart = msg.toolCalls.length
     return ({ name, data, id }, fallbackAt) => {
         if (!data || typeof data !== 'object') return false
         if (data.runId && acceptedRunId && data.runId !== acceptedRunId) return false
-        if (data.runId) acceptedRunId = msg.runId = data.runId // older gateways assign the ID themselves
-        if (name === 'meta') {
-            const attempt = data.attemptId ?? data.traceId
-            if (data.resumed && (attempt !== attemptId || !seen.has(data.sequence))) {
-                seen.clear(); blocks.clear(); traceStart = msg.trace.length; callsStart = msg.toolCalls.length
-            }
-            attemptId = attempt
+        if (data.runId) acceptedRunId = msg.runId = data.runId // explicit legacy gateway assignment
+        let incoming = data.attemptId ?? data.traceId ?? attemptId ?? 'legacy-attempt'
+        if (name === 'meta' && data.resumed && !data.attemptId && !data.traceId) incoming = `legacy-attempt:${++legacy}`
+        if (retired.has(incoming)) return false
+        if (attemptId && incoming !== attemptId && name !== 'meta') return false
+        if (name === 'meta' && incoming !== attemptId) {
+            if (attemptId) retired.add(attemptId)
+            blocks.clear(); traceStart = msg.trace.length; callsStart = msg.toolCalls.length
         }
+        attemptId = incoming
+        const identity = JSON.stringify([msg.runId, incoming, data.sequence])
         if (Number.isInteger(data.sequence)) {
-            if (seen.has(data.sequence)) return false
-            seen.add(data.sequence)
+            if (seen.has(identity)) return false
+            seen.add(identity)
         }
         const line = { ...data, ...(id != null && { id }), runId: msg.runId, at: data.at ?? fallbackAt }
         const step = (kind, fields) => msg.trace.push({ ...line, ...fields, kind })
         if (name === 'meta') {
             if (data.resumed) { msg.content = ''; msg.error = null; msg.retryAt = null; msg.finishReason = null; msg.status = 'streaming' }
+            observeScope(msg, data.scope, { ...binding, runId: msg.runId })
             if (data.providerId != null) msg.providerId = data.providerId
             step('meta')
         } else if (name === 'stage') {
@@ -138,10 +147,15 @@ function eventReducer(msg) {
         } else if (name === 'artifact') {
             upsertById(msg.artifacts, [data.artifact]); step(name)
         } else if (name === 'usage') {
-            msg.usage = { ...data }; step(name)
-        } else if (name === 'error') {
+            msg.usage = { ...data }
+            for (const key of ['modelCalls', 'toolCallCount', 'reusedToolCallCount', 'usageReported', 'usageComplete']) {
+                if (Object.hasOwn(data, key)) msg[key] = data[key]
+            }
             step(name)
-            const roleFailure = !data.callId && (!data.agentId || ['assistant', 'synth'].includes(data.agentId))
+        } else if (name === 'error') {
+            if (scopeFailure(data)) msg.scopeState = 'unknown'
+            step(name)
+            const roleFailure = !data.scope && !data.transport && !data.callId && (!data.agentId || ['assistant', 'synth'].includes(data.agentId))
             // retryAt is the backend's own Retry-After; without one the turn can be continued at once.
             if (roleFailure || data.scope === 'run') { msg.error = data; msg.status = 'error'; msg.retryAt = retryAtOf(data) }
         } else if (name === 'done') {
@@ -199,15 +213,30 @@ function mergeTrace(local, remote) {
     return result
 }
 
-function restoredRun(run, cached) {
+function restoredRun(run, cached, binding) {
+    let selection = null
+    try { selection = normalizeScope(run.scopeSelection ?? cached?.scopeSelection) } catch { /* Legacy/malformed snapshots cannot authorize resume. */ }
+    if (run.scopeState === 'unavailable') {
+        // A redacted Java read view is authoritative over private browser results.
+        // Copy only retry identity/input/selection; never spread the cached assistant.
+        return assistant({ id: cached?.id || uid('m'), runId: run.runId,
+            userMessageId: cached?.userMessageId, input: run.input ?? cached?.input,
+            scopeSelection: selection, expectedBindingVersion: run.expectedBindingVersion ?? cached?.expectedBindingVersion ?? null,
+            operationType: run.operationType, sessionId: run.sessionId,
+            createdAt: run.startedAt ?? cached?.createdAt ?? null, finishedAt: run.finishedAt ?? null,
+            retryOfRunId: run.retryOfRunId ?? cached?.retryOfRunId ?? null,
+            status: run.status, scopeState: 'unavailable', receiptState: 'unknown', actualScope: null,
+            reasoning: '', resumable: false })
+    }
     const msg = assistant({ ...cached, runId: run.runId, input: run.input ?? cached?.input,
         providerId: run.providerRef?.providerId ?? run.providerId ?? cached?.providerId ?? null,
+        scopeSelection: selection, expectedBindingVersion: run.expectedBindingVersion ?? cached?.expectedBindingVersion ?? null,
         options: run.options ?? cached?.options ?? null, linkedKbId: run.linkedKbId ?? cached?.linkedKbId ?? null,
         attachmentIds: run.attachmentIds ?? run.attachmentRefs?.map(a => a.id) ?? cached?.attachmentIds ?? [],
         createdAt: run.startedAt ?? cached?.createdAt ?? null, retryOfRunId: run.retryOfRunId ?? cached?.retryOfRunId ?? null })
     if (run.trace?.length) {
         Object.assign(msg, { trace: [], toolCalls: [], content: '', finishReason: null, error: null, usage: null, artifacts: [], sources: [] })
-        const accept = eventReducer(msg)
+        const accept = eventReducer(msg, binding)
         for (const frame of run.trace) accept(frame)
         if (cached?.trace?.length) {
             msg.trace = mergeTrace(cached.trace, msg.trace)
@@ -215,6 +244,17 @@ function restoredRun(run, cached) {
             upsertById(msg.sources, cached.sources?.filter(item => !msg.sources.some(s => s.id === item.id)))
             upsertById(msg.artifacts, cached.artifacts?.filter(item => !msg.artifacts.some(a => a.id === item.id)))
         }
+    }
+    // A listed run is an authoritative server read: a redacted receipt is a fact, and
+    // it must be recorded as "no usable receipt" rather than left absent.
+    if (run.scopeState === 'unavailable') {
+        msg.actualScope = null
+        msg.scopeState = 'unavailable'
+    } else {
+        observeScope(msg, run.scope, { ...binding, runId: run.runId }, { authoritative: true })
+    }
+    if (scopeFailure(run.error)) {
+        msg.scopeState = 'unknown'
     }
     msg.content = run.answer ?? (msg.content || cached?.content || '')
     // The terminal wire event gives a more specific cause (e.g. timeout) than a summary column.
@@ -226,8 +266,12 @@ function restoredRun(run, cached) {
     const terminal = msg.finishReason ? terminalStatus(msg.finishReason, msg.error) : null
     // A success summary can never upgrade a recorded failure/cancellation/truncation.
     msg.status = terminal && terminal !== 'done' ? terminal : status || terminal || msg.status
+    if (!msg.finishReason && cached?.status === 'interrupted' && !run.finishReason) msg.status = 'interrupted'
     if (msg.error && msg.status === 'done') msg.status = msg.error.code === 'STREAM_INCOMPLETE' ? 'interrupted' : 'error'
     msg.usage = run.usage ?? msg.usage
+    for (const key of ['modelCalls', 'toolCallCount', 'reusedToolCallCount', 'usageReported', 'usageComplete', 'producerAttemptId']) {
+        if (Object.hasOwn(run, key)) msg[key] = run[key]
+    }
     msg.elapsedMs = run.elapsedMs ?? msg.elapsedMs
     msg.resumable = msg.status !== 'done' && (run.resumable ?? msg.resumable)
     upsertById(msg.artifacts, run.artifacts); upsertById(msg.sources, run.sources)
@@ -235,7 +279,10 @@ function restoredRun(run, cached) {
     return msg
 }
 
-function reconcile(cached, runs) {
+function reconcile(cached, runs, binding) {
+    runs = runs.filter(run => (run.sessionId == null || run.sessionId === binding.sessionId) &&
+        (run.actorUserId == null || String(run.actorUserId) === String(binding.actorUserId)) &&
+        (run.userId == null || String(run.userId) === String(binding.actorUserId)))
     const result = cached.slice()
     const byRun = new Map(result.filter(m => m.role === 'assistant' && m.runId).map(m => [m.runId, m]))
     // The cache is capped; an earlier server turn can precede the first locally cached turn.
@@ -252,7 +299,7 @@ function reconcile(cached, runs) {
     }
     for (const [i, run] of runs.entries()) {
         if (!run.runId) continue
-        const prior = byRun.get(run.runId), msg = restoredRun(run, prior)
+        const prior = byRun.get(run.runId), msg = restoredRun(run, prior, binding)
         const parent = byRun.get(msg.retryOfRunId)
         let user = result.find(m => m.role === 'user' && (m.id === (msg.userMessageId || parent?.userMessageId) || m.runId === run.runId))
         if (!user && prior) {
@@ -287,6 +334,15 @@ export const useAgentStore = defineStore('agent', () => {
     const clearing = new Map()
 
     // A global legacy cache has no proof of ownership. Never import its pointer or transcripts.
+    // Only an assistant turn can carry a scope receipt; a user message is never one.
+    function projectRestored(msg, sid) {
+        // Restoring re-validates a receipt; it never invents one. A message without an
+        // actualScope field comes back exactly as it was stored.
+        const copy = { ...msg }
+        if (msg.role !== 'assistant' || !Object.hasOwn(msg, 'actualScope')) return copy
+        copy.actualScope = authorizedScope(msg.actualScope, { actorUserId: owner, sessionId: sid, runId: msg.runId })
+        return copy
+    }
     const owned = () => owner === agentOwnerId()
     const key = name => `agent.${name}:${owner}`
     function read(name) { return owner !== null ? localStorage.getItem(key(name)) : null }
@@ -311,14 +367,16 @@ export const useAgentStore = defineStore('agent', () => {
     }
     function selectSession(sid) {
         sessionId.value = sid
+        // The view owns workspace switching (load/select); doing it here as well would
+        // fire the same session change twice.
         write('sessionId', sid)
-        messages.value = messagesBySessionId.value[sid]?.slice() || []
+        messages.value = (messagesBySessionId.value[sid] || []).map(msg => projectRestored(msg, sid))
     }
     function syncOwner() {
         const next = agentOwnerId()
         if (next === owner) return
         ++selection; ++historyVersion; ++listVersion
-        cancelStream()
+        leaveStream()
         owner = next
         creation = null; clearing.clear()
         lastError.value = null; switching.value = sessionsLoading.value = false; switchingSessionId.value = null; sessions.value = []
@@ -331,9 +389,9 @@ export const useAgentStore = defineStore('agent', () => {
     syncOwner()
     // Pinia outlives login views. Drop the previous account even when no action is invoked in this view.
     const auth = useUserStore()
-    watch(() => [auth.currentUser?.id, auth.token], syncOwner)
+    watch(() => [auth.currentUser?.id, auth.token], syncOwner, { flush: 'sync' })
     globalThis.window?.addEventListener('storage', syncOwner)
-    onScopeDispose(() => { globalThis.window?.removeEventListener('storage', syncOwner); cancelStream() })
+    onScopeDispose(() => { globalThis.window?.removeEventListener('storage', syncOwner); leaveStream() })
 
     function setActiveProviderId(id) {
         syncOwner(); activeProviderId.value = id || null; write('activeProviderId', id ? String(id) : null)
@@ -355,7 +413,7 @@ export const useAgentStore = defineStore('agent', () => {
         return creation
     }
     async function newSession(title) {
-        syncOwner(); cancelStream(); cacheMessages()
+        syncOwner(); leaveStream(); cacheMessages()
         const version = ++selection
         ++historyVersion; creation = null
         switching.value = true; switchingSessionId.value = null
@@ -367,19 +425,24 @@ export const useAgentStore = defineStore('agent', () => {
     }
 
     function executeStream(sid, live, start, user) {
-        const version = ++streamVersion, started = performance.now(), reduce = eventReducer(live)
+        const version = ++streamVersion, started = performance.now(), reduce = eventReducer(live, { actorUserId: owner, sessionId: sid })
         const current = () => version === streamVersion && owned() && sessionId.value === sid
         const elapsed = () => Math.round(performance.now() - started)
         let ended = false, announced = false, lastSave = 0
         streaming.value = true; ++historyVersion
+        live.scopeState = 'unknown'
         live.status = 'streaming'; live.error = null; live.retryAt = null; live.finishReason = null; live.elapsedMs = null
         lastError.value = null
         cacheMessages()
         const transportError = error => {
             if (!current()) return
-            live.error = lastError.value = error
-            live.status = error.code === 'STREAM_INCOMPLETE' ? 'interrupted' : 'error'
-            live.trace.push({ kind: 'error', transport: true, ...error, runId: live.runId, at: elapsed() })
+            if (scopeFailure(error)) {
+                live.scopeState = 'unknown'
+                const workspace = useAgentWorkspaceStore(); workspace.invalidateScope(); workspace.scopeError = error.message
+            }
+            lastError.value = error
+            if (!live.finishReason) live.status = 'interrupted'
+            live.trace.push({ kind: 'error', scope: 'transport', transport: true, ...error, runId: live.runId, at: elapsed() })
         }
         const stream = start({
             onEvent: frame => {
@@ -389,20 +452,18 @@ export const useAgentStore = defineStore('agent', () => {
                 if (!reduce(frame, time)) return
                 if (frame.name === 'meta') { announced = true; if (user) user.runId = live.runId }
                 if (frame.name === 'done') ended = live.status !== 'streaming'
-                if (live.error) lastError.value = live.error
+                if (live.error) {
+                    lastError.value = live.error
+                    if (scopeFailure(live.error)) { const workspace = useAgentWorkspaceStore(); workspace.invalidateScope(); workspace.scopeError = live.error.message }
+                }
                 const checkpoint = !['delta', 'reasoning', 'agent_output'].includes(frame.name) || (frame.name === 'delta' && !previousLength)
                 if (checkpoint || time - lastSave >= 500) { cacheMessages(); lastSave = time }
             },
             onTransportError: transportError
         })
-        activeStream = { ...stream, stop() {
-            if (!ended && live.status === 'streaming') {
-                live.status = 'cancelled'; live.finishReason = 'cancelled'; live.resumable = announced
-                live.trace.push({ kind: 'done', runId: live.runId, finishReason: 'cancelled', at: elapsed(), local: true })
-            }
-            live.elapsedMs ??= elapsed()
-            closeOpenSteps(live, live.status); cacheMessages(); stream.cancel()
-        } }
+        const token = localStorage.getItem('token')
+        const handle = { ...stream, live, sid, token, current, elapsed, ended: () => ended, cancellation: null }
+        activeStream = handle
         return stream.done.catch(err => transportError({ code: 'STREAM', message: err.message })).finally(() => {
             if (!current()) return
             live.elapsedMs ??= elapsed()
@@ -415,12 +476,55 @@ export const useAgentStore = defineStore('agent', () => {
             loadSessions().catch(() => {})
         }).then(() => live)
     }
-    function cancelStream() {
+    function detachStream() {
+        const handle = activeStream
         ++streamVersion
         if (creation) { ++selection; creation = null }
-        const pending = activeStream?.done
-        activeStream?.stop(); activeStream = null; streaming.value = false
-        return pending
+        if (handle) {
+            if (!handle.live.finishReason) handle.live.status = 'interrupted'
+            handle.cancel(); cacheMessages()
+        }
+        activeStream = null; streaming.value = false
+    }
+    function cancelStream() {
+        const handle = activeStream
+        if (!handle) { detachStream(); return Promise.resolve() }
+        if (handle.cancellation) return handle.cancellation
+        if (!handle.live.finishReason) handle.live.status = 'stop_requested'
+        cacheMessages()
+        handle.cancellation = (async () => {
+            try {
+                const result = agentData(await agentAPI.cancelRun(handle.sid, handle.live.runId, handle.token))
+                if (result?.runId !== handle.live.runId || !['cancelled', 'not_active'].includes(result.status)) {
+                    throw new Error('Invalid cancellation confirmation')
+                }
+                if (result.status === 'cancelled' && handle.current() && !handle.ended()) {
+                    handle.live.status = 'cancelled'; handle.live.finishReason = 'cancelled'
+                    cacheMessages()
+                } else if (result.status === 'not_active' && handle.current() && handle.live.status === 'stop_requested') {
+                    handle.live.status = 'streaming' // no cancellation proof; await the true footer
+                }
+                // Allow the actual usage/done footer to drain; confirmation, not reader consumption, releases resources.
+                let timer
+                await Promise.race([handle.done, new Promise(resolve => { timer = setTimeout(resolve, 1500) })])
+                clearTimeout(timer)
+                if (handle.current() && activeStream === handle) detachStream()
+                await handle.done
+            } catch (err) {
+                if (handle.current()) {
+                    if (handle.live.status === 'stop_requested') handle.live.status = 'streaming'
+                    handle.cancellation = null
+                    lastError.value = { code: 'CANCEL_FAILED', message: err.message }
+                    cacheMessages()
+                }
+                throw err
+            }
+        })()
+        return handle.cancellation
+    }
+    function leaveStream() {
+        if (activeStream) cancelStream().catch(() => {})
+        detachStream()
     }
     function startTurn(sid, user, settings, providerId, prior = null) {
         const runId = uid('run'), retryOfRunId = prior?.runId || null
@@ -431,7 +535,7 @@ export const useAgentStore = defineStore('agent', () => {
         const live = messages.value.find(m => m.id === msg.id)
         const payload = { operationType: AGENT_OP.ASSISTANT_CHAT, input: user.content, runId, providerId: providerId ?? undefined,
             options: settings.options, attachmentIds: settings.attachmentIds, linkedKbId: settings.linkedKbId ?? undefined,
-            chatContext: settings.chatId ? { chatId: settings.chatId } : undefined, retryOfRunId: retryOfRunId ?? undefined }
+            scopeSelection: settings.scopeSelection, scopeConfirmed: settings.scopeConfirmed, expectedBindingVersion: settings.expectedBindingVersion, retryOfRunId: retryOfRunId ?? undefined }
         return executeStream(sid, live, handlers => streamAgentChat(sid, payload, handlers), prior ? null : user)
     }
     async function sendMessage(text, options = {}) {
@@ -439,17 +543,56 @@ export const useAgentStore = defineStore('agent', () => {
         const input = (text || '').trim()
         if (!input || streaming.value || switching.value || clearing.has(sessionId.value)) return
         if (input.length > 4000) throw new RangeError('Agent input exceeds 4000 characters')
+        const workspace = useAgentWorkspaceStore()
+        const firstIntent = !sessionId.value ? workspace.captureFirstScope() : null
         const settings = turnSettings(options), providerId = activeProviderId.value
         const version = ++streamVersion
         streaming.value = true; lastError.value = null
         try {
             const sid = await ensureSession()
             if (!owned() || version !== streamVersion || sid !== sessionId.value) throw changed()
+            if (workspace.bindingVersion == null) {
+                // Reloading the binding (after a clear or a refused turn) replaces the
+                // on-screen selection. What the user confirmed for this turn must be
+                // sent as confirmed or not at all — never swapped for the saved binding.
+                const mine = !firstIntent && workspace.sessionId === sid
+                const chosen = mine ? normalizeScope(workspace.scopeSelection) : null
+                const confirmed = mine && workspace.scopeConfirmed
+                if (chosen?.targets.length && !confirmed) throw new Error('Confirm the scope before sending')
+                await workspace.loadScope(sid)
+                if (!owned() || version !== streamVersion || sid !== sessionId.value) throw changed()
+                if (confirmed) { workspace.setScope(chosen); workspace.confirmScope() }
+            }
+            if (!owned() || version !== streamVersion || sid !== sessionId.value) throw changed()
+            if (firstIntent) workspace.restoreFirstScope(firstIntent, sid)
+            Object.assign(settings, workspace.takeScope())
             return await startTurn(sid, question(input, null, now()), settings, providerId)
         } catch (err) {
             if (owned() && version === streamVersion) { lastError.value = { code: 'SESSION', message: err.message }; streaming.value = false }
             throw err
         }
+    }
+    async function confirmRunScope(run, sid) {
+        const account = owner, version = selection, workspace = useAgentWorkspaceStore()
+        if (!run.scopeSelection) throw new Error(i18n.global.t('agentScope.legacy'))
+        const original = normalizeScope(run.scopeSelection)
+        await workspace.loadScope(sid)
+        if (!owned() || owner !== account || version !== selection || sessionId.value !== sid) throw changed()
+        // No new selection on retry/resume: the original scope is the maximum permitted range.
+        const summary = original.targets.map(target => {
+            const resource = [...workspace.scopeResources.contacts, ...workspace.scopeResources.groups].find(item => item.type === target.type && String(item.id) === String(target.id))
+            return `${i18n.global.t('agentScope.' + target.type)} · ${resource?.label || '#' + target.id} (ID: ${target.id})`
+        }).join('\n') || i18n.global.t('agentScope.none')
+        const range = original.timeRange
+        const ticket = workspace.scopeTicket()
+        // Element Plus returns a promise in the browser; a non-promise here must still be
+        // treated as a real user decision rather than awaited into undefined.
+        await Promise.resolve(ElMessageBox.confirm(`${summary}\n${i18n.global.t('agentScope.fromLabel')}: ${range.fromInclusive ?? '—'}\n${i18n.global.t('agentScope.toLabel')}: ${range.toExclusive ?? '—'}\n${i18n.global.t('agentScope.zone')}: ${range.timeZone}\n${i18n.global.t('agentScope.version')}: ${workspace.bindingVersion}`, i18n.global.t('agentScope.reauthorize'), {
+            confirmButtonText: i18n.global.t('agentScope.confirm'), cancelButtonText: i18n.global.t('common.cancel')
+        }))
+        if (!owned() || owner !== account || version !== selection || sessionId.value !== sid || !workspace.scopeCurrent(ticket)) throw changed()
+        workspace.setScope(original); workspace.confirmScope()
+        return workspace.takeScope(true)
     }
     async function retryMessage(messageId) {
         syncOwner()
@@ -460,13 +603,18 @@ export const useAgentStore = defineStore('agent', () => {
             || (adjacent?.role === 'user' && !adjacent.runId ? adjacent : null)
         if (!user) throw new Error('The original question is unavailable')
         const settings = turnSettings({ ...prior.options, attachmentIds: prior.attachmentIds, linkedKbId: prior.linkedKbId, chatId: prior.chatId })
+        Object.assign(settings, await confirmRunScope(prior, sid))
+        if (streaming.value || switching.value) throw changed()
         return startTurn(sid, user, settings, prior.providerId ?? null, prior)
     }
     async function resumeMessage(messageId) {
         syncOwner()
         const sid = sessionId.value, live = messages.value.find(m => m.id === messageId && m.role === 'assistant')
         if (!sid || !live?.runId || !live.resumable || streaming.value || switching.value || clearing.has(sid)) return
-        return executeStream(sid, live, handlers => streamAgentResume(sid, live.runId, { providerId: live.providerId ?? undefined }, handlers))
+        const authorization = await confirmRunScope(live, sid)
+        if (streaming.value || switching.value) throw changed()
+        Object.assign(live, authorization)
+        return executeStream(sid, live, handlers => streamAgentResume(sid, live.runId, { scopeConfirmed: authorization.scopeConfirmed, expectedBindingVersion: authorization.expectedBindingVersion, providerId: live.providerId ?? undefined }, handlers))
     }
 
     async function loadSessions() {
@@ -481,17 +629,24 @@ export const useAgentStore = defineStore('agent', () => {
             throw err
         } finally { if (version === listVersion) sessionsLoading.value = false }
     }
-    function applyPending(runs, finished = []) {
+    function applyPending(runs = [], finished = [], finishedScopes = {}) {
         const available = new Set(runs.filter(run => !run.active).map(run => run.runId))
         // Runs that ended on the server while this page was not listening: Python still keeps
         // their outcome, so a turn that never saw `done` can fetch it by resuming.
         const kept = new Set(finished)
         for (const msg of messages.value) {
             if (msg.role !== 'assistant' || !msg.runId) continue
+            if (msg.scopeState === 'unavailable') { msg.resumable = false; continue }
+            const receipt = runs.find(run => run.runId === msg.runId)?.scope ?? finishedScopes[msg.runId]
+            if (receipt !== undefined) observeScope(msg, receipt, { actorUserId: owner, sessionId: sessionId.value, runId: msg.runId })
             const pending = available.delete(msg.runId)
             msg.resumable = (pending && msg.status !== 'done') || (!msg.finishReason && kept.has(msg.runId))
         }
-        for (const runId of available) messages.value.push(assistant({ runId, resumable: true }))
+        for (const runId of available) {
+            const msg = assistant({ runId, resumable: true })
+            observeScope(msg, runs.find(run => run.runId === runId)?.scope, { actorUserId: owner, sessionId: sessionId.value, runId })
+            messages.value.push(msg)
+        }
     }
     function isHistoryCurrent(sid, version) {
         return owned() && historyVersion === version && sid === sessionId.value && !streaming.value && !clearing.has(sid)
@@ -500,10 +655,13 @@ export const useAgentStore = defineStore('agent', () => {
         if (!sid || !isHistoryCurrent(sid, version)) return
         try {
             const data = agentData(await agentAPI.pendingRuns(sid))
-            if (isHistoryCurrent(sid, version)) { applyPending(data.runs, data.finished); cacheMessages() }
+            if (isHistoryCurrent(sid, version)) { applyPending(data.runs, data.finished, data.finishedScopes); cacheMessages() }
         } catch (err) {
             // Checkpoints come from Python; an outage must not erase Java's durable transcript or a cached resume handle.
-            if (isHistoryCurrent(sid, version)) lastError.value = { code: 'PENDING_RUNS', message: err.message }
+            if (isHistoryCurrent(sid, version)) {
+                if (scopeFailure(err)) for (const msg of messages.value) msg.scopeState = 'unknown'
+                lastError.value = { code: 'PENDING_RUNS', message: err.message }
+            }
         }
     }
     async function refreshActiveSession() {
@@ -521,7 +679,7 @@ export const useAgentStore = defineStore('agent', () => {
             if (!isHistoryCurrent(sid, version)) return
             const runs = Array.isArray(data) ? data : data?.runs
             if (!Array.isArray(runs)) throw new Error('Invalid run history')
-            if (runs.length) messages.value = reconcile(messages.value, runs)
+            if (runs.length) messages.value = reconcile(messages.value, runs, { actorUserId: owner, sessionId: sid })
             else {
                 const legacy = agentData(await agentAPI.sessionMessages(sid)).messages
                 if (!isHistoryCurrent(sid, version)) return
@@ -537,6 +695,10 @@ export const useAgentStore = defineStore('agent', () => {
             await loadPendingRuns(sid, version)
         } catch (err) {
             if (!isHistoryCurrent(sid, version)) return
+            if (scopeFailure(err)) {
+                for (const msg of messages.value) msg.scopeState = 'unknown'
+                const workspace = useAgentWorkspaceStore(); workspace.invalidateScope(); workspace.scopeError = err.message
+            }
             lastError.value = { code: 'HISTORY', message: err.message }
             throw err
         }
@@ -544,7 +706,7 @@ export const useAgentStore = defineStore('agent', () => {
     async function switchSession(sid) {
         syncOwner()
         if (!sid || sid === sessionId.value) return
-        cancelStream(); cacheMessages()
+        leaveStream(); cacheMessages()
         const version = ++selection
         switching.value = true; switchingSessionId.value = sid; lastError.value = null
         selectSession(sid)
@@ -558,6 +720,7 @@ export const useAgentStore = defineStore('agent', () => {
         const sid = sessionId.value, version = selection, account = owner
         if (clearing.has(sid)) return clearing.get(sid)
         const pending = cancelStream()
+        useAgentWorkspaceStore().invalidateScope()
         ++historyVersion
         const done = (async () => {
             try {
@@ -588,7 +751,7 @@ export const useAgentStore = defineStore('agent', () => {
         agentData(await agentAPI.deleteSession(sid))
         if (!owned() || owner !== account) return
         if (sid === sessionId.value) {
-            cancelStream(); ++selection; ++historyVersion; switching.value = false; switchingSessionId.value = null
+            leaveStream(); ++selection; ++historyVersion; switching.value = false; switchingSessionId.value = null
             selectSession(null)
         }
         forget(sid); await loadSessions()

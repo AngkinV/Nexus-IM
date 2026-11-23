@@ -9,7 +9,8 @@ const apiClient = axios.create({
 
 apiClient.interceptors.request.use(config => {
     const token = localStorage.getItem('token')
-    if (token) {
+    const capturedAuthorization = config.headers?.get?.('Authorization') || config.headers?.Authorization
+    if (token && !capturedAuthorization) {
         config.headers.Authorization = `Bearer ${token}`
     }
     return config
@@ -42,7 +43,27 @@ export function agentOwnerId() {
     } catch { return null }
 }
 
+function mcpAuth() {
+    // Capture identity before Axios's async interceptor; switching accounts cannot retarget a secret write.
+    const token = localStorage.getItem('token')
+    if (!token || !agentOwnerId()) throw Object.assign(new Error('MCP sign-in required'), { code: 'MCP_SIGN_IN' })
+    return { headers: { Authorization: `Bearer ${token}` } }
+}
+
 export const agentAPI = {
+    scopeResources: () => apiClient.get('/agent/scope/resources'),
+    getScope: sid => apiClient.get(`${sessionPath(sid)}/scope`),
+    putScope: (sid, expectedBindingVersion, selection) => apiClient.put(`${sessionPath(sid)}/scope`, { expectedBindingVersion, selection }),
+    // User-level MCP management: Java BFF only; no session or external connection.
+    listMcpServers: () => apiClient.get('/agent/mcp/servers', mcpAuth()),
+    createMcpServer: payload => apiClient.post('/agent/mcp/servers', payload, mcpAuth()),
+    patchMcpServer: (id, payload) => apiClient.patch(`/agent/mcp/servers/${encodeURIComponent(id)}`, payload, mcpAuth()),
+    deleteMcpServer: (id, expectedConfigVersion) => apiClient.delete(`/agent/mcp/servers/${encodeURIComponent(id)}`, { ...mcpAuth(), data: { expectedConfigVersion } }),
+    testMcpServer: (id, expectedConfigVersion) => apiClient.post(`/agent/mcp/servers/${encodeURIComponent(id)}/test`, { expectedConfigVersion }, mcpAuth()),
+    mcpServerTools: id => apiClient.get(`/agent/mcp/servers/${encodeURIComponent(id)}/tools`, mcpAuth()),
+    refreshMcpServerTools: (id, expectedConfigVersion) => apiClient.post(`/agent/mcp/servers/${encodeURIComponent(id)}/tools/refresh`, { expectedConfigVersion }, mcpAuth()),
+    mcpServerStatus: id => apiClient.get(`/agent/mcp/servers/${encodeURIComponent(id)}/status`, mcpAuth()),
+
     /** Create a new Agent session (Mode A: AI 助手会话). */
     createSession: ({ entryMode = AGENT_OP.ASSISTANT_CHAT, title = i18n.global.t('agent.title'), boundChatId = null } = {}) =>
         apiClient.post('/agent/sessions', { entryMode, title, boundChatId }),
@@ -62,6 +83,8 @@ export const agentAPI = {
     sessionMessages: (sessionId) =>
         apiClient.get(`${sessionPath(sessionId)}/messages`),
     pendingRuns: sid => apiClient.get(`${sessionPath(sid)}/runs/pending`),
+    cancelRun: (sid, runId, token) => apiClient.post(`${sessionPath(sid)}/runs/${encodeURIComponent(runId)}/cancel`, {},
+        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined),
     listRuns: sid => apiClient.get(`${sessionPath(sid)}/runs`),
     listAttachments: sid => apiClient.get(`${sessionPath(sid)}/attachments`),
     listTasks: sid => apiClient.get(`${sessionPath(sid)}/tasks`),
@@ -174,13 +197,13 @@ function streamAgent(url, payload, handlers) {
     signal.addEventListener('abort', closeReader, { once: true })
 
     const done = (async () => {
-        let response, completed = false, errorEvent = false, runId = null
+        let response, completed = false, errorEvent = false, runId = null, attemptId = null
         try {
             response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal, credentials: 'include' })
             if (signal.aborted) return
             if (!response.ok) {
                 const body = await response.json().catch(() => null)
-                throw streamError(body?.code || `HTTP_${response.status}`, body?.message || `HTTP ${response.status}`)
+                throw Object.assign(streamError(body?.code || `HTTP_${response.status}`, body?.message || `HTTP ${response.status}`), { status: response.status })
             }
             if (!/^text\/event-stream(?:\s*;|$)/i.test(response.headers.get('content-type') || '') || !response.body) {
                 throw streamError('STREAM_CONTENT_TYPE', 'Expected a text/event-stream response')
@@ -188,6 +211,7 @@ function streamAgent(url, payload, handlers) {
             reader = response.body.getReader()
             const decoder = new TextDecoder('utf-8', { fatal: true })
             let buffer = '', afterCR = false
+            const retiredAttempts = new Set()
             while (!completed && !signal.aborted) {
                 const part = await reader.read()
                 if (signal.aborted) break
@@ -206,8 +230,16 @@ function streamAgent(url, payload, handlers) {
                     handlers.onEvent?.(frame)
                     if (frame.data.runId && runId && frame.data.runId !== runId) continue
                     runId ??= frame.data.runId
+                    const attempt = frame.data.attemptId ?? frame.data.traceId
+                    if (attempt && attemptId && attempt !== attemptId && frame.name !== 'meta') continue
+                    if (frame.name === 'meta' && attempt) {
+                        // Only a previously unseen meta can announce a new attempt, not a replay.
+                        if (retiredAttempts.has(attempt)) continue
+                        if (attemptId && attempt !== attemptId) retiredAttempts.add(attemptId)
+                        attemptId = attempt
+                    }
                     completed = frame.name === 'done'
-                    if (frame.name === 'error' && !frame.data.agentId) errorEvent = true
+                    if (frame.name === 'error' && (frame.data.scope === 'run' || (!frame.data.scope && !frame.data.agentId))) errorEvent = true
                     const handler = eventHandlers.get(frame.name)
                     if (handler) handlers[handler]?.(frame.data)
                 }
@@ -218,7 +250,7 @@ function streamAgent(url, payload, handlers) {
             }
         } catch (err) {
             if (!signal.aborted) {
-                const diagnostic = { code: err.code || (response ? 'STREAM' : 'NETWORK'), message: err.message }
+                const diagnostic = { status: err.status, code: err.code || (response ? 'STREAM' : 'NETWORK'), message: err.message }
                 // Transport failures are not fabricated server events. Existing onError subscribers still receive both.
                 handlers.onTransportError?.(diagnostic)
                 handlers.onError?.(diagnostic)

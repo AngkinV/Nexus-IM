@@ -37,6 +37,10 @@ public class AgentSession {
     @Column(length = 100)
     private String title;
 
+    /** Entry provenance only; never an authority substitute for persisted scope. */
+    @Column(name = "bound_chat_id")
+    private Long boundChatId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

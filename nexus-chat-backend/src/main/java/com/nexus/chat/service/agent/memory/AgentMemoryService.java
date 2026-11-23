@@ -41,33 +41,29 @@ public class AgentMemoryService {
     }
 
     public void appendShortTermMessage(Long userId, String sessionId, String role, String content) {
-        String key = "agent:ctx:" + userId + ":" + sessionId + ":messages";
+        throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN,"Scoped grant required");
+    }
+
+    public static String sessionPrefix(Long actor,String session) {
+        return "agent:ctx:"+actor+":"+java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(session.getBytes(java.nio.charset.StandardCharsets.UTF_8))+":scope:";
+    }
+    public static String messagesKey(com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope s) {
+        return sessionPrefix(s.actorUserId(),s.sessionId())+s.scopeKey()+":messages";
+    }
+    @org.springframework.transaction.annotation.Transactional
+    public void appendShortTermMessage(com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope,String role,String content) {
+        validate(scope);
+        if(!java.util.Set.of("user","assistant").contains(role)) throw new IllegalArgumentException("Invalid role");
+        String key=messagesKey(scope);
         try {
-            String item = objectMapper.writeValueAsString(Map.of("role", role, "content", content));
-            redisTemplate.opsForList().rightPush(key, item);
-            Long size = redisTemplate.opsForList().size(key);
-            if (size != null && size > 50) {
-                redisTemplate.opsForList().trim(key, size - 50, size - 1);
-            }
-            redisTemplate.expire(key, SHORT_TTL);
-        } catch (Exception e) {
-            log.warn("append short-term memory failed: userId={}, sessionId={}", userId, sessionId, e);
-        }
+            redisTemplate.opsForList().rightPush(key,objectMapper.writeValueAsString(Map.of("role",role,"content",content)));
+            redisTemplate.opsForList().trim(key,-50,-1); redisTemplate.expire(key,SHORT_TTL);
+        } catch(Exception e) { throw new IllegalStateException("Scoped memory write failed",e); }
     }
 
     public List<Map<String, String>> getShortTermMessages(Long userId, String sessionId) {
-        String key = "agent:ctx:" + userId + ":" + sessionId + ":messages";
-        List<String> raw = redisTemplate.opsForList().range(key, 0, -1);
-        if (raw == null || raw.isEmpty()) {
-            return List.of();
-        }
-        return raw.stream().map(s -> {
-            try {
-                return objectMapper.readValue(s, new TypeReference<Map<String, String>>() {});
-            } catch (Exception e) {
-                return Map.<String, String>of("role", "unknown", "content", "");
-            }
-        }).toList();
+        // No fallback from a scoped run to legacy, unpartitioned private transcript.
+        return List.of();
     }
 
     public void writeLongTermMemoryIfNeeded(Long userId,
@@ -99,17 +95,25 @@ public class AgentMemoryService {
     }
 
     public List<AgentLongMemory> getLongTermTopK(Long userId) {
-        return longMemoryRepository.findTop8ByUserIdAndIsActiveTrueOrderByUpdatedAtDesc(userId);
+        // Legacy user-only recall is intentionally closed; callers must migrate to scoped recall.
+        return List.of();
     }
 
     public void clearShortTerm(Long userId, String sessionId) {
-        redisTemplate.delete("agent:ctx:" + userId + ":" + sessionId + ":messages");
-        redisTemplate.delete("agent:ctx:" + userId + ":" + sessionId);
-        redisTemplate.delete("agent:tool:" + userId + ":" + sessionId);
+        var keys=redisTemplate.keys(sessionPrefix(userId,sessionId)+"*");
+        if(keys!=null&&!keys.isEmpty()) redisTemplate.delete(keys);
+        // Pre-scope keys are never read again, but their transcript must still be removed.
+        redisTemplate.delete(List.of("agent:ctx:" + userId + ":" + sessionId + ":messages",
+                "agent:ctx:" + userId + ":" + sessionId, "agent:tool:" + userId + ":" + sessionId));
+    }
+
+    public void resetLongTerm(Long actor) {
+        for(var memory:longMemoryRepository.findByUserIdAndIsActiveTrue(actor)) disableLongTerm(memory.getId(),actor,"user_reset");
     }
 
     public void disableLongTerm(Long memoryId, Long operatorUserId, String reason) {
-        AgentLongMemory memory = longMemoryRepository.findById(memoryId).orElseThrow();
+        AgentLongMemory memory = longMemoryRepository.findById(memoryId).filter(m->operatorUserId.equals(m.getUserId()))
+                .orElseThrow(()->new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN));
         memory.setIsActive(false);
         longMemoryRepository.save(memory);
 
@@ -120,6 +124,49 @@ public class AgentMemoryService {
         audit.setOperatorId(operatorUserId);
         audit.setReason(reason);
         memoryAuditRepository.save(audit);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.nexus.chat.service.agent.scope.AgentScopeService scopes;
+
+    private void validate(com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope) {
+        if (scopes == null || scope == null) throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
+        scopes.validate(scope.actorUserId(), scope.sessionId(), scope.runId(), scope);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void writeLongTermMemoryIfNeeded(com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope,
+            String type, String content, double confidence, String trace) {
+        validate(scope); // Holds the binding row lock through commit: generation invalidation serializes with writes.
+        if(confidence < .75 || content == null || content.isBlank()) return;
+        var m = new AgentLongMemory(); m.setUserId(scope.actorUserId()); m.setScopeKey(scope.scopeKey());
+        m.setSessionGeneration(scope.sessionGeneration()); m.setMemoryType(type); m.setContent(maskSensitive(content));
+        m.setConfidence(BigDecimal.valueOf(confidence)); m.setSourceSessionId(scope.sessionId()); m.setSourceTraceId(trace); m.setIsActive(true);
+        longMemoryRepository.saveAndFlush(m);
+    }
+
+    public List<AgentLongMemory> getLongTermTopK(com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope) {
+        validate(scope);
+        return longMemoryRepository.findTop8ByUserIdAndScopeKeyAndSessionGenerationAndIsActiveTrueOrderByUpdatedAtDesc(scope.actorUserId(),scope.scopeKey(),scope.sessionGeneration());
+    }
+
+    public List<Map<String,String>> getShortTermMessages(com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope) {
+        validate(scope);
+        var raw = redisTemplate.opsForList().range(messagesKey(scope),0,-1);
+        if(raw==null) return List.of();
+        return raw.stream().map(s->{try{return objectMapper.readValue(s,new TypeReference<Map<String,String>>(){});}catch(Exception e){return Map.<String,String>of();}}).toList();
+    }
+
+    /** Tombstone/generation must be committed before this best-effort physical purge. */
+    public void purgeSession(Long actor, String session) {
+        RuntimeException failure=null;
+        try { clearShortTerm(actor,session); } catch(RuntimeException e) { failure=e; }
+        try {
+            for(var memory:longMemoryRepository.findByUserIdAndSourceSessionId(actor,session)) {
+                memory.setIsActive(false); memory.setContent(""); longMemoryRepository.save(memory);
+            }
+        } catch(RuntimeException e) { if(failure==null) failure=e; else failure.addSuppressed(e); }
+        if(failure!=null) throw failure;
     }
 
     private String maskSensitive(String text) {

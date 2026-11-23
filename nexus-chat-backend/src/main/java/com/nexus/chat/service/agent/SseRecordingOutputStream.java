@@ -30,6 +30,8 @@ public class SseRecordingOutputStream extends OutputStream {
     private final Long userId;
     private final String sessionId;
     private final String runId;
+    private final String generation;
+    private final boolean leased;
     private final ByteArrayOutputStream pending = new ByteArrayOutputStream();
     private final com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
     private boolean listenerFailed;
@@ -40,6 +42,18 @@ public class SseRecordingOutputStream extends OutputStream {
 
     public SseRecordingOutputStream(OutputStream delegate, BiConsumer<String, Object> listener,
                                     AgentRunService runService, Long userId, String sessionId, String runId) {
+        this(delegate, listener, runService, userId, sessionId, runId, null, false);
+    }
+
+    public SseRecordingOutputStream(OutputStream delegate, BiConsumer<String, Object> listener,
+            AgentRunService runService, Long userId, String sessionId, String runId, String generation) {
+        this(delegate, listener, runService, userId, sessionId, runId, generation, true);
+    }
+
+    private SseRecordingOutputStream(OutputStream delegate, BiConsumer<String, Object> listener,
+            AgentRunService runService, Long userId, String sessionId, String runId, String generation, boolean leased) {
+        this.generation = generation;
+        this.leased = leased;
         this.delegate = delegate;
         this.listener = listener;
         this.runService = runService;
@@ -133,7 +147,8 @@ public class SseRecordingOutputStream extends OutputStream {
         try {
             listener.accept(name, payload);
             if (runService != null) {
-                runService.record(userId, sessionId, runId, name, payload);
+                if (leased) runService.record(userId, sessionId, runId, generation, name, payload);
+                else runService.record(userId, sessionId, runId, name, payload);
             }
         } catch (RuntimeException ex) {
             // Storing the trace is best effort: a failure here must not disturb the stream.

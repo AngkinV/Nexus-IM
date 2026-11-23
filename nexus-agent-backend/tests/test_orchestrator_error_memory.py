@@ -42,17 +42,20 @@ class _FakeToolExecutor:
     async def __aenter__(self): return self
     async def __aexit__(self, *exc): return False
     async def schemas(self): return []
-    async def execute(self, name, args):
+    async def execute(self, name, args, *, call_id=None):
         return {}, 1
 
 
 def _req(text="hi"):
+    from scope_support import make_scope, next_run_id
     return InvokeRequest(
         traceId="tr_err",
         actor=Actor(userId=1, username="alice"),
         session=Session(sessionId="s_err", operationType="ASSISTANT_CHAT"),
         input=InputPayload(text=text),
         options=Options(),
+        runId=(run_id := next_run_id("run_err")),
+        scope=make_scope(1, session_id="s_err", run_id=run_id),
     )
 
 
@@ -62,6 +65,8 @@ def _env(monkeypatch):
     monkeypatch.setattr(s, "memory_rag_enabled", False)
     monkeypatch.setattr(s, "knowledge_rag_enabled", False)
     monkeypatch.setattr(orchestrator, "ToolExecutor", _FakeToolExecutor)
+    from scope_support import install_scope_authority
+    install_scope_authority(monkeypatch, [orchestrator])
     monkeypatch.setattr(
         orchestrator, "_resolve_provider_config",
         lambda provider: ProviderConfig(name="openai", base_url=None,

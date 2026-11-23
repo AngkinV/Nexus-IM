@@ -4,17 +4,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .checkpoint import open_run_store
+from .checkpoint import open_run_store, thread_id_for
+from .scope import AuthorizedScope, ScopeClient, ScopeDenied
 from .config import get_settings
 from .knowledge.ingestion import IngestionError, delete_document, ingest_document
-from .orchestrator import Event, active_thread_ids, is_run_active, resume_agent, run_agent
-from .rag import knowledge_rag
+from .orchestrator import Event, active_thread_ids, cancel_run, is_run_active, resume_agent, run_agent
+from .rag import knowledge_rag, memory_rag
+from .memory import get_memory
 from .artifacts import ArtifactError, apply_unified_patch
 from .attachments import extract_attachment
 from .schemas import (
@@ -45,11 +48,14 @@ router = APIRouter()
 _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"}
 
 
-def _actor_mismatch_stream() -> StreamingResponse:
+def _actor_mismatch_stream(run_id: str | None = None) -> StreamingResponse:
     async def err():
         encode = sse_encoder()
-        yield encode("error", {"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
-        yield encode("done", {"finishReason": "error", "resumable": False})
+        identity = {"runId": run_id or uuid.uuid4().hex, "attemptId": uuid.uuid4().hex,
+                    "at": 0, "runtimeContractVersion": 1}
+        yield encode("error", {**identity, "sequence": 1, "scope": "run",
+                               "code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
+        yield encode("done", {**identity, "sequence": 2, "finishReason": "error", "resumable": False})
     return StreamingResponse(err(), media_type="text/event-stream")
 
 
@@ -104,7 +110,7 @@ async def invoke(request: InvokeRequest, ctx: dict = Depends(verify_internal_sig
 @router.post("/v1/agent/invoke/stream")
 async def invoke_stream(request: InvokeRequest, ctx: dict = Depends(verify_internal_signature)):
     if request.actor.userId != ctx["actorUserId"]:
-        return _actor_mismatch_stream()
+        return _actor_mismatch_stream(request.runId)
     if request.traceId != ctx["traceId"]:
         return JSONResponse(status_code=400, content={"code": "AGENT_PARAM_40001", "message": "trace mismatch"})
     return _event_stream(run_agent(request, provider=ctx.get("provider")))
@@ -115,29 +121,60 @@ async def resume_stream(request: ResumeRequest, ctx: dict = Depends(verify_inter
     """Continue an unfinished run. Java re-checks session ownership and re-sends
     the provider credentials; the run itself stored neither."""
     if request.actor.userId != ctx["actorUserId"]:
-        return _actor_mismatch_stream()
+        return _actor_mismatch_stream(request.runId)
     if request.traceId != ctx["traceId"]:
         return JSONResponse(status_code=400, content={"code": "AGENT_PARAM_40001", "message": "trace mismatch"})
     return _event_stream(resume_agent(request, provider=ctx.get("provider")))
+
+
+@router.post("/v1/agent/runs/cancel")
+async def cancel_run_route(request: ResumeRequest, ctx: dict = Depends(verify_internal_signature)):
+    if request.actor.userId != ctx["actorUserId"]:
+        return JSONResponse(status_code=403, content={"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
+    if request.traceId != ctx["traceId"]:
+        return JSONResponse(status_code=400, content={"code": "AGENT_PARAM_40001", "message": "trace mismatch"})
+    status = await cancel_run(request.actor.userId, request.sessionId, request.runId)
+    return {"runId": request.runId, "status": status}
 
 
 @router.post("/v1/agent/runs/pending")
 async def pending_runs(request: RunQuery, ctx: dict = Depends(verify_internal_signature)):
     if request.actor.userId != ctx["actorUserId"]:
         return JSONResponse(status_code=403, content={"code": "AGENT_AUTHZ_40301", "message": "actor mismatch"})
+    runs, finished, finished_scopes = [], [], {}
     async with open_run_store() as store:
         records = await store.pending(request.actor.userId, request.sessionId)
-        finished = await store.finished(request.actor.userId, request.sessionId)
-    return {
-        "runs": [{
-            "runId": record.run_id,
-            "operationType": record.operation_type,
-            "updatedAt": record.updated_at,
-            "active": is_run_active(record.actor_user_id, record.run_id),
-        } for record in records],
-        # Ended runs whose outcome a client that missed `done` can still fetch by resuming.
-        "finished": finished,
-    }
+        graph = None
+        for record in records:
+            try:
+                if graph is None:
+                    from .orchestrator import get_graph_builder
+                    graph = get_graph_builder().compile(checkpointer=store.saver)
+                snapshot = await graph.aget_state({"configurable": {"thread_id": record.thread_id}})
+                scope = AuthorizedScope.model_validate(snapshot.values['request']['scope'])
+                scope.bind(request.actor.userId, request.sessionId, record.run_id)
+                scope = await ScopeClient().validate(scope)
+            except (ScopeDenied, ValueError, TypeError, KeyError):
+                continue
+            runs.append({
+                "runId": record.run_id, "operationType": record.operation_type,
+                "updatedAt": record.updated_at,
+                "active": is_run_active(record.actor_user_id, record.run_id),
+                "scope": scope.model_dump(),
+            })
+        # Keep the original list[str] shape. Scope metadata is separate; never
+        # expose terminal bodies during discovery, even for authorized runs.
+        for run_id in await store.finished(request.actor.userId, request.sessionId):
+            try:
+                stored = await store.result(thread_id_for(request.actor.userId, run_id), request.sessionId)
+                scope = AuthorizedScope.model_validate(stored['result']['scope'])
+                scope.bind(request.actor.userId, request.sessionId, run_id)
+                scope = await ScopeClient().validate(scope)
+            except (ScopeDenied, ValueError, TypeError, KeyError):
+                continue
+            finished.append(run_id)
+            finished_scopes[run_id] = scope.model_dump()
+    return {"runs": runs, "finished": finished, "finishedScopes": finished_scopes}
 
 
 @router.post("/v1/agent/runs/purge")
@@ -151,6 +188,12 @@ async def purge_runs(request: RunQuery, ctx: dict = Depends(verify_internal_sign
             return JSONResponse(status_code=409, content={"code": "AGENT_RUN_40901", "message": "session has an active run"})
         purged = await store.purge_session(
             request.actor.userId, request.sessionId, keep=set())
+    await get_memory().clear(request.actor.userId, request.sessionId)
+    try:
+        await memory_rag.purge_session(request.actor.userId, request.sessionId)
+    except Exception:
+        # No bodies/credentials in the diagnostic. Java tombstone remains authority.
+        log.warning("session memory physical cleanup incomplete")
     return {"purged": purged}
 
 

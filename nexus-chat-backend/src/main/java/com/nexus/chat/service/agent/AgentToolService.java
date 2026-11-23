@@ -38,6 +38,21 @@ public class AgentToolService implements AgentToolProvider {
     private final MessageRepository messageRepository;
     private final ChatRepository chatRepository;
     private final UserRepository userRepository;
+    // Optional so contexts without the scope authority still start; every
+    // business read fails closed through scope() when it is absent.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @lombok.Setter
+    private com.nexus.chat.service.agent.scope.AgentScopeService scopeService;
+
+    @org.springframework.beans.factory.annotation.Value("${agent.data-time-zone:Asia/Shanghai}")
+    private String dataTimeZone = "Asia/Shanghai";
+
+    private java.time.ZoneId storageZone() { return java.time.ZoneId.of(dataTimeZone); }
+
+    private com.nexus.chat.service.agent.scope.ScopeDtos.AuthorizedScope scope(Long actor, Long chat) {
+        if (scopeService == null) throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Scope unavailable");
+        return scopeService.requireChat(actor, chat);
+    }
 
     @AgentTool(name = "get_recent_messages",
             description = "Fetch the most recent messages of the given chat. Use this to ground summaries / todos / replies in real chat content.")
@@ -49,9 +64,10 @@ public class AgentToolService implements AgentToolProvider {
         if (limit != null && limit < 1) {
             throw AgentToolException.badArg("limit must be at least 1");
         }
+        var authorized = scope(actorUserId, chatId);
         ensureMember(actorUserId, chatId);
         List<Map<String, Object>> messages = messageRepository
-                .findByChatIdOrderByCreatedAtDesc(chatId, PageRequest.of(0, limit == null ? 80 : Math.min(limit, 200)))
+                .findScopedMessages(chatId, authorized.timeRange().fromLocal(storageZone()), authorized.timeRange().toLocal(storageZone()), PageRequest.of(0, limit == null ? 80 : Math.min(limit, 200)))
                 .getContent()
                 .stream()
                 .map(m -> {
@@ -65,6 +81,8 @@ public class AgentToolService implements AgentToolProvider {
                 })
                 .toList();
 
+        // Bodies are in hand now: the grant must still be live when they are released.
+        scope(actorUserId, chatId);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("chatId", chatId);
         body.put("messages", messages);
@@ -94,6 +112,8 @@ public class AgentToolService implements AgentToolProvider {
             @ToolParam(name = "user_id") Long userId
     ) {
         ensureActorExists(actorUserId);
+        if (scopeService == null) throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Scope unavailable");
+        scopeService.requireUser(actorUserId, userId);
         return profile(userRepository.findById(userId).orElseThrow(() -> AgentToolException.notFound("user not found")));
     }
 
@@ -103,9 +123,20 @@ public class AgentToolService implements AgentToolProvider {
             @Actor Long actorUserId,
             @ToolParam(name = "message_id") Long messageId
     ) {
+        var attribution = messageRepository.findScopeAttribution(messageId)
+                .orElseThrow(() -> AgentToolException.notFound("message not found"));
+        var authorized = scope(actorUserId, attribution.getChatId());
+        var at = attribution.getCreatedAt();
+        if (at == null || (authorized.timeRange().fromLocal(storageZone()) != null && at.isBefore(authorized.timeRange().fromLocal(storageZone())))
+                || (authorized.timeRange().toLocal(storageZone()) != null && !at.isBefore(authorized.timeRange().toLocal(storageZone()))))
+            throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Message outside scope window");
+        ensureMember(actorUserId, attribution.getChatId());
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> AgentToolException.notFound("message not found"));
-        ensureMember(actorUserId, message.getChatId());
+        // The loaded row, not the earlier projection, is what gets released.
+        if (!attribution.getChatId().equals(message.getChatId()))
+            throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Message outside scope");
+        scope(actorUserId, message.getChatId());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("messageId", message.getId());
         body.put("chatId", message.getChatId());
@@ -128,7 +159,10 @@ public class AgentToolService implements AgentToolProvider {
             String username
     ) {
         ensureActorExists(actorUserId);
-        return profile(userByHandle(username));
+        // Same profile shape as get_user_profile: callers may compare the two.
+        var candidate = candidateByHandle(actorUserId, username);
+        return profile(userRepository.findById(candidate.getId())
+                .orElseThrow(() -> AgentToolException.notFound("user not found")));
     }
 
     @AgentTool(name = "list_my_chats",
@@ -165,7 +199,8 @@ public class AgentToolService implements AgentToolProvider {
                                     .flatMap(cm -> userRepository.findById(cm.getUserId()))
                                     .map(u -> "@" + u.getUsername())
                                     .orElse(groupName));
-                    row.put("lastMessageAt", c.getLastMessageAt() == null ? null : c.getLastMessageAt().toString());
+                    // A candidate is an id and a label. When a chat was last active is chat
+                    // data, and this listing also covers chats outside the run's scope.
                     return row;
                 })
                 .filter(row -> q.isEmpty() || ((String) row.get("name")).toLowerCase().contains(q))
@@ -187,7 +222,8 @@ public class AgentToolService implements AgentToolProvider {
             @ToolParam(name = "username", description = "Other party's @handle, with or without leading '@'.")
             String username
     ) {
-        User other = userByHandle(username);
+        ensureActorExists(actorUserId);
+        var other = candidateByHandle(actorUserId, username);
         // The query is scoped to the actor, so only the actor's own direct chat can match.
         Chat chat = chatRepository.findDirectChatBetweenUsers(actorUserId, other.getId())
                 .orElseThrow(() -> AgentToolException.notFound("no direct chat with @" + other.getUsername()));
@@ -200,6 +236,7 @@ public class AgentToolService implements AgentToolProvider {
     }
 
     private void ensureMember(Long userId, Long chatId) {
+        scope(userId, chatId);
         if (!chatMemberRepository.existsByChatIdAndUserId(chatId, userId)) {
             throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "No permission for this chat", Map.of("chatId", chatId));
         }
@@ -209,6 +246,15 @@ public class AgentToolService implements AgentToolProvider {
         if (!userRepository.existsById(actorUserId)) {
             throw new AgentException(AgentErrorCode.AGENT_AUTHZ_40301, "Actor user not found");
         }
+    }
+
+    private UserRepository.AgentCandidate candidateByHandle(Long actor, String username) {
+        if(username == null || username.isBlank()) throw AgentToolException.badArg("username is blank");
+        String handle = username.trim().replaceFirst("^@", "").trim();
+        if (handle.isBlank()) throw AgentToolException.badArg("username is blank");
+        var candidates = userRepository.findAgentCandidates(actor,handle);
+        if(candidates.size() != 1) throw AgentToolException.notFound("No unique owned candidate");
+        return candidates.get(0);
     }
 
     private User userByHandle(String username) {

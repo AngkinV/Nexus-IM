@@ -91,7 +91,17 @@ async def test_model_is_offered_exactly_what_the_tool_server_lists(monkeypatch):
     }
     await rig.run()
     offered = {tool["function"]["name"]: tool["function"] for tool in rig.model.calls[0]["tools"]}
-    assert set(offered) == set(rig.java.catalog)
-    assert offered["archive_chat"]["parameters"] == rig.java.catalog["archive_chat"]
+    # T2: the model is offered exactly what the server lists AND the run's scope allows.
+    # This case has no contact scope, so the profile tool is withheld, not advertised.
+    from app.scope import AuthorizedScope
+    scope = rig.request().scope
+    allowed = {name for name in rig.java.catalog
+               if name != "get_user_profile" or scope.contactUserIds}
+    assert set(offered) == allowed
+    # The server's schema is passed through, with chat_id narrowed to what this run may read.
+    narrowed = dict(rig.java.catalog["archive_chat"])
+    narrowed["properties"] = {**narrowed["properties"],
+        "chat_id": {**narrowed["properties"]["chat_id"], "enum": list(scope.chatIds)}}
+    assert offered["archive_chat"]["parameters"] == narrowed
     assert offered["archive_chat"]["description"] == "archive_chat (fake)"
     assert rig.java.requests == []  # listing tools is not calling them

@@ -28,7 +28,7 @@ before(async () => {
   ;({ agentAPI: api } = await server.ssrLoadModule('/src/services/agentApi.js'))
 })
 after(async () => { await server?.close(); axios.defaults.adapter = oldAdapter; globalThis.localStorage = oldStorage })
-beforeEach(() => { requests = []; responses = []; setActivePinia(createPinia()) })
+beforeEach(() => { globalThis.localStorage = { getItem: key => ({ token: 'test-token', user: '{"id":7}' })[key] ?? null }; requests = []; responses = []; setActivePinia(createPinia()) })
 async function workspace() {
   ;({ useAgentWorkspaceStore } = await server.ssrLoadModule('/src/stores/agentWorkspace.js'))
   store = useAgentWorkspaceStore()
@@ -109,4 +109,62 @@ test('a fresh upload cannot suppress the initial attachment/task list or lose it
   reply({ attachments: [base, saved], tasks: [task] })
   initial.resolve(ok({ attachments: [base], tasks: [task] })); await loading
   assert.deepEqual(store.attachments, [base, saved]); assert.deepEqual(store.tasks, [task])
+})
+
+const emptySelection = { targets: [], timeRange: { fromInclusive: null, toExclusive: null, timeZone: 'UTC' } }
+const binding = (version, targets = []) => ({ bindingVersion: version, sessionGeneration: 1, selection: { ...emptySelection, targets } })
+test('T2 resources and scope binding use Java paths and optimistic version body', async () => {
+  await workspace()
+  reply({ contacts: [{ type: 'contact', id: 7, label: 'same', chatId: 12 }], groups: [{ type: 'group', id: 9, label: 'same', chatId: 9 }] }, binding(2), binding(3, [{ type: 'contact', id: 7 }]))
+  await store.loadScope('as/test')
+  store.setScope({ ...emptySelection, targets: [{ type: 'contact', id: 7 }] }); store.confirmScope()
+  await store.saveScope('as/test')
+  assert.deepEqual(requests.map(r => r.path), ['/agent/scope/resources', '/agent/sessions/as%2Ftest/scope', '/agent/sessions/as%2Ftest/scope'])
+  assert.deepEqual(requests[2].body, { expectedBindingVersion: 2, selection: { ...emptySelection, targets: [{ type: 'contact', id: 7 }] } })
+  assert.equal(store.bindingVersion, 3); assert.equal(store.scopeConfirmed, false)
+})
+test('T2 late scope resources and save cannot cross session ownership', async () => {
+  await workspace()
+  const late = Promise.withResolvers()
+  responses.push(() => late.promise)
+  const loading = store.loadScope('A')
+  store.select('B')
+  late.resolve(ok({ contacts: [{ type: 'contact', id: 99 }], groups: [] })); await loading
+  assert.deepEqual(store.scopeResources, { contacts: [], groups: [] }); assert.equal(store.bindingVersion, null)
+  reply({ contacts: [], groups: [] }, binding(4)); await store.loadScope('B')
+  store.confirmScope()
+  const savedScope = Promise.withResolvers(); responses.push(() => savedScope.promise)
+  const writing = store.saveScope('B'); store.select('C')
+  savedScope.resolve(ok(binding(5, [{ type: 'group', id: 88 }])))
+  await assert.rejects(writing, /changed/)
+  assert.deepEqual(store.scopeSelection.targets, []); assert.equal(store.bindingVersion, null)
+})
+
+test('late real binding load cannot overwrite a newer selection and confirmation', async () => {
+  await workspace()
+  const delayed = Promise.withResolvers()
+  reply({ contacts: [], groups: [] }); responses.push(() => delayed.promise)
+  const loading = store.loadScope('A')
+  // scopeResources then getScope: yield until the adapter has received both reads.
+  for (let i = 0; i < 20 && requests.length < 2; i++) await Promise.resolve()
+  assert.equal(requests.length, 2)
+  store.setScope({ ...emptySelection, targets: [{ type: 'contact', id: 'new' }] }); store.confirmScope()
+  delayed.resolve(ok(binding(8, [{ type: 'group', id: 'old' }]))); await loading
+  assert.deepEqual(store.scopeSelection.targets, [{ type: 'contact', id: 'new' }])
+  assert.equal(store.scopeConfirmed, true); assert.equal(store.bindingVersion, null)
+})
+test('late real scope save after account change cannot overwrite current confirmation', async () => {
+  await workspace()
+  reply({ contacts: [], groups: [] }, binding(1)); await store.loadScope('A'); store.confirmScope()
+  const delayed = Promise.withResolvers(); responses.push(() => delayed.promise)
+  const writing = store.saveScope('A')
+  const { useUserStore } = await server.ssrLoadModule('/src/stores/user.js')
+  globalThis.localStorage = { getItem: key => ({ token: 'other-token', user: '{"id":8}' })[key] ?? null }
+  useUserStore().currentUser = { id: 8 }
+  store.select('B')
+  store.setScope({ ...emptySelection, targets: [{ type: 'group', id: 'new' }] }); store.confirmScope()
+  delayed.resolve(ok(binding(9, [{ type: 'contact', id: 'old' }])))
+  await assert.rejects(writing, /changed/)
+  assert.equal(store.sessionId, 'B'); assert.equal(store.scopeConfirmed, true)
+  assert.deepEqual(store.scopeSelection.targets, [{ type: 'group', id: 'new' }]); assert.equal(store.bindingVersion, null)
 })
