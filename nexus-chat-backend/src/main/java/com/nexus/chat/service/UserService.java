@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final PresenceService presenceService;
     private final UserPrivacySettingsRepository privacySettingsRepository;
     private final ContactRepository contactRepository;
     private final ChatRepository chatRepository;
@@ -86,8 +87,7 @@ public class UserService {
     public void updateOnlineStatus(Long userId, boolean isOnline) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException("error.user.not.found"));
-        user.setIsOnline(isOnline);
-        userRepository.save(user);
+        presenceService.refreshPresence(userId); // Compatibility query, not a client-authored status write.
     }
 
     /**
@@ -109,13 +109,13 @@ public class UserService {
         profile.setAvatarUrl(user.getAvatarUrl());
         profile.setBio(user.getBio());
         profile.setProfileBackground(user.getProfileBackground());
-        profile.setIsOnline(user.getIsOnline());
-        profile.setLastSeen(user.getLastSeen());
+        profile.setIsOnline(presenceService.getVisibleStatus(user.getId()));
+        profile.setLastSeen(presenceService.getVisibleLastSeen(user.getId()));
         profile.setCreatedAt(user.getCreatedAt());
 
         // Privacy settings
-        profile.setShowOnlineStatus(privacy.getShowOnlineStatus());
-        profile.setShowLastSeen(privacy.getShowLastSeen());
+        profile.setShowOnlineStatus(Boolean.TRUE.equals(privacy.getShowOnlineStatus()));
+        profile.setShowLastSeen(Boolean.TRUE.equals(privacy.getShowLastSeen()));
         profile.setShowEmail(privacy.getShowEmail());
         profile.setShowPhone(privacy.getShowPhone());
         profile.setFriendRequestMode(privacy.getFriendRequestMode() == null
@@ -158,11 +158,11 @@ public class UserService {
         profile.setCreatedAt(user.getCreatedAt());
 
         // Apply privacy settings
-        if (privacy.getShowOnlineStatus()) {
-            profile.setIsOnline(user.getIsOnline());
+        if (Boolean.TRUE.equals(privacy.getShowOnlineStatus())) {
+            profile.setIsOnline(presenceService.getVisibleStatus(user.getId()));
         }
-        if (privacy.getShowLastSeen()) {
-            profile.setLastSeen(user.getLastSeen());
+        if (Boolean.TRUE.equals(privacy.getShowLastSeen())) {
+            profile.setLastSeen(presenceService.getVisibleLastSeen(user.getId()));
         }
         if (privacy.getShowEmail()) {
             profile.setEmail(user.getEmail());
@@ -439,8 +439,8 @@ public class UserService {
                 user.getUsername(),
                 user.getNickname(),
                 user.getAvatarUrl(),
-                user.getIsOnline(),
-                user.getLastSeen());
+                presenceService.getVisibleStatus(user.getId()),
+                presenceService.getVisibleLastSeen(user.getId()));
     }
 
     /**

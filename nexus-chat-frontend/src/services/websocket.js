@@ -1,3 +1,6 @@
+import { isKnownExpiredJwt, navigateToLogin } from '@/utils/sessionGuard.js'
+import { watch } from 'vue'
+import { parseTypedEvent, sameId } from '@/utils/socialData.mjs'
 import { Client } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
 import { useMessageStore } from '@/stores/message'
@@ -58,6 +61,8 @@ function decodeJwtSid(token) {
 
 class WebSocketService {
     constructor() {
+        this.generation = 0
+        this.reconnectTimer = null
         this.client = null
         this.connected = false
         this.reconnectAttempts = 0
@@ -78,13 +83,33 @@ class WebSocketService {
         this.forcedLogout = false
     }
 
+    stopForExpiredSession() {
+        const token = localStorage.getItem('token')
+        if (!isKnownExpiredJwt(token)) return false
+        const store = useUserStore()
+        const session = store.captureSession()
+        // Stop even if storage and memory disagree; never revoke a different login.
+        this.disconnect()
+        if (store.expireSession(token, session)) navigateToLogin()
+        return true
+    }
+
     connect(userId, onConnectCallback = null) {
-        if (this.connected) {
+        if (!sameId(useUserStore().currentUser?.id, userId)) return
+        if (this.stopForExpiredSession()) return
+        if (this.connected && sameId(this.currentUserId, userId)) {
             if (onConnectCallback) onConnectCallback()
             return
         }
 
+        if (this.client) this.disconnect()
+        this.forcedLogout = false
+        const generation = ++this.generation
+        const current = () => generation === this.generation && sameId(useUserStore().currentUser?.id, userId)
         this.currentUserId = userId
+        this.stopOwnerWatch = watch(() => useUserStore().currentUser?.id, owner => {
+            if (!sameId(owner, userId)) this.disconnect()
+        }, { flush: 'sync' })
         this.onConnectCallback = onConnectCallback
         useConnectionStore().markConnecting()
         const socket = new SockJS(WS_URL)
@@ -103,6 +128,7 @@ class WebSocketService {
             heartbeatOutgoing: 10000,
 
             onConnect: () => {
+                if (!current()) return
                 console.log('WebSocket connected')
                 this.connected = true
                 useConnectionStore().markConnected()
@@ -112,28 +138,31 @@ class WebSocketService {
                 // Subscribe to unified user channel (no more per-chat subscriptions)
                 this.subscribeToTopics(userId)
 
-                // Send online status
-                this.updateUserStatus(userId, true)
+                // Presence belongs to authenticated server connection lifecycle.
 
                 // Start heartbeat monitors
-                this.startHeartbeatMonitor()
+                // STOMP negotiated heartbeats detect dead transports.
                 this.startServerHeartbeat()
 
                 // Setup page visibility handler
                 this.setupVisibilityHandler()
 
                 if (this.onConnectCallback) {
-                    this.onConnectCallback()
+                    Promise.resolve(this.onConnectCallback()).catch(e => console.error('[WebSocket] Snapshot failed', e))
                 }
             },
 
             onStompError: (frame) => {
+                if (!current()) return
+                useContactStore().invalidatePresence()
                 console.error('STOMP error:', frame)
                 this.connected = false
                 useConnectionStore().markConnecting()
             },
 
             onWebSocketClose: () => {
+                if (!current()) return
+                useContactStore().invalidatePresence()
                 console.log('WebSocket closed')
                 this.connected = false
                 useConnectionStore().markConnecting()
@@ -151,10 +180,18 @@ class WebSocketService {
      * All messages (chat, typing, read receipts, ACK) come through one channel.
      */
     subscribeToTopics(userId) {
+        const client = this.client, generation = this.generation
+        const subscribe = (topic, handler) => client.subscribe(topic, message => {
+            if (client !== this.client || generation !== this.generation || !sameId(useUserStore().currentUser?.id, userId)) return
+            const data = parseTypedEvent(message)
+            if (!data) { console.warn('[WebSocket] Invalid typed event'); return }
+            try { handler({ body: JSON.stringify(data) }) } catch (e) { console.error('[WebSocket] Event rejected', data.type, e) }
+        })
         // Primary unified channel - receives ALL real-time events
-        this.client.subscribe(`/topic/user.${userId}.messages`, (message) => {
+        subscribe(`/topic/user.${userId}.messages`, (message) => {
             this.updateHeartbeat()
-            const data = JSON.parse(message.body)
+            const data = parseTypedEvent(message)
+        if (!data) return
 
             switch (data.type) {
                 case 'CHAT_MESSAGE':
@@ -182,6 +219,15 @@ class WebSocketService {
                 case 'MESSAGE_READ':
                     this.handleReadReceipt(data)
                     break
+                case 'USER_PROFILE_UPDATED':
+                    useContactStore().updateUserPresence(data.payload.userId ?? data.payload.id, data.payload)
+                    break
+                case 'USER_STATUS_CHANGED':
+                case 'CONTACT_STATUS_CHANGED':
+                    useContactStore().updateUserPresence(data.payload.userId, data.payload)
+                    break
+                case 'GROUP_MEMBER_ADDED':
+                case 'GROUP_MEMBER_REMOVED':
                 case 'GROUP_MEMBER_JOINED':
                 case 'GROUP_MEMBER_LEFT':
                 case 'GROUP_UPDATED':
@@ -217,13 +263,13 @@ class WebSocketService {
         })
 
         // Contact events channel
-        this.client.subscribe(`/topic/user.${userId}.contacts`, (message) => {
+        subscribe(`/topic/user.${userId}.contacts`, (message) => {
             this.updateHeartbeat()
             this.handleContactEvent(message)
         })
 
         // Chat events (new chats created via /user/queue/chats)
-        this.client.subscribe('/user/queue/chats', (message) => {
+        subscribe('/user/queue/chats', (message) => {
             this.updateHeartbeat()
             this.handleChatEvent(message)
         })
@@ -282,19 +328,8 @@ class WebSocketService {
         // Check if chat exists in the list
         const chatExists = chatStore.chats.some(c => c.id === msg.chatId)
         if (!chatExists) {
-            const newChat = {
-                id: msg.chatId,
-                name: msg.senderName || 'Unknown',
-                avatar: resolveFileUrl(msg.senderAvatar),
-                lastMessage: msg.content,
-                lastMessageTime: msg.createdAt,
-                unreadCount: 0, // inbound count is incremented once below; not again on creation
-                online: true,
-                status: 'online',
-                type: 'DIRECT',
-                contactId: msg.senderId
-            }
-            chatStore.chats.unshift(newChat)
+            // A message alone cannot establish chat type, peer or presence.
+            chatStore.fetchChats(currentUserId).catch(e => console.error('[WebSocket] Missing chat snapshot failed', e))
         }
 
         // Deduplicate using clientMsgId (for self-messages matched to optimistic send)
@@ -669,7 +704,8 @@ class WebSocketService {
     }
 
     handleUserStatus(message) {
-        const data = JSON.parse(message.body)
+        const data = parseTypedEvent(message)
+        if (!data) return
         const contactStore = useContactStore()
         const chatStore = useChatStore()
 
@@ -683,7 +719,8 @@ class WebSocketService {
     }
 
     handleContactEvent(message) {
-        const data = JSON.parse(message.body)
+        const data = parseTypedEvent(message)
+        if (!data) return
         const contactStore = useContactStore()
 
         if (data.type === 'CONTACT_REQUEST') {
@@ -693,22 +730,12 @@ class WebSocketService {
         } else if (data.type === 'CONTACT_REQUEST_REJECTED') {
             contactStore.handleRequestRejected(data.payload)
         } else if (data.type === 'CONTACT_ADDED') {
-            const contactData = data.payload
-            contactStore.addContact({
-                id: contactData.userId,
-                username: contactData.username,
-                nickname: contactData.nickname,
-                avatarUrl: resolveFileUrl(contactData.avatarUrl),
-                avatar: resolveFileUrl(contactData.avatarUrl),
-                isOnline: contactData.isOnline,
-                lastSeen: contactData.lastSeen
-            })
+            contactStore.addContact(data.payload)
         } else if (data.type === 'CONTACT_REMOVED') {
-            contactStore.removeContact(data.payload.contactId)
+            if (data.payload.userId != null) contactStore.removeContact(data.payload.userId)
+            else contactStore.removeContactRelation(data.payload.contactId)
         } else if (data.type === 'CONTACT_STATUS_CHANGED') {
-            contactStore.updateContactStatus(data.payload.userId, data.payload.isOnline)
-            const chatStore = useChatStore()
-            chatStore.updateMemberOnlineStatus(data.payload.userId, data.payload.isOnline)
+            contactStore.updateUserPresence(data.payload.userId, data.payload)
         } else if (data.type === 'CHAT_DISABLED') {
             const chatStore = useChatStore()
             chatStore.handleChatDisabled(data.payload.chatId)
@@ -716,58 +743,29 @@ class WebSocketService {
     }
 
     handleChatEvent(message) {
-        const data = JSON.parse(message.body)
+        const data = parseTypedEvent(message)
+        if (!data) return
         const chatStore = useChatStore()
 
         if (data.type === 'CHAT_CREATED') {
-            const chatData = data.payload
-            const isGroup = String(chatData.type).toLowerCase() === 'group'
-            const memberOnline = chatData.members?.find(m => m.id !== chatData.createdBy)?.isOnline || false
-
-            const newChat = {
-                id: chatData.id,
-                contactId: isGroup ? null : chatData.members?.find(m => m.id !== chatData.createdBy)?.id,
-                name: chatData.name,
-                description: chatData.description || '',
-                avatar: resolveFileUrl(chatData.avatar || chatData.members?.[0]?.avatarUrl),
-                isPrivate: chatData.isPrivate || false,
-                lastMessage: chatData.lastMessage?.content || '',
-                lastMessageTime: chatData.lastMessageAt || new Date(),
-                unreadCount: 0,
-                online: memberOnline,
-                status: memberOnline ? 'online' : 'offline',
-                type: isGroup ? 'GROUP' : 'DIRECT',
-                members: chatData.members,
-                memberCount: chatData.memberCount || chatData.members?.length || 1
-            }
-
-            // CHAT_CREATED is an explicit user action (creating a new chat or
-            // being added to one) — treat it as a resurrection of any prior
-            // local hide.
-            if (chatStore.isChatHidden && chatStore.isChatHidden(newChat.id)) {
-                chatStore.unhideChat(newChat.id)
-            }
-
-            const exists = chatStore.chats.some(c => c.id === newChat.id)
-            if (!exists) {
-                chatStore.chats.unshift(newChat)
-            }
+            const dto = data.payload
+            chatStore.unhideChat(dto.id)
+            chatStore.mergeChats([dto], useUserStore().currentUser?.id)
         } else if (data.type === 'GROUP_UPDATED') {
-            const groupData = data.payload
-            chatStore.updateChat(groupData.id, {
-                name: groupData.name,
-                description: groupData.description,
-                avatar: resolveFileUrl(groupData.avatar),
-                isPrivate: groupData.isPrivate
-            })
-        } else if (data.type === 'GROUP_MEMBER_JOINED') {
-            const { groupId, member, memberCount } = data.payload
+            chatStore.updateChat(data.payload.id ?? data.payload.groupId, data.payload)
+        } else if ((data.type === 'GROUP_MEMBER_JOINED' || data.type === 'GROUP_MEMBER_ADDED')) {
+            const { member, memberCount } = data.payload
+            const groupId = data.payload.groupId ?? data.payload.chatId
+            if (!member) { chatStore.fetchChats(this.currentUserId).catch(e => console.error('[WebSocket] Member snapshot failed', e)); return }
             chatStore.addGroupMember(groupId, member)
             if (memberCount !== undefined) {
                 chatStore.updateChat(groupId, { memberCount })
             }
-        } else if (data.type === 'GROUP_MEMBER_LEFT') {
-            const { groupId, memberId, memberCount } = data.payload
+        } else if ((data.type === 'GROUP_MEMBER_LEFT' || data.type === 'GROUP_MEMBER_REMOVED')) {
+            const { memberCount } = data.payload
+            const groupId = data.payload.groupId ?? data.payload.chatId
+            const memberId = data.payload.memberId ?? data.payload.userId
+            if (sameId(memberId, this.currentUserId)) { chatStore.leaveGroup(groupId); return }
             chatStore.removeGroupMember(groupId, memberId)
             if (memberCount !== undefined) {
                 chatStore.updateChat(groupId, { memberCount })
@@ -796,6 +794,7 @@ class WebSocketService {
             return { clientMsgId, promise: Promise.reject(new Error('Not connected')) }
         }
 
+        if (!sameId(senderId, this.currentUserId) || !sameId(senderId, useUserStore().currentUser?.id)) return { clientMsgId, promise: Promise.reject(new Error('Account changed')) }
         this.client.publish({
             destination: '/app/chat.sendMessage',
             body: JSON.stringify({
@@ -831,20 +830,15 @@ class WebSocketService {
         })
     }
 
-    updateUserStatus(userId, isOnline) {
-        if (!this.connected) return
-
-        this.client.publish({
-            destination: '/app/user.status',
-            body: JSON.stringify({ userId, isOnline })
-        })
+    updateUserStatus() {
+        // Compatibility no-op: clients cannot assert server presence.
     }
 
     /**
      * Send heartbeat to server to refresh presence TTL.
      */
     sendHeartbeat() {
-        if (!this.connected || !this.currentUserId) return
+        if (!this.connected || !sameId(this.currentUserId, useUserStore().currentUser?.id)) return
 
         this.client.publish({
             destination: '/app/user.heartbeat',
@@ -870,6 +864,8 @@ class WebSocketService {
     }
 
     attemptReconnect(userId) {
+        if (!sameId(useUserStore().currentUser?.id, userId)) return
+        if (this.stopForExpiredSession()) return
         if (this.forcedLogout) {
             return // device was signed out remotely; do not reconnect
         }
@@ -885,7 +881,11 @@ class WebSocketService {
         )
         console.log(`Reconnecting in ${delay}ms... Attempt ${this.reconnectAttempts}`)
 
-        setTimeout(() => {
+        if (this.reconnectTimer) return
+        const generation = this.generation
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null
+            if (generation !== this.generation || !sameId(userId, useUserStore().currentUser?.id)) return
             if (this.client) {
                 try { this.client.deactivate() } catch (e) { /* ignore */ }
                 this.client = null
@@ -940,6 +940,12 @@ class WebSocketService {
     }
 
     disconnect() {
+        ++this.generation
+        this.stopOwnerWatch?.()
+        this.stopOwnerWatch = null
+        clearTimeout(this.reconnectTimer)
+        this.reconnectTimer = null
+        useContactStore().invalidatePresence()
         this.stopHeartbeatMonitor()
         this.stopServerHeartbeat()
 
@@ -960,6 +966,9 @@ class WebSocketService {
             this.connected = false
             this.currentUserId = null
         }
+        this.client = null
+        this.connected = false
+        this.currentUserId = null
         useConnectionStore().markDisconnected()
     }
 

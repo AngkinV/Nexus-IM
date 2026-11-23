@@ -30,8 +30,8 @@
             @click="toggleSelect(contact.userId)"
           >
             <div class="contact-avatar">
-              <div class="avatar-frame"><img v-if="contact.avatarUrl || contact.avatar" class="avatar-img" :src="contact.avatarUrl || contact.avatar" alt="" /><div v-else class="avatar-fallback">{{ (contact.nickname || contact.username || "?").charAt(0) }}</div></div>
-              <span class="online-dot" :class="{ online: contact.isOnline }"></span>
+              <div class="avatar-frame"><IdentityAvatar :src="contact.avatarUrl || contact.avatar" :entity-id="contact.userId ?? contact.id" :label="contact.nickname || contact.username" /></div>
+              <PresenceDot class="online-dot" :value="contact.isOnline" />
             </div>
             <div class="contact-info">
               <span class="contact-name">{{ contact.nickname }}</span>
@@ -72,6 +72,8 @@
 </template>
 
 <script setup>
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -267,7 +269,6 @@ const handleClose = () => {
   height: 100%;
   border-radius: 9999px;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .avatar-fallback {
@@ -296,7 +297,7 @@ const handleClose = () => {
 }
 
 .online-dot.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 .contact-info {

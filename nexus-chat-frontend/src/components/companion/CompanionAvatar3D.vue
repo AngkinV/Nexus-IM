@@ -52,6 +52,7 @@ import { createRenderLoop, scaledPixelRatio, onRenderQualityChange } from '@/uti
 import { useSettingsStore } from '@/stores/settings'
 import { useUserStore } from '@/stores/user'
 import { userAPI } from '@/services/api'
+import { attempt, createResourceOwner, releaseRenderer, resourceCounts } from './resourceOwner.js'
 import { SERVER_BASE_URL } from '@/services/runtimeConfig'
 import { assetRequest } from '@/utils/assetRequest'
 
@@ -93,6 +94,11 @@ let vrm = null
 let vrmExpressions = null
 let modelRequest = 0
 let disposed = false
+let contextLost = false
+let motionGeneration = 0
+let motionFlight = null
+const modelOwners = new WeakMap()
+let modelOwner = null
 let currentAction = null
 let availableClips = []
 let basePosition = new THREE.Vector3()
@@ -333,28 +339,49 @@ const applyRenderQuality = () => {
   resizeRenderer()
 }
 
-const disposeModel = () => {
-  clearMotionOffsets()
+const retireMotionActions = () => {
+  motionGeneration++
+  motionFlight = null
   stopMotionCycle()
+  const oldMixer = mixer
+  for (const action of new Set(Object.values(mixamoActions))) {
+    attempt(() => action.stop())
+    attempt(() => oldMixer?.uncacheAction(action.getClip(), modelRoot))
+    attempt(() => oldMixer?.uncacheClip(action.getClip()))
+  }
+  mixamoActions = {}
+  mixamoCurrent = null
+  mixamoLoaded = false
+}
+
+const disposeModel = () => {
+  retireMotionActions()
+  attempt(() => clearMotionOffsets())
+  attempt(() => stopMotionCycle())
   if (pendingExpressionTimeout) {
     clearTimeout(pendingExpressionTimeout)
     pendingExpressionTimeout = null
   }
   if (mixer) {
-    mixer.stopAllAction()
-    mixer.uncacheRoot(modelRoot)
+    attempt(() => mixer.stopAllAction())
+    attempt(() => mixer.uncacheRoot(modelRoot))
   }
   mixer = null
   currentAction = null
   availableClips = []
   if (modelRoot && scene) scene.remove(modelRoot)
-  if (modelRoot) VRMUtils.deepDispose(modelRoot)
+  if (modelRoot) {
+    const owner = modelOwner || createResourceOwner()
+    owner.track(modelRoot)
+    owner.retire()
+  }
+  modelOwner = null
   modelRoot = null
   vrm = null
   vrmExpressions = null
   boneRest.clear()
   if (mixamoCurrent) {
-    mixamoCurrent.fadeOut(0)
+    attempt(() => mixamoCurrent.fadeOut(0))
     mixamoCurrent = null
   }
   mixamoActions = {}
@@ -362,15 +389,25 @@ const disposeModel = () => {
 }
 
 const loadGLTF = (url, isVrm) => new Promise((resolve, reject) => {
-  const loader = new GLTFLoader()
+  const owner = createResourceOwner({ ownImages: !THREE.Cache.enabled })
+  const loader = new GLTFLoader(new THREE.LoadingManager())
+  loader.register(parser => {
+    owner.bindParser(parser)
+    return { name: 'NexusResourceOwner', beforeRoot: () => owner.prepareEmbeddedImages(parser) }
+  })
   if (isVrm) {
     loader.register((parser) => new VRMLoaderPlugin(parser))
   }
   try {
     const request = assetRequest(url, SERVER_BASE_URL, userStore.token)
     loader.setRequestHeader(request.headers)
-    loader.load(request.url, resolve, undefined, reject)
-  } catch (error) { reject(error) }
+    loader.load(request.url, gltf => {
+      owner.releaseURLs()
+      owner.track(gltf.scene)
+      modelOwners.set(gltf.scene, owner)
+      resolve(gltf)
+    }, undefined, error => { owner.retire(); reject(error) })
+  } catch (error) { owner.retire(); reject(error) }
 })
 
 const loadFBX = (url) => new Promise((resolve, reject) => {
@@ -683,7 +720,13 @@ const fetchMotionConfig = async () => {
   }
 }
 
-const loadMixamoClips = async () => {
+const loadMixamoClips = () => {
+  if (motionFlight) return motionFlight
+  const generation = motionGeneration
+  const targetVrm = vrm
+  const targetMixer = mixer
+  const current = () => !disposed && generation === motionGeneration && vrm === targetVrm && mixer === targetMixer
+  const run = async () => {
   if (!vrm?.humanoid) {
     console.warn('[Companion] loadMixamoClips: no VRM humanoid')
     return
@@ -699,54 +742,65 @@ const loadMixamoClips = async () => {
   }
 
   const loader = new FBXLoader()
-  const targetVrm = vrm
-  const targetMixer = mixer
+  if (!current()) return
+  const motions = motionList.value.map(motion => ({ ...motion }))
   mixamoActions = {}
 
-  for (const motion of motionList.value) {
-    if (disposed || vrm !== targetVrm || mixer !== targetMixer) return
+  for (const motion of motions) {
+    if (!current()) return
     const url = motion.owned ? motion.file : `/motions/${motion.file}`
+    let fbx = null
+    const owner = createResourceOwner()
     try {
       const request = assetRequest(url, SERVER_BASE_URL, userStore.token)
       loader.setRequestHeader(request.headers)
-      const fbx = await new Promise((resolve, reject) => {
+      fbx = await new Promise((resolve, reject) => {
         loader.load(request.url, resolve, undefined, reject)
       })
+      owner.track(fbx)
 
-      if (disposed || vrm !== targetVrm || mixer !== targetMixer) {
-        VRMUtils.deepDispose(fbx)
+      if (!current()) {
+        owner.retire()
         return
       }
       const clip = fbx.animations?.[0]
       if (!clip) {
-        VRMUtils.deepDispose(fbx)
+        owner.retire()
         console.warn(`[Companion] FBX ${motion.key}: no animations found`)
         continue
       }
       clip.name = motion.key
 
       const retargetedClip = retargetMixamoClipToVrm(clip, fbx)
-      VRMUtils.deepDispose(fbx)
+      owner.retire()
 
       if (retargetedClip.tracks.length === 0) {
         console.warn(`[Companion] clip ${motion.key}: 0 matched tracks`)
         continue
       }
 
-      const action = mixer.clipAction(retargetedClip)
+      const action = targetMixer.clipAction(retargetedClip)
       action.clampWhenFinished = false
       action.loop = THREE.LoopRepeat
       mixamoActions[motion.key] = action
       console.log(`[Companion] clip "${motion.key}": ${retargetedClip.tracks.length} tracks, ${retargetedClip.duration.toFixed(2)}s (original: ${clip.tracks.length} tracks)`)
     } catch (error) {
-      console.warn(`[Companion] clip load failed for ${motion.key}:`, error)
+      if (current()) console.warn(`[Companion] clip load failed for ${motion.key}:`, error)
+    } finally {
+      if (fbx) owner.track(fbx)
+      owner.retire()
     }
   }
 
-  mixamoLoaded = Object.keys(mixamoActions).length > 0
+  if (current()) mixamoLoaded = Object.keys(mixamoActions).length > 0
+  }
+  const flight = run().finally(() => { if (motionFlight === flight) motionFlight = null })
+  motionFlight = flight
+  return flight
 }
 
 const playMixamoAction = (name) => {
+  if (disposed || contextLost || !mixer) return false
   if (!mixamoLoaded) {
     console.warn(`[Companion] playMixamoAction("${name}"): not loaded`)
     return false
@@ -787,6 +841,7 @@ const playMixamoAction = (name) => {
 const applyModel = (object, animations = []) => {
   disposeModel()
   modelRoot = object
+  modelOwner = modelOwners.get(object) || null
   scene.add(modelRoot)
   fitModelToView(modelRoot)
   mixer = new THREE.AnimationMixer(modelRoot)
@@ -803,6 +858,7 @@ const applyVRM = (loadedVrm, animations = [], json) => {
   VRMUtils.removeUnnecessaryVertices(vrm.scene)
   VRMUtils.removeUnnecessaryJoints(vrm.scene)
   modelRoot = vrm.scene
+  modelOwner = modelOwners.get(modelRoot) || null
   if (vrm.meta?.metaVersion === '0') {
     VRMUtils.rotateVRM0(vrm)
   }
@@ -822,11 +878,15 @@ const loadModel = async () => {
   const request = ++modelRequest
   isReady.value = false
   loadError.value = ''
+  let loadedRoot = null
   try {
     if (modelType.value === 'fbx') {
       const fbx = await loadFBX(url)
+      loadedRoot = fbx
       if (disposed || request !== modelRequest) {
-        VRMUtils.deepDispose(fbx)
+        const owner = createResourceOwner()
+        owner.track(fbx)
+        owner.retire()
         return
       }
       applyModel(fbx, fbx.animations || [])
@@ -834,8 +894,11 @@ const loadModel = async () => {
     }
     const isVrm = modelType.value === 'vrm'
     const gltf = await loadGLTF(url, isVrm)
+    loadedRoot = gltf.scene
     if (disposed || request !== modelRequest) {
-      VRMUtils.deepDispose(gltf.scene)
+      const owner = modelOwners.get(gltf.scene) || createResourceOwner()
+      owner.track(gltf.scene)
+      owner.retire()
       return
     }
     if (isVrm && gltf.userData?.vrm) {
@@ -844,6 +907,12 @@ const loadModel = async () => {
       applyModel(gltf.scene, gltf.animations || [])
     }
   } catch (error) {
+    if (loadedRoot) {
+      if (modelRoot === loadedRoot) attempt(() => disposeModel())
+      const owner = modelOwners.get(loadedRoot) || createResourceOwner()
+      owner.track(loadedRoot)
+      owner.retire()
+    }
     if (disposed || request !== modelRequest) return
     console.error('Companion model load failed:', error)
     loadError.value = 'Model load failed'
@@ -870,6 +939,9 @@ const stopMotionCycle = () => {
 
 const startMotionCycle = (key) => {
   stopMotionCycle()
+  if (disposed || contextLost || !mixer) return
+  const generation = motionGeneration, targetMixer = mixer
+  const current = () => !disposed && !contextLost && generation === motionGeneration && targetMixer === mixer
   if (!key || key === 'walk') {
     playMixamoAction('walk')
     return
@@ -877,7 +949,7 @@ const startMotionCycle = (key) => {
   motionCycleActive = true
 
   const playSelected = () => {
-    if (!motionCycleActive || userSelectedMotionKey !== key) return
+    if (!current() || !motionCycleActive || userSelectedMotionKey !== key) return
     playMixamoAction(key)
     const clip = mixamoActions[key]?.getClip()
     const duration = clip ? clip.duration : 8
@@ -885,7 +957,7 @@ const startMotionCycle = (key) => {
   }
 
   const playWalkBreak = () => {
-    if (!motionCycleActive || userSelectedMotionKey !== key) return
+    if (!current() || !motionCycleActive || userSelectedMotionKey !== key) return
     playMixamoAction('walk')
     motionCycleTimer = setTimeout(playSelected, WALK_BREAK_SECONDS * 1000)
   }
@@ -923,7 +995,9 @@ const rememberMotion = (key) => {
 }
 
 const playDefaultMotion = () => {
+  const generation = motionGeneration, targetVrm = vrm, targetMixer = mixer
   loadMixamoClips().then(() => {
+    if (disposed || contextLost || generation !== motionGeneration || vrm !== targetVrm || mixer !== targetMixer) return
     const remembered = settings.petMotion
     if (remembered && mixamoActions[remembered]) {
       userSelectedMotionKey = remembered
@@ -1206,7 +1280,7 @@ const updateProceduralMotion = (time) => {
 }
 
 const render = () => {
-  if (!renderer || !scene || !camera) return
+  if (disposed || contextLost || !renderer || !scene || !camera) return
   // Clamp the step and keep our own running time. THREE.Clock keeps counting
   // while the loop is suspended or throttled, and feeding minutes of background
   // time into the mixer / VRM spring bones / walk in one frame makes the pet
@@ -1229,18 +1303,13 @@ const render = () => {
 
 const handleMotionsUpdated = async () => {
   // Re-fetch motions.json and reload all clips
-  stopMotionCycle()
-  mixamoLoaded = false
-  // Stop and uncache all existing actions from mixer
-  if (mixer) {
-    mixer.stopAllAction()
-  }
-  mixamoActions = {}
-  mixamoCurrent = null
-  currentAction = null
+  retireMotionActions()
+  const generation = motionGeneration, targetMixer = mixer, targetVrm = vrm
   await fetchMotionConfig()
+  if (disposed || generation !== motionGeneration || targetMixer !== mixer || targetVrm !== vrm) return
   if (vrm?.humanoid && mixer) {
     await loadMixamoClips()
+    if (disposed || generation !== motionGeneration || targetMixer !== mixer || targetVrm !== vrm) return
     playMixamoAction(currentMotionKey.value || defaultMotionKey.value || 'walk')
   }
 }
@@ -1255,10 +1324,25 @@ const handleSwitchMotionEvent = async (event) => {
     return
   }
   // Clip not loaded yet (newly uploaded motion) — reload config & clips then play
+  const targetMixer = mixer, targetVrm = vrm
   await handleMotionsUpdated()
+  if (disposed || targetMixer !== mixer || targetVrm !== vrm) return
   if (mixamoActions[key]) {
     startMotionCycle(key)
   }
+}
+
+const onContextLost = (event) => {
+  event.preventDefault()
+  contextLost = true
+  renderLoop?.stop()
+  stopMotionCycle()
+}
+const onContextRestored = () => {
+  if (disposed || !contextLost) return
+  contextLost = false
+  clock?.getDelta()
+  renderLoop?.start()
 }
 
 onMounted(async () => {
@@ -1271,6 +1355,8 @@ onMounted(async () => {
   } catch (error) {
     console.error('WebGL init failed:', error)
     hasWebGL.value = false
+    releaseRenderer(renderer)
+    renderer = scene = camera = clock = null
     return
   }
   resizeRenderer()
@@ -1280,7 +1366,15 @@ onMounted(async () => {
     // Back from a suspension: throw away the time that passed in the background.
     onResume: () => clock?.getDelta()
   })
+  renderer.domElement.addEventListener('webglcontextlost', onContextLost)
+  renderer.domElement.addEventListener('webglcontextrestored', onContextRestored)
   renderLoop.start()
+  if (import.meta.env.DEV) window.__companionResources = () => ({
+    disposed, contextLost, motionGeneration, loadingMotion: !!motionFlight,
+    actions: Object.keys(mixamoActions).length,
+    mixerActions: mixer?._actions?.length || 0, mixerBindings: mixer?._bindings?.length || 0,
+    ...resourceCounts
+  })
   stopQualityWatch = onRenderQualityChange(applyRenderQuality)
   window.addEventListener('resize', clampPosition)
   window.addEventListener('keydown', handleEscape)
@@ -1292,15 +1386,24 @@ onUnmounted(() => {
   disposed = true
   modelRequest++
   stopMotionCycle()
-  renderLoop?.stop()
-  stopQualityWatch?.()
+  attempt(() => renderLoop?.stop())
+  renderLoop = null
+  attempt(() => stopQualityWatch?.())
+  stopQualityWatch = null
   window.removeEventListener('resize', clampPosition)
   window.removeEventListener('keydown', handleEscape)
   window.removeEventListener('companion:motions-updated', handleMotionsUpdated)
   window.removeEventListener('companion:switch-motion', handleSwitchMotionEvent)
-  disposeModel()
-  renderer?.dispose?.()
-  renderer?.forceContextLoss?.()
+  renderer?.domElement.removeEventListener('webglcontextlost', onContextLost)
+  renderer?.domElement.removeEventListener('webglcontextrestored', onContextRestored)
+  // Invalidate motion continuations before the deferred GPU retirement.
+  motionGeneration++
+  releaseRenderer(renderer, () => {
+    try { disposeModel() } finally {
+      renderer = scene = camera = clock = null
+    }
+  })
+  if (import.meta.env.DEV) delete window.__companionResources
 })
 
 watch([modelSource, modelType], loadModel)

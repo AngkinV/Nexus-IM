@@ -23,14 +23,7 @@
             class="contact-row request-row"
           >
             <div class="avatar-wrap">
-              <img
-                v-if="request.fromAvatarUrl && !failedAvatars['r' + request.id]"
-                class="avatar-img"
-                :src="request.fromAvatarUrl"
-                alt=""
-                @error="failedAvatars['r' + request.id] = true"
-              />
-              <div v-else class="avatar-initial" :data-initial="initialOf(request.fromNickname)"></div>
+              <IdentityAvatar :src="request.fromAvatarUrl" :entity-id="request.fromUserId" :label="request.fromNickname || request.fromUsername" class="avatar-img" />
             </div>
             <div class="contact-info">
               <span class="contact-name">{{ request.fromNickname }}</span>
@@ -77,15 +70,8 @@
           @click="selectContact(contact)"
         >
           <div class="avatar-wrap">
-            <img
-              v-if="contact.avatar && !failedAvatars[contact.id]"
-              class="avatar-img"
-              :src="contact.avatar"
-              alt=""
-              @error="failedAvatars[contact.id] = true"
-            />
-            <div v-else class="avatar-initial" :data-initial="initialOf(contact.nickname)"></div>
-            <span class="presence-dot" :class="{ online: contact.isOnline }"></span>
+            <IdentityAvatar :src="contact.avatarUrl || contact.avatar" :entity-id="contact.id" :label="contact.nickname || contact.username" kind="user" class="avatar-img" />
+            <PresenceDot class="presence-dot" :value="contact.isOnline" />
           </div>
           <div class="contact-info">
             <span class="contact-name">{{ contact.nickname }}</span>
@@ -119,6 +105,9 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import { isGroup, presence } from '@/components/identity/presentation.mjs'
 import { computed, ref } from 'vue'
 import { useContactStore } from '@/stores/contact'
 import { useUserStore } from '@/stores/user'
@@ -487,7 +476,6 @@ const deleteContact = async (contact) => {
 .avatar-img {
   display: block;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.25);
 }
 
 .avatar-initial {
@@ -515,7 +503,7 @@ const deleteContact = async (contact) => {
 }
 
 .presence-dot.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 .contact-info {

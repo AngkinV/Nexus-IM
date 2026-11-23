@@ -3,80 +3,104 @@ package com.nexus.chat.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.web.socket.messaging.SessionDisconnectEvent;
+import com.nexus.chat.repository.UserPrivacySettingsRepository;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
-import java.util.Collection;
-import java.util.Map;
-import java.util.Set;
-
-/**
- * Redis-backed Presence system.
- * Replaces MySQL-based online status with 90s TTL + 30s heartbeat.
- * Supports multi-device (multiple sessions per user).
- */
+/** Display authority: authenticated transport sessions, never HTTP login flags. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PresenceService {
-
     private final RedisCacheService redisCacheService;
+    private final UserPrivacySettingsRepository privacyRepository;
+    private final ApplicationEventPublisher events;
+    // Only CONNECT authentication may populate this registry. Lease expiry does not
+    // remove a still-connected transport, allowing its next authenticated heartbeat to recover.
+    private final Map<String, Long> liveSessions = new ConcurrentHashMap<>();
+    public record Changed(Long userId, boolean online) {}
 
-    /**
-     * Register a user as online when they connect via WebSocket.
-     */
-    public void userConnected(Long userId, String sessionId) {
-        redisCacheService.registerWsSession(userId, sessionId);
-        // instanceId is "default" for single-instance; Phase 5 will pass actual instance ID
-        redisCacheService.setUserOnline(userId, sessionId, "default");
-        log.info("用户上线: userId={}, sessionId={}", userId, sessionId);
+    public synchronized void userConnected(Long userId, String sessionId) {
+        if (userId == null || sessionId == null) return;
+        Long owner = liveSessions.putIfAbsent(sessionId, userId);
+        if (owner != null && !owner.equals(userId)) return;
+        refreshPresence(userId, sessionId);
     }
 
-    /**
-     * Handle heartbeat - refresh presence TTL.
-     * Called every 30 seconds by the client.
-     */
-    public void refreshPresence(Long userId) {
-        redisCacheService.refreshPresence(userId);
-        redisCacheService.recordOnlineHeartbeat(userId);
+    public synchronized void refreshPresence(Long userId, String sessionId) {
+        if (sessionId == null || !Objects.equals(userId, liveSessions.get(sessionId))) return;
+        transition(userId, sessionId, "refresh");
+        try { redisCacheService.recordOnlineHeartbeat(userId); }
+        catch (RuntimeException e) { log.warn("Presence accounting unavailable for {}", userId); }
     }
 
-    /**
-     * Handle WebSocket disconnection.
-     * Only marks user as offline if this was their last active session.
-     */
-    public boolean userDisconnected(Long userId, String sessionId) {
-        redisCacheService.unregisterWsSession(userId, sessionId);
-        Set<String> remainingSessions = redisCacheService.getWsSessions(userId);
+    /** Compatibility query only: HTTP/user-only calls cannot extend a WS lease. */
+    public void refreshPresence(Long userId) { isUserOnline(userId); }
 
-        if (remainingSessions == null || remainingSessions.isEmpty()) {
-            redisCacheService.setUserOffline(userId, sessionId);
-            log.info("用户下线 (最后一个会话): userId={}, sessionId={}", userId, sessionId);
-            return true; // User went fully offline
+    public synchronized boolean userDisconnected(Long userId, String sessionId) {
+        if (sessionId == null || !liveSessions.remove(sessionId, userId)) return false;
+        return transition(userId, sessionId, "remove") == -1;
+    }
+
+    @EventListener
+    public void transportDisconnected(SessionDisconnectEvent event) {
+        Long owner = liveSessions.get(event.getSessionId());
+        if (owner != null) userDisconnected(owner, event.getSessionId());
+    }
+
+    private long transition(Long id, String session, String operation) {
+        try {
+            Long change = redisCacheService.updatePresenceLease(id, session, operation, System.currentTimeMillis());
+            if (change != null && change != 0) events.publishEvent(new Changed(id, change > 0));
+            return change == null ? 0 : change;
+        } catch (RuntimeException e) {
+            log.warn("Presence lease unavailable for {}", id);
+            return 0;
         }
-
-        log.info("用户断开一个会话 (仍有 {} 个活跃会话): userId={}, sessionId={}",
-                remainingSessions.size(), userId, sessionId);
-        return false; // User still has other sessions
     }
 
-    /**
-     * Check if a specific user is online.
-     */
+    @Scheduled(fixedDelay = 5000)
+    public void sweepExpiredLeases() {
+        try {
+            for (Long id : redisCacheService.getLeasedUserIds()) transition(id, null, "sweep");
+        } catch (RuntimeException e) { log.warn("Presence expiry sweep unavailable"); }
+    }
+
     public boolean isUserOnline(Long userId) {
-        return redisCacheService.isUserOnline(userId);
+        try { return Boolean.TRUE.equals(redisCacheService.hasPresenceLease(userId, System.currentTimeMillis())); }
+        catch (RuntimeException e) { return false; }
     }
 
-    /**
-     * Batch check online statuses for multiple users.
-     * Used when loading contacts list.
-     */
-    public Map<Long, Boolean> getOnlineStatuses(Collection<Long> userIds) {
-        return redisCacheService.getOnlineStatuses(userIds);
+    public Boolean getVisibleStatus(Long userId) {
+        try {
+            var privacy = privacyRepository.findByUserId(userId).orElse(null);
+            if (privacy != null && !Boolean.TRUE.equals(privacy.getShowOnlineStatus())) return null;
+            return redisCacheService.hasPresenceLease(userId, System.currentTimeMillis());
+        } catch (RuntimeException e) { return null; }
     }
 
-    /**
-     * Get all active sessions for a user (multi-device support).
-     */
-    public Set<String> getUserSessions(Long userId) {
-        return redisCacheService.getWsSessions(userId);
+    public LocalDateTime getVisibleLastSeen(Long userId) {
+        try {
+            var privacy = privacyRepository.findByUserId(userId).orElse(null);
+            if (privacy != null && !Boolean.TRUE.equals(privacy.getShowLastSeen())) return null;
+            return redisCacheService.getPresenceLastSeen(userId);
+        } catch (RuntimeException e) { return null; }
+    }
+
+    public Map<Long, Boolean> getOnlineStatuses(Collection<Long> ids) {
+        Map<Long, Boolean> result = new HashMap<>();
+        if (ids != null) ids.forEach(id -> result.put(id, getVisibleStatus(id)));
+        return result;
+    }
+
+    public Set<String> getUserSessions(Long id) {
+        Set<String> result = new HashSet<>();
+        liveSessions.forEach((session, owner) -> { if (owner.equals(id)) result.add(session); });
+        return result;
     }
 }

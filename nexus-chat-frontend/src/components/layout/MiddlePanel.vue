@@ -43,43 +43,26 @@
 
           <div class="avatar-wrapper">
             <div class="avatar-frame">
-              <img
-                v-if="chatStore.activeChat.avatar"
-                class="chat-avatar"
-                :src="chatStore.activeChat.avatar"
-                alt=""
-              />
-              <div
-                v-else
-                class="avatar-fallback"
-                :data-initial="(chatStore.activeChat.name || '?').trim().charAt(0) || '?'"
-              ></div>
+              <IdentityAvatar :src="chatStore.activeChat.avatarUrl || chatStore.activeChat.avatar" :entity-id="chatStore.activeChat.id" :label="chatStore.activeChat.name" :kind="isGroup(chatStore.activeChat.type) ? 'group' : 'user'" class="chat-avatar" />
             </div>
-            <span
-              v-if="chatStore.activeChat.type !== 'GROUP'"
-              class="status-dot"
-              :class="{ online: chatStore.activeChat.status === 'online' }"
-            ></span>
+            <PresenceDot class="status-dot" :value="chatPresence(chatStore.activeChat)" :type="chatStore.activeChat.type" />
           </div>
 
           <div class="chat-meta">
             <div class="name-row">
               <span class="chat-name">{{ chatStore.activeChat.name }}</span>
-              <span v-if="chatStore.activeChat.type === 'GROUP'" class="role-chip">
+              <span v-if="isGroup(chatStore.activeChat.type)" class="role-chip">
                 {{ t('chat.memberCount', { n: chatStore.activeChat.memberCount || 0 }) }}
               </span>
             </div>
             <div class="status-row">
-              <span
-                class="status-pip"
-                :class="{ online: chatStore.activeChat.status === 'online' }"
-              ></span>
+              <PresenceDot class="status-pip" :value="chatPresence(chatStore.activeChat)" :type="chatStore.activeChat.type" />
               <span class="chat-status">
-                <template v-if="chatStore.activeChat.type === 'GROUP'">
+                <template v-if="isGroup(chatStore.activeChat.type)">
                   {{ chatStore.activeChat.memberCount || 0 }} {{ $t('group.members') }}
                 </template>
                 <template v-else>
-                  {{ chatStore.activeChat.status === 'online' ? $t('chat.activeNow') : $t('chat.' + (chatStore.activeChat.status || 'offline')) }}
+                  {{ chatPresence(chatStore.activeChat) === null ? '' : $t(chatPresence(chatStore.activeChat) === true ? 'chat.activeNow' : 'chat.offline') }}
                 </template>
               </span>
             </div>
@@ -223,6 +206,9 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import { isGroup, presence, chatPresence } from '@/components/identity/presentation.mjs'
 import { inject, watch, computed, ref, h, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useMessageStore } from '@/stores/message'
@@ -339,7 +325,7 @@ const canCall = computed(() => {
 
 // Get remote user info for calling
 const remoteUser = computed(() => {
-  if (!chatStore.activeChat || chatStore.activeChat.type === 'GROUP') return null
+  if (!chatStore.activeChat || isGroup(chatStore.activeChat.type)) return null
   return {
     id: chatStore.activeChat.contactId,
     name: chatStore.activeChat.name,
@@ -758,7 +744,6 @@ const handleReactMessage = async (msg, emoji) => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .status-dot {
@@ -773,7 +758,7 @@ const handleReactMessage = async (msg, emoji) => {
 }
 
 .status-dot.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 .chat-meta {
@@ -828,7 +813,7 @@ const handleReactMessage = async (msg, emoji) => {
 }
 
 .status-pip.online {
-  background: #ffffff;
+  background: #22c55e;
 }
 
 .chat-status {

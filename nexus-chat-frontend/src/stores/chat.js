@@ -1,9 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { chatAPI, resolveFileUrl } from '@/services/api'
 import offlineStore from '@/services/offlineStore'
 import { AI_ASSISTANT_CHAT_ID, buildAiAssistantChatItem } from '@/stores/agent'
 import i18n from '@/locales/i18n'
+import { useUserStore } from '@/stores/user'
+import { useContactStore } from '@/stores/contact'
+import { normalizeChat, normalizeUser, sameId, createRevisionLedger } from '@/utils/socialData.mjs'
 
 // Resolve the chat-list preview text from a backend lastMessage. Guards against
 // recalled messages whose content the backend serializes as a JSON blob — those
@@ -66,16 +69,16 @@ export const useChatStore = defineStore('chat', () => {
 
     // Save muted chats to localStorage
     const saveMutedChats = () => {
-        localStorage.setItem('mutedChats', JSON.stringify([...mutedChats.value]))
+        localStorage.setItem(`mutedChats:${userStore.currentUser?.id}`,  JSON.stringify([...mutedChats.value]))
     }
 
     // Save pinned chats to localStorage
     const savePinnedChats = () => {
-        localStorage.setItem('pinnedChats', JSON.stringify([...pinnedChats.value]))
+        localStorage.setItem(`pinnedChats:${userStore.currentUser?.id}`,  JSON.stringify([...pinnedChats.value]))
     }
 
     const saveHiddenChats = () => {
-        localStorage.setItem('hiddenChats', JSON.stringify([...hiddenChats.value.entries()]))
+        localStorage.setItem(`hiddenChats:${userStore.currentUser?.id}`,  JSON.stringify([...hiddenChats.value.entries()]))
     }
 
     const isChatHidden = (chatId) => hiddenChats.value.has(chatId)
@@ -126,29 +129,48 @@ export const useChatStore = defineStore('chat', () => {
     // Using the wrong field for groups caused different accounts to render
     // different "other member" avatars and made the creator's freshly-uploaded
     // group avatar appear inconsistent across clients.
-    const normalizeChatFromServer = (chat, currentUserId) => {
-        const isGroup = String(chat.type).toLowerCase() === 'group'
-        const otherMember = chat.members?.find(m => m.id !== currentUserId)
-        const isOnline = isGroup ? false : (otherMember?.isOnline || false)
-        const avatarSource = isGroup
-            ? (chat.avatar || chat.avatarUrl)
-            : (otherMember?.avatarUrl || otherMember?.avatar || chat.avatar)
-        return {
-            id: chat.id,
-            name: chat.name,
-            avatar: resolveFileUrl(avatarSource),
-            description: chat.description || '',
-            isPrivate: chat.isPrivate || false,
-            lastMessage: resolveServerLastMessage(chat.lastMessage),
-            lastMessageTime: chat.lastMessage?.createdAt || chat.lastMessageAt || chat.lastMessageTime,
-            unreadCount: chat.unreadCount || 0,
-            online: isOnline,
-            status: isOnline ? 'online' : 'offline',
-            type: isGroup ? 'GROUP' : 'DIRECT',
-            members: chat.members,
-            memberCount: chat.memberCount || chat.members?.length || 0,
-            contactId: isGroup ? null : (otherMember?.id || null),
-            createdBy: chat.createdBy
+    const ledger = createRevisionLedger()
+    const membership = new Map()
+    const userStore = useUserStore()
+    watch(() => userStore.currentUser?.id, owner => {
+        if (ledger.setOwner(owner)) {
+            isLoading.value = false; loadError.value = false; membership.clear(); chats.value = []; activeChat.value = null; messages.value = []
+            subscribedChatIds.value = new Set()
+            // Never import the legacy unscoped preference keys into another account.
+            const read = key => { try { return JSON.parse(localStorage.getItem(`${key}:${owner}`) || '[]') } catch { return [] } }
+            mutedChats.value = new Set(read('mutedChats'))
+            pinnedChats.value = new Set(read('pinnedChats'))
+            hiddenChats.value = new Map(read('hiddenChats'))
+        }
+    }, { immediate: true, flush: 'sync' })
+    const captureChatRevision = () => ledger.capture()
+    const normalizeChatFromServer = (dto, owner) => {
+        const out = normalizeChat(dto, owner, resolveFileUrl)
+        if (Object.prototype.hasOwnProperty.call(dto, 'lastMessage')) out.lastMessage = resolveServerLastMessage(dto.lastMessage)
+        return out
+    }
+    const applyUserIdentity = (userId, record) => {
+        for (const chat of chats.value) {
+            const members = chat.members?.map(m => sameId(m.id, userId) ? { ...m, ...record } : m)
+            const patch = members ? { members } : {}
+            if (chat.type === 'DIRECT' && sameId(chat.contactId, userId)) {
+                if ('avatar' in record) patch.avatar = record.avatar
+                if ('nickname' in record) patch.name = record.nickname
+                if ('lastSeen' in record) patch.lastSeen = record.lastSeen
+                if ('isOnline' in record) {
+                    patch.online = record.isOnline
+                    patch.status = record.isOnline === true ? 'online' : record.isOnline === false ? 'offline' : null
+                }
+            }
+            Object.assign(chat, patch)
+            if (sameId(activeChat.value?.id, chat.id)) activeChat.value = chat
+        }
+    }
+    const invalidatePresence = () => {
+        for (const chat of chats.value) {
+            if (chat.type === 'DIRECT') { chat.online = null; chat.status = null }
+            for (const member of chat.members || []) member.isOnline = null
+            if (sameId(activeChat.value?.id, chat.id)) activeChat.value = chat
         }
     }
 
@@ -228,6 +250,17 @@ export const useChatStore = defineStore('chat', () => {
 
     // Update chat properties
     const updateChat = (chatId, updates) => {
+        const existing = chats.value.find(c => sameId(c.id, chatId))
+        if (existing) {
+            const input = { ...existing, ...updates }
+            if ('avatarUrl' in updates && !('avatar' in updates)) delete input.avatar
+            const combined = normalizeChatFromServer(input, userStore.currentUser?.id)
+            const patch = {}
+            for (const key of Object.keys(updates)) if (combined[key] !== undefined) patch[key] = combined[key]
+            if ('avatarUrl' in updates) patch.avatar = combined.avatar
+            if (existing.type === 'GROUP') { delete patch.online; delete patch.status; delete patch.isOnline }
+            updates = ledger.merge(chatId, existing, patch)
+        }
         const chatIndex = chats.value.findIndex(c => c.id === chatId)
         if (chatIndex !== -1) {
             chats.value[chatIndex] = {
@@ -262,37 +295,27 @@ export const useChatStore = defineStore('chat', () => {
     // Fetch chats from backend
     const fetchChats = async (userId) => {
         lastFetchUserId = userId
-        isLoading.value = true
-        loadError.value = false
+        const token = captureChatRevision()
+        const identityToken = useContactStore().captureIdentityRevision()
+        if (!sameId(token.owner, userId)) return
+        isLoading.value = true; loadError.value = false
         try {
             const response = await chatAPI.getUserChats(userId)
-            const chatList = response.data || []
-
-            // Transform backend data to frontend format, dropping any chat the
-            // user has locally hidden (deleted from the recent-list). Also
-            // self-heal any hidden entry whose type we didn't know yet.
-            let hiddenTypeChanged = false
-            chats.value = chatList
-                .filter(chat => {
-                    if (hiddenChats.value.has(chat.id)) {
-                        if (reconcileHiddenType(chat.id, normalizeServerType(chat.type))) {
-                            hiddenTypeChanged = true
-                        }
-                        return false
-                    }
-                    return true
-                })
-                .map(chat => normalizeChatFromServer(chat, userId))
-
-            // Persist to IndexedDB
-            offlineStore.saveChats(chats.value).catch(() => {})
-            if (hiddenTypeChanged) saveHiddenChats()
+            if (!ledger.valid(token)) return
+            const list = response.data || []
+            for (const c of [...chats.value]) if (!list.some(dto => sameId(dto.id, c.id))) {
+                const state = ledger.merge(`chat:${c.id}`, membership.get(String(c.id)) || {}, { present: false }, token)
+                membership.set(String(c.id), state)
+                if (!state.present) {
+                    chats.value = chats.value.filter(x => !sameId(x.id, c.id))
+                    if (sameId(activeChat.value?.id, c.id)) activeChat.value = null
+                }
+            }
+            mergeChats(list, userId, token, identityToken)
         } catch (error) {
-            console.error('Failed to fetch chats:', error)
-            loadError.value = true
-        } finally {
-            isLoading.value = false
-        }
+            if (ledger.valid(token)) loadError.value = true
+            throw error
+        } finally { if (ledger.valid(token)) isLoading.value = false }
     }
 
     const retryFetchChats = () => {
@@ -347,87 +370,31 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const createGroup = async (groupData) => {
-        try {
-            // In real app, call API
-            // const response = await chatAPI.createGroupChat(userId, groupData.name, groupData.memberIds)
-
-            const newGroup = {
-                id: Date.now(),
-                name: groupData.name,
-                description: groupData.description || '',
-                avatar: groupData.avatar || '',
-                lastMessage: 'Group created',
-                lastMessageTime: new Date(),
-                unreadCount: 0,
-                online: true,
-                type: 'GROUP',
-                isPrivate: groupData.isPrivate || false,
-                members: groupData.members || [],
-                memberCount: (groupData.members?.length || 0) + 1
-            }
-
-            chats.value.unshift(newGroup)
-            return newGroup
-        } catch (error) {
-            console.error('Failed to create group:', error)
-            throw error
-        }
+        const userId = userStore.currentUser?.id
+        const token = captureChatRevision(), identityToken = useContactStore().captureIdentityRevision()
+        if (userId == null) throw new Error('No current account')
+        const response = await chatAPI.createGroupChat(userId, groupData)
+        if (!ledger.valid(token)) throw new Error('Account changed')
+        mergeChats([response.data], userId, token, identityToken)
+        return chats.value.find(c => sameId(c.id, response.data.id))
     }
-
     const createDirectChat = async (userId, contact) => {
-        // Check if chat already exists
-        const existingChat = chats.value.find(
-            c => c.type === 'DIRECT' && c.contactId === contact.id
-        )
-
-        if (existingChat) {
-            setActiveChat(existingChat)
-            return existingChat
-        }
-
-        try {
-            // Call backend API to create direct chat
-            const response = await chatAPI.createDirectChat(userId, contact.id)
-            const chatData = response.data
-
-            const newChat = {
-                id: chatData.id,
-                contactId: contact.id,
-                name: contact.nickname,
-                avatar: resolveFileUrl(contact.avatar || contact.avatarUrl),
-                lastMessage: chatData.lastMessage?.content || '',
-                lastMessageTime: chatData.lastMessageAt || new Date(),
-                unreadCount: 0,
-                online: contact.isOnline || false,
-                status: contact.isOnline ? 'online' : 'offline',
-                type: 'DIRECT',
-                members: chatData.members
-            }
-
-            chats.value.unshift(newChat)
-            setActiveChat(newChat)
-            return newChat
-        } catch (error) {
-            console.error('Failed to create direct chat:', error)
-            throw error
-        }
+        const token = captureChatRevision(), identityToken = useContactStore().captureIdentityRevision()
+        if (!sameId(token.owner, userId)) throw new Error('Account changed')
+        const existing = chats.value.find(c => c.type === 'DIRECT' && sameId(c.contactId, contact.userId ?? contact.id))
+        if (existing) { setActiveChat(existing); return existing }
+        const response = await chatAPI.createDirectChat(userId, contact.userId ?? contact.id)
+        if (!ledger.valid(token)) throw new Error('Account changed')
+        mergeChats([response.data], userId, token, identityToken)
+        const chat = chats.value.find(c => sameId(c.id, response.data.id))
+        setActiveChat(chat)
+        return chat
     }
 
-    const updateGroupInfo = (groupId, updates) => {
-        const chatIndex = chats.value.findIndex(c => c.id === groupId)
-        if (chatIndex !== -1) {
-            chats.value[chatIndex] = {
-                ...chats.value[chatIndex],
-                ...updates
-            }
-            // Update activeChat if it's the same
-            if (activeChat.value?.id === groupId) {
-                activeChat.value = chats.value[chatIndex]
-            }
-        }
-    }
+    const updateGroupInfo = (groupId, updates) => updateChat(groupId, updates)
 
     const leaveGroup = (groupId) => {
+        membership.set(String(groupId), ledger.merge(`chat:${groupId}`, {}, { present: false }))
         const chatIndex = chats.value.findIndex(c => c.id === groupId)
         if (chatIndex !== -1) {
             chats.value.splice(chatIndex, 1)
@@ -474,6 +441,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // Handle chat disabled (contact removed)
     const handleChatDisabled = (chatId) => {
+        membership.set(String(chatId), ledger.merge(`chat:${chatId}`, {}, { present: false }))
         // Remove from chat list
         const chatIndex = chats.value.findIndex(c => c.id === chatId)
         if (chatIndex !== -1) {
@@ -494,44 +462,25 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 更新聊天中成员的在线状态（用于WebSocket实时同步）
-    const updateMemberOnlineStatus = (userId, isOnline) => {
-        // 更新 chats 列表中的状态
-        chats.value.forEach(chat => {
-            if (chat.type === 'DIRECT' && chat.contactId === userId) {
-                chat.online = isOnline
-                chat.status = isOnline ? 'online' : 'offline'
-            }
-            // 更新群聊成员状态
-            if (chat.members) {
-                const member = chat.members.find(m => m.id === userId)
-                if (member) {
-                    member.isOnline = isOnline
-                }
-            }
-        })
-
-        // 如果 activeChat 是受影响的聊天，重新赋值以确保响应式更新
-        if (activeChat.value && activeChat.value.type === 'DIRECT' && activeChat.value.contactId === userId) {
-            const updatedChat = chats.value.find(c => c.id === activeChat.value.id)
-            if (updatedChat) {
-                activeChat.value = { ...updatedChat }
-            }
-        }
-    }
+    const updateMemberOnlineStatus = (userId, isOnline) => useContactStore().updateUserPresence(userId, { isOnline })
 
     // Add member to group
     const addGroupMember = (groupId, member) => {
+        useContactStore().ingestUserSnapshots([member])
+        member = { ...normalizeUser(member, resolveFileUrl), ...useContactStore().getUserIdentity(member.userId ?? member.id) }
         const chatIndex = chats.value.findIndex(c => c.id === groupId)
         if (chatIndex !== -1) {
             if (!chats.value[chatIndex].members) {
                 chats.value[chatIndex].members = []
             }
             // Check if member already exists
-            const exists = chats.value[chatIndex].members.some(m => m.id === member.id)
+            const exists = chats.value[chatIndex].members.some(m => sameId(m.id, member.id))
+            if (exists) Object.assign(chats.value[chatIndex].members.find(m => sameId(m.id, member.id)), member)
             if (!exists) {
                 chats.value[chatIndex].members.push(member)
-                chats.value[chatIndex].memberCount = (chats.value[chatIndex].memberCount || 0) + 1
+                if (Number.isInteger(chats.value[chatIndex].memberCount)) chats.value[chatIndex].memberCount++
             }
+            updateChat(groupId, { members: chats.value[chatIndex].members, memberCount: chats.value[chatIndex].memberCount })
             // Update activeChat if same
             if (activeChat.value?.id === groupId) {
                 activeChat.value = { ...chats.value[chatIndex] }
@@ -543,11 +492,12 @@ export const useChatStore = defineStore('chat', () => {
     const removeGroupMember = (groupId, memberId) => {
         const chatIndex = chats.value.findIndex(c => c.id === groupId)
         if (chatIndex !== -1 && chats.value[chatIndex].members) {
-            const memberIndex = chats.value[chatIndex].members.findIndex(m => m.id === memberId)
+            const memberIndex = chats.value[chatIndex].members.findIndex(m => sameId(m.id, memberId))
             if (memberIndex !== -1) {
                 chats.value[chatIndex].members.splice(memberIndex, 1)
-                chats.value[chatIndex].memberCount = Math.max((chats.value[chatIndex].memberCount || 1) - 1, 0)
+                if (Number.isInteger(chats.value[chatIndex].memberCount)) chats.value[chatIndex].memberCount = Math.max(chats.value[chatIndex].memberCount - 1, 0)
             }
+            updateChat(groupId, { members: chats.value[chatIndex].members, memberCount: chats.value[chatIndex].memberCount })
             // Update activeChat if same
             if (activeChat.value?.id === groupId) {
                 activeChat.value = { ...chats.value[chatIndex] }
@@ -564,11 +514,12 @@ export const useChatStore = defineStore('chat', () => {
     const updateGroupMemberRole = (groupId, memberId, role, isAdmin) => {
         const chatIndex = chats.value.findIndex(c => c.id === groupId)
         if (chatIndex !== -1 && chats.value[chatIndex].members) {
-            const member = chats.value[chatIndex].members.find(m => m.id === memberId)
+            const member = chats.value[chatIndex].members.find(m => sameId(m.id, memberId))
             if (member) {
                 member.role = role
                 member.isAdmin = isAdmin
             }
+            updateChat(groupId, { members: chats.value[chatIndex].members, memberCount: chats.value[chatIndex].memberCount })
             // Update activeChat if same
             if (activeChat.value?.id === groupId) {
                 activeChat.value = { ...chats.value[chatIndex] }
@@ -592,6 +543,7 @@ export const useChatStore = defineStore('chat', () => {
                 newOwner.role = 'owner'
                 newOwner.isAdmin = true
             }
+            updateChat(groupId, { members: chats.value[chatIndex].members, memberCount: chats.value[chatIndex].memberCount })
             // Update activeChat if same
             if (activeChat.value?.id === groupId) {
                 activeChat.value = { ...chats.value[chatIndex] }
@@ -603,66 +555,45 @@ export const useChatStore = defineStore('chat', () => {
      * Merge delta-synced chats into the store.
      * Updates existing chats or inserts new ones.
      */
-    const mergeChats = (deltaChatList, currentUserId = null) => {
-        const userId = currentUserId
-        const visible = []
-        let hiddenTypeChanged = false
-        for (const deltaChat of deltaChatList) {
-            if (hiddenChats.value.has(deltaChat.id)) {
-                if (reconcileHiddenType(deltaChat.id, normalizeServerType(deltaChat.type))) {
-                    hiddenTypeChanged = true
-                }
-                continue
+    const mergeChats = (list, currentUserId = userStore.currentUser?.id, token, identityToken) => {
+        if (!sameId(currentUserId, userStore.currentUser?.id) || (token && !ledger.valid(token))) return
+        const contacts = useContactStore()
+        for (const dto of list || []) {
+            if (hiddenChats.value.has(dto.id)) continue
+            const state = ledger.merge(`chat:${dto.id}`, membership.get(String(dto.id)) || {}, { present: true }, token)
+            if (!state?.present) continue
+            membership.set(String(dto.id), state)
+            contacts.ingestUserSnapshots(dto.members || [], identityToken)
+            const idx = chats.value.findIndex(c => sameId(c.id, dto.id))
+            const existing = idx < 0 ? {} : chats.value[idx]
+            const input = { ...existing, ...dto }
+            if ('avatarUrl' in dto && !('avatar' in dto)) delete input.avatar
+            const normalized = normalizeChatFromServer(input, currentUserId)
+            const merged = ledger.merge(dto.id, existing, normalized, token)
+            if (!merged) continue
+            if (merged.type === 'GROUP') { delete merged.online; delete merged.status; delete merged.isOnline }
+            if (idx < 0) chats.value.push(merged)
+            else chats.value[idx] = merged
+            for (const member of merged.members || []) {
+                const record = contacts.getUserIdentity(member.id)
+                if (record) applyUserIdentity(member.id, record)
             }
-            // Normalize so group avatars come from chat.avatar (not from a
-            // random member's avatar) and relative URLs are resolved to the
-            // backend host. Without this, raw server fields would clobber
-            // already-normalized entries on each delta merge.
-            const normalized = normalizeChatFromServer(deltaChat, userId)
-            const idx = chats.value.findIndex(c => c.id === normalized.id)
-            if (idx !== -1) {
-                chats.value[idx] = { ...chats.value[idx], ...normalized }
-            } else {
-                chats.value.push(normalized)
-            }
-            visible.push(normalized)
+            if (sameId(activeChat.value?.id, merged.id)) activeChat.value = chats.value.find(c => sameId(c.id, merged.id))
         }
-        // Persist merged chats to IndexedDB (only the non-hidden ones)
-        if (visible.length > 0) {
-            offlineStore.saveChats(visible).catch(() => {})
-        }
-        if (hiddenTypeChanged) saveHiddenChats()
+        offlineStore.saveChats(chats.value.map(c => ({ ...c, _socialOwner: currentUserId }))).catch(e => console.warn('[ChatStore] Cache write failed', e))
     }
-
-    /**
-     * Load chats from IndexedDB cache (offline-first).
-     */
     const loadFromCache = async () => {
-        try {
-            const cached = await offlineStore.getChats()
-            let hiddenTypeChanged = false
-            const visible = cached.filter(c => {
-                if (hiddenChats.value.has(c.id)) {
-                    if (reconcileHiddenType(c.id, normalizeServerType(c.type))) {
-                        hiddenTypeChanged = true
-                    }
-                    return false
-                }
-                return true
-            })
-            if (visible.length > 0) {
-                chats.value = visible
-            }
-            if (hiddenTypeChanged) saveHiddenChats()
-            return visible
-        } catch (e) {
-            console.error('[ChatStore] Failed to load from cache:', e)
-            return []
-        }
+        const token = captureChatRevision(), identityToken = useContactStore().captureIdentityRevision()
+        const cached = await offlineStore.getChats()
+        if (!ledger.valid(token)) return []
+        const safe = cached.filter(c => sameId(c._socialOwner, token.owner)).map(c => ({ ...c, online: null, status: null, members: c.members?.map(m => ({ ...m, isOnline: null })) }))
+        mergeChats(safe, token.owner, token, identityToken)
+        return safe
     }
 
     // Reset store - clear all data (used on logout)
     const resetStore = () => {
+        ledger.setOwner(null)
         activeChat.value = null
         chats.value = []
         messages.value = []
@@ -680,6 +611,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     return {
+        captureChatRevision, applyUserIdentity, invalidatePresence,
         activeChat,
         chats,
         messages,

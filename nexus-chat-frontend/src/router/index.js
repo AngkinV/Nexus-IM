@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, createWebHashHistory } from 'vue-router'
+import { installNavigation, createAuthNavigationGuard } from './navigation'
 import Login from '@/views/Login.vue'
 import Setup from '@/views/Setup.vue'
 import Main from '@/views/Main.vue'
@@ -24,7 +25,8 @@ const router = createRouter({
         {
             path: '/setup',
             name: 'Setup',
-            component: Setup
+            component: Setup,
+            meta: { requiresAuth: true }
         },
         {
             path: '/main',
@@ -63,17 +65,9 @@ if (import.meta.env.DEV) {
     })
 }
 
-// Navigation guard
-router.beforeEach((to, from, next) => {
-    const token = localStorage.getItem('token')
+installNavigation(router)
 
-    if (to.meta.requiresAuth && !token) {
-        next('/login')
-    } else if (to.path === '/login' && token) {
-        next('/main')
-    } else {
-        next()
-    }
-})
+// Navigation guard
+router.beforeEach(createAuthNavigationGuard(router))
 
 export default router

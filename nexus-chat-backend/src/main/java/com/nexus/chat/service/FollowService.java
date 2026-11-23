@@ -24,6 +24,7 @@ public class FollowService {
 
     private final UserFollowRepository userFollowRepository;
     private final UserRepository userRepository;
+    private final PresenceService presenceService;
 
     /**
      * 关注用户
@@ -91,7 +92,7 @@ public class FollowService {
             User user = userRepository.findById(f.getFollowingId()).orElse(null);
             if (user == null) return null;
             return new UserDTO(user.getId(), user.getUsername(), user.getNickname(),
-                    user.getAvatarUrl(), user.getIsOnline(), user.getLastSeen());
+                    user.getAvatarUrl(), presenceService.getVisibleStatus(user.getId()), presenceService.getVisibleLastSeen(user.getId()));
         });
     }
 
@@ -105,7 +106,7 @@ public class FollowService {
             User user = userRepository.findById(f.getFollowerId()).orElse(null);
             if (user == null) return null;
             return new UserDTO(user.getId(), user.getUsername(), user.getNickname(),
-                    user.getAvatarUrl(), user.getIsOnline(), user.getLastSeen());
+                    user.getAvatarUrl(), presenceService.getVisibleStatus(user.getId()), presenceService.getVisibleLastSeen(user.getId()));
         });
     }
 }

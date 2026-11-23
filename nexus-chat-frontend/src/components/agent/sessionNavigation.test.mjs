@@ -6,6 +6,7 @@ import en from '../../locales/en.json' with { type: 'json' }
 import { createPinia } from 'pinia'
 import { createServer } from 'vite'
 import { createRenderer, nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 // Mount the real shell, history and palette without starting WebGL, a browser or a backend.
 const root = fileURLToPath(new URL('../../../', import.meta.url))
@@ -86,7 +87,11 @@ async function mount(width = 1440) {
   body = new Host('body')
   globalThis.document = { activeElement: null, body }
   const pinia = createPinia()
-  app = renderer.createApp(Main).use(pinia).use(i18n)
+  // The real shell now reads useRoute(). Mount it with a real memory router rather
+  // than an undefined injected route; navigation assertions remain unchanged.
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', name: 'Main', component: { render: () => null } }] })
+  await router.push('/')
+  app = renderer.createApp(Main).use(pinia).use(i18n).use(router)
   for (const name of ['el-dropdown', 'el-dropdown-menu', 'el-dropdown-item']) app.component(name, { render: () => null })
   const agent = useAgentStore(pinia), chat = useChatStore(pinia)
   const sessions = [

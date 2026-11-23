@@ -47,7 +47,7 @@
     <CommandPalette v-model="paletteOpen" @action="handlePaletteAction" />
 
     <!-- Creator's Eye: fullscreen transition played when entering the AI section -->
-    <TavernEntrance />
+    <TavernEntrance :sound-enabled="settings.soundEnabled" />
 
     <!-- Mobile overlay for right panel -->
     <div
@@ -66,6 +66,8 @@
 
 <script setup>
 import { ref, provide, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { mainLocation, readMainState, goBackToMain, hasBlockingOverlay, createNavigationIntent } from '@/router/navigation'
 import NavRail from '@/components/layout/NavRail.vue'
 import TopBar from '@/components/layout/TopBar.vue'
 import LeftPanel from '@/components/layout/LeftPanel.vue'
@@ -103,7 +105,13 @@ const settings = useSettingsStore()
 const agentStore = useAgentStore()
 const tavernEntrance = useTavernEntrance()
 const { t } = useI18n()
-const activeView = ref('chats')
+const route = useRoute()
+const router = useRouter()
+let mainAlive = true
+const navigationIntent = createNavigationIntent()
+onUnmounted(() => { mainAlive = false; navigationIntent.invalidate() })
+// The existing /main route carries its module; a remount must not reset it.
+const activeView = computed(() => readMainState(route.query).view)
 const width = ref(window.innerWidth)
 const isMobile = computed(() => width.value <= 768)
 const handleResize = () => { width.value = window.innerWidth }
@@ -156,20 +164,24 @@ const openRoleChat = () => setActiveView('companion')
 // door. Where you were before you walked in is remembered and restored; falling
 // back to the chat list only when there is nothing to return to (a cold start
 // straight into the tavern, e.g. from a deep link).
-const viewBeforeTavern = ref(null)
+const viewBeforeTavern = ref(readMainState(route.query).returnView)
 // The conversation that was open when the user walked into the tavern. Entering
 // clears the active chat (the tavern draws its own canvas), so without this the
 // chat list comes back with nothing selected.
 const chatBeforeTavern = ref(null)
 
-const closeRoleChat = () => {
-  const previous = viewBeforeTavern.value
-  const previousChat = chatBeforeTavern.value
+const closeRoleChat = async () => {
+  const state = readMainState(route.query)
+  const previous = state.returnView || viewBeforeTavern.value
+  const chatId = state.returnChat || chatBeforeTavern.value?.id
+  const userId = userStore.currentUser?.id
+  const target = previous && previous !== 'companion' ? previous : 'chats'
+  // Back consumes this context instead of pushing a tavern/chat return loop.
+  await goBackToMain(router, target, route.query)
   viewBeforeTavern.value = null
   chatBeforeTavern.value = null
-  const target = previous && previous !== 'companion' ? previous : 'chats'
-  setActiveView(target)
-  // Restore the conversation the user was reading, once the shell is back.
+  if (!mainAlive || route.name !== 'Main' || activeView.value !== target || userStore.currentUser?.id !== userId) return
+  const previousChat = chatStore.sortedChats.find(chat => String(chat.id) === String(chatId))
   if (previousChat && target === 'chats') chatStore.setActiveChat(previousChat)
 }
 const paletteOpen = ref(false)
@@ -182,16 +194,30 @@ const tavernMood = ref('idle')
 const activateAssistantChat = () => {
   chatStore.setActiveChat(chatStore.sortedChats.find(c => c.id === AI_ASSISTANT_CHAT_ID))
 }
-const applyActiveView = (view) => {
-  activeView.value = view
+const applyViewEffects = (view) => {
   if (view === 'companion' || (view === 'ai' && isMobile.value)) {
-    // On phones the AI list must be reachable even when coming from an open chat.
     chatStore.clearActiveChat()
   } else if (view === 'ai') activateAssistantChat()
 }
+const applyActiveView = (view, replace = false) => {
+  if (!mainAlive || route.name !== 'Main') return Promise.resolve()
+  const location = mainLocation(view, route.query, {
+    view: viewBeforeTavern.value, chatId: chatBeforeTavern.value?.id
+  })
+  if (router.resolve(location).fullPath === route.fullPath) {
+    applyViewEffects(view)
+    return Promise.resolve()
+  }
+  return router[replace ? 'replace' : 'push'](location)
+}
+watch(activeView, view => { if (route.name === 'Main') applyViewEffects(view) }, { flush: 'sync' })
+onMounted(() => applyViewEffects(activeView.value))
 
 const setActiveView = (view) => {
+  if (!mainAlive || route.name !== 'Main') return
   if (view === 'companion') {
+    if (activeView.value !== 'companion' && tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) return
+    const intent = navigationIntent.capture()
     // Remember where we came from, so the back arrow can return there. Only the
     // first step in counts: navigating around inside the tavern must not
     // overwrite the place we are eventually returning to.
@@ -199,10 +225,15 @@ const setActiveView = (view) => {
       viewBeforeTavern.value = activeView.value
       chatBeforeTavern.value = chatStore.activeChat || null
     }
-    enterTavern(() => applyActiveView('companion'))
+    const userId = userStore.currentUser?.id
+    enterTavern(() => {
+      if (mainAlive && navigationIntent.current(intent) && route.name === 'Main' && userStore.currentUser?.id === userId) applyActiveView('companion')
+    })
     return
   }
-  applyActiveView(view)
+  navigationIntent.invalidate()
+  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE) tavernEntrance.cancel()
+  return applyActiveView(view)
 }
 
 // Is the AI assistant currently selected? Used to hide the right info panel for the virtual chat.
@@ -238,7 +269,8 @@ const enterTavern = (commit) => {
 watch(
   () => callStore.callStatus,
   (status) => {
-    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) tavernEntrance.cancel()
+    // A ringing call outranks the picture, including the first, unskippable viewing.
+    if (status !== CallStatus.IDLE && status !== CallStatus.ENDED) tavernEntrance.cancel(true)
   }
 )
 
@@ -253,10 +285,7 @@ const openPalette = () => {
   paletteOpen.value = true
 }
 
-const openAiAssistant = () => {
-  activeView.value = 'ai'
-  activateAssistantChat()
-}
+const openAiAssistant = () => setActiveView('ai')
 
 const agentHistoryFocusSignal = ref(0)
 const focusAgentHistory = () => {
@@ -273,7 +302,12 @@ const newAgentSession = async () => {
   try {
     await agentStore.newSession()
     // Don't navigate back into AI if the user left during the request.
-    if (activeView.value === 'ai') openAiAssistant()
+    if (activeView.value === 'ai') {
+      await openAiAssistant()
+      // Visiting AI on mobile shows its list; a successful new session instead
+      // opens that session. Wait for route effects so they cannot clear it again.
+      if (mainAlive && route.name === 'Main' && activeView.value === 'ai') activateAssistantChat()
+    }
     ElMessage.success(t('agent.history.created'))
   } catch (err) {
     ElMessage.error(err.message || t('common.failed'))
@@ -351,7 +385,7 @@ const handleCollapseKey = (event) => {
 // Global ⌘K / Ctrl+K + the shortcuts the palette advertises.
 const handleGlobalKeydown = (event) => {
   // Bubble on window: document capture (e.g. artifact tabs 1–3) gets first refusal.
-  if (event.defaultPrevented || event.isComposing) return
+  if (event.defaultPrevented || event.isComposing || hasBlockingOverlay()) return
   handleCollapseKey(event)
   const mod = event.metaKey || event.ctrlKey
   if (!mod) return
@@ -411,25 +445,45 @@ provide('creatingAgentSession', creatingAgentSession)
 // its create-group dialog (the dialog instance lives inside LeftPanel).
 const createGroupSignal = ref(0)
 provide('createGroupSignal', createGroupSignal)
-const requestCreateGroup = () => {
-  setActiveView('groups')
-  createGroupSignal.value += 1
+const requestCreateGroup = async () => {
+  await setActiveView('groups')
+  if (mainAlive && route.name === 'Main' && activeView.value === 'groups') createGroupSignal.value += 1
 }
 provide('requestCreateGroup', requestCreateGroup)
 
 // Which contact / group the directory panes have selected. The middle pane
 // shows that record's detail card (Prism c2 / c3); null keeps the old view.
-const selectedContactId = ref(null)
-const selectedGroupId = ref(null)
+const selectedContactId = ref(readMainState(route.query).contactId)
+const selectedGroupId = ref(readMainState(route.query).groupId)
 provide('selectedContactId', selectedContactId)
 provide('selectedGroupId', selectedGroupId)
+watch(() => route.fullPath, () => {
+  if (tavernEntrance.state.phase !== ENTRANCE_PHASE.IDLE && (route.name !== 'Main' || activeView.value !== 'companion')) {
+    navigationIntent.invalidate()
+    tavernEntrance.cancel()
+  }
+  if (route.name !== 'Main') return
+  const state = readMainState(route.query)
+  selectedContactId.value = state.contactId
+  selectedGroupId.value = state.groupId
+}, { flush: 'sync' })
+watch([selectedContactId, selectedGroupId], ([contactId, groupId]) => {
+  if (!mainAlive || route.name !== 'Main') return
+  const query = { ...route.query }
+  if (contactId) query.contactId = String(contactId)
+  else delete query.contactId
+  if (groupId) query.groupId = String(groupId)
+  else delete query.groupId
+  const location = { name: 'Main', query }
+  if (router.resolve(location).fullPath !== route.fullPath) router.replace(location)
+})
 
 // "Add contact" (nav-rail button on the contacts pane) uses the same counter.
 const addContactSignal = ref(0)
 provide('addContactSignal', addContactSignal)
-provide('requestAddContact', () => {
-  setActiveView('contacts')
-  addContactSignal.value += 1
+provide('requestAddContact', async () => {
+  await setActiveView('contacts')
+  if (mainAlive && route.name === 'Main' && activeView.value === 'contacts') addContactSignal.value += 1
 })
 
 // Same pattern for the chat header's search button: the search dialog lives
@@ -443,7 +497,7 @@ provide('requestSearch', () => { searchSignal.value += 1 })
  *
  * Phase 1: Load from IndexedDB instantly (UI opens immediately)
  * Phase 2: Connect WebSocket (close message-loss window)
- * Phase 3: Parallel network sync (delta sync + pending requests)
+ * Phase 3: Serial delta, current snapshots, then pending requests
  * Phase 4: Flush offline outbox
  */
 onMounted(async () => {
@@ -458,6 +512,8 @@ onMounted(async () => {
 
   const userId = userStore.currentUser?.id
   if (!userId) return
+  const identityToken = contactStore.captureIdentityRevision()
+  const currentSync = () => mainAlive && userStore.currentUser?.id === userId && contactStore.isIdentityRevisionCurrent(identityToken)
 
   try {
     // ── Phase 1: Instant load from IndexedDB cache ──
@@ -469,37 +525,45 @@ onMounted(async () => {
     // ── Phase 2: Connect WebSocket immediately ──
     // No more waiting for API fetches before connecting.
     // The unified channel receives all events from the moment of connect.
+    if (!currentSync()) return
+    let syncRun = 0
     websocket.connect(userId, async () => {
+      if (!currentSync()) return
+      const run = ++syncRun
+      const currentRun = () => currentSync() && run === syncRun && websocket.isConnected()
       // Initialize call service after WebSocket connects
       callStore.initialize()
 
       // Initialize companion widget data
       companionStore.ensureInitialized(userId).catch(() => {})
 
-      // ── Phase 3: Parallel network sync (runs after WS is connected) ──
+      // ── Phase 3: Serial network sync (runs after WS is connected) ──
       try {
-        await Promise.all([
-          chatStore.fetchChats(userId),
-          contactStore.fetchContacts(userId),
-          contactStore.fetchPendingRequests(userId),
-          syncService.performDeltaSync({
-            chatStore,
-            messageStore,
-            contactStore,
-            userStore
-          })
-        ])
+        // Historical delta first; current full snapshots are the final baseline.
+        try {
+          await syncService.performDeltaSync({ chatStore, messageStore, contactStore, userStore })
+        } catch (error) {
+          console.warn('[Main] Delta unavailable; continuing with current snapshots:', error)
+        }
+        if (!currentRun()) return
+        await chatStore.fetchChats(userId)
+        if (!currentRun()) return
+        await contactStore.fetchContacts(userId)
+        if (!currentRun()) return
+        await contactStore.fetchPendingRequests(userId)
       } catch (error) {
         console.error('[Main] Network sync failed:', error)
+        return
       }
 
+      if (!currentRun()) return
       // ── Phase 4: Flush offline outbox ──
       try {
         await syncService.flushPendingMessages((msg) => {
           return websocket.sendMessage(
             msg.chatId, msg.senderId, msg.content, msg.messageType, msg.fileUrl
           ).promise
-        })
+        }, userId, currentRun)
       } catch (error) {
         console.error('[Main] Offline flush failed:', error)
       }

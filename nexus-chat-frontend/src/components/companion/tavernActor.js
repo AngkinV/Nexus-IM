@@ -1,3 +1,4 @@
+import { createResourceOwner } from './resourceOwner.js'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm'
@@ -33,29 +34,42 @@ export async function loadTavernActor(url, signal, { seed = 0, request = { url, 
   if (!response.ok) throw new Error(`Character model request failed (${response.status})`)
   const buffer = await response.arrayBuffer()
   signal.throwIfAborted()
-  const loader = new GLTFLoader()
-  loader.register(parser => new VRMLoaderPlugin(parser))
-  const gltf = await loader.parseAsync(buffer, new URL('.', new URL(request.url, window.location.href)).href)
-  const vrm = gltf.userData.vrm
-  if (signal.aborted || !vrm?.humanoid) {
-    VRMUtils.deepDispose(gltf.scene)
-    signal.throwIfAborted()
-    throw new Error('Character model has no VRM humanoid')
-  }
+  const owner = createResourceOwner({ ownImages: !THREE.Cache.enabled })
+  const cancel = () => owner.retire()
+  signal.addEventListener('abort', cancel, { once: true })
   try {
-    return createActor(vrm, gltf.parser.json, seed)
+    const loader = new GLTFLoader(new THREE.LoadingManager())
+    loader.register(parser => {
+      owner.bindParser(parser)
+      return { name: 'NexusResourceOwner', beforeRoot: () => owner.prepareEmbeddedImages(parser) }
+    })
+    loader.register(parser => new VRMLoaderPlugin(parser))
+    // Abort stops fetch, not GLTFLoader's already-running parse. Late dependencies
+    // remain registered with the retired owner and may never be applied.
+    const gltf = await loader.parseAsync(buffer, new URL('.', new URL(request.url, window.location.href)).href)
+    owner.releaseURLs()
+    owner.track(gltf.scene)
+    signal.throwIfAborted()
+    const vrm = gltf.userData.vrm
+    if (!vrm?.humanoid) throw new Error('Character model has no VRM humanoid')
+    const actor = createActor(vrm, gltf.parser.json, seed, owner)
+    signal.throwIfAborted()
+    return actor
   } catch (error) {
-    VRMUtils.deepDispose(gltf.scene)
+    owner.retire()
     throw error
+  } finally {
+    signal.removeEventListener('abort', cancel)
   }
 }
 
-function createActor(vrm, json, seed) {
+function createActor(vrm, json, seed, owner) {
   VRMUtils.removeUnnecessaryVertices(vrm.scene)
   VRMUtils.removeUnnecessaryJoints(vrm.scene)
   if (vrm.meta.metaVersion === '0') VRMUtils.rotateVRM0(vrm)
   const root = new THREE.Group()
   root.add(vrm.scene)
+  owner.track(root)
   root.updateMatrixWorld(true)
   const bones = new Map()
   const names = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head', 'leftEye', 'rightEye']
@@ -181,6 +195,7 @@ function createActor(vrm, json, seed) {
   const cupMaterial = new THREE.MeshStandardMaterial({ color: 0x73988d, roughness: 0.35 })
   const cup = new THREE.Mesh(new THREE.CylinderGeometry(torso * 0.09, torso * 0.075, torso * 0.18, 24), cupMaterial)
   root.add(cup)
+  owner.track(root)
   cup.visible = false
 
   root.scale.setScalar(scale)
@@ -243,6 +258,7 @@ function createActor(vrm, json, seed) {
     playGesture(name) { gestures.play(name) },
     setLight(value) { light.value = Math.max(0.72, Math.min(1.05, value)) },
     update({ delta, pose, mood, motion, nod, gazeX, gazeY, reducedMotion, articulation, settled }) {
+      if (owner.retired) return
       const ease = reducedMotion || settled ? 1 : 1 - Math.exp(-delta * 5)
       physiology = life.update(delta, reducedMotion, pose.breath)
       const { breath, blink, sway, drift, eyeX, eyeY } = physiology
@@ -323,6 +339,7 @@ function createActor(vrm, json, seed) {
       }
       vrm.update(reducedMotion ? 0 : delta)
     },
+    resourceSnapshot() { return owner.snapshot() },
     snapshot() {
       const joints = {}
       for (const name of ['hips', 'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperArm', 'rightLowerArm', 'rightHand']) {
@@ -336,13 +353,9 @@ function createActor(vrm, json, seed) {
       }
     },
     destroy() {
-      root.removeFromParent()
-      furniture.traverse(node => node.geometry?.dispose())
-      wood.dispose()
-      fabric.dispose()
-      cup.geometry.dispose()
-      cupMaterial.dispose()
-      VRMUtils.deepDispose(vrm.scene)
+      if (owner.retired) return
+      owner.track(root)
+      owner.retire()
     }
   }
 }

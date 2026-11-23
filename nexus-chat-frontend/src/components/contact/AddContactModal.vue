@@ -55,7 +55,7 @@
             class="user-result-card"
           >
             <div class="user-left">
-              <div class="avatar-frame avatar-frame--lg"><img v-if="user.avatar" class="avatar-img" :src="user.avatar" alt="" /><div v-else class="avatar-fallback">{{ (user.nickname || user.username || "?").charAt(0) }}</div></div>
+              <div class="avatar-frame avatar-frame--lg"><IdentityAvatar :src="user.avatarUrl || user.avatar" :entity-id="user.userId ?? user.id" :label="user.nickname || user.username" /></div>
               <div class="user-details">
                 <span class="user-nickname">{{ user.nickname }}</span>
                 <span class="user-username">@{{ user.username }}</span>
@@ -131,7 +131,7 @@
             class="recommended-user"
             @click="quickAddContact(user)"
           >
-            <div class="avatar-frame"><img v-if="user.avatar" class="avatar-img" :src="user.avatar" alt="" /><div v-else class="avatar-fallback">{{ (user.nickname || user.username || "?").charAt(0) }}</div></div>
+            <div class="avatar-frame"><IdentityAvatar :src="user.avatarUrl || user.avatar" :entity-id="user.userId ?? user.id" :label="user.nickname || user.username" /></div>
             <span class="recommended-name">{{ user.nickname }}</span>
             <el-icon class="add-icon"><Plus /></el-icon>
           </div>
@@ -142,6 +142,7 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, computed, watch, onMounted } from 'vue'
 import { Search, Plus, Check, InfoFilled, Loading, Warning, Star, Clock } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -205,7 +206,7 @@ const loadRecommendedUsers = async () => {
 
   try {
     const response = await userAPI.getRecommendedUsers(currentUserId.value, 5)
-    recommendedUsers.value = (response.data || []).filter(
+    recommendedUsers.value = (response.data || []).map(user => ({ ...user, id: user.userId ?? user.id })).filter(
       user => user.id !== currentUserId.value && !isContactAdded(user.id)
     )
   } catch (error) {
@@ -248,7 +249,7 @@ const handleSearch = async () => {
   try {
     const response = await userAPI.searchUsers(searchQuery.value.trim())
     // Filter out current user from results
-    searchResults.value = (response.data || []).filter(
+    searchResults.value = (response.data || []).map(user => ({ ...user, id: user.userId ?? user.id })).filter(
       user => user.id !== currentUserId.value
     )
   } catch (error) {
@@ -468,7 +469,6 @@ const addContactById = async () => {
   height: 100%;
   border-radius: 9999px;
   object-fit: cover;
-  filter: grayscale(100%) contrast(1.1);
 }
 
 .avatar-fallback {

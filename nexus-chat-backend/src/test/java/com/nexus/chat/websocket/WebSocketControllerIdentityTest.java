@@ -41,6 +41,21 @@ class WebSocketControllerIdentityTest {
             messagingTemplate, messageService, mock(UserService.class), contactService, groupService,
             chatMemberRepository, presenceService, mock(RedisCacheService.class), redisMessageRelay);
 
+    private org.springframework.messaging.simp.SimpMessageHeaderAccessor headers() {
+        var headers = org.springframework.messaging.simp.SimpMessageHeaderAccessor.create();
+        headers.setSessionId("server-session");
+        return headers;
+    }
+
+    @Test
+    void legacyStatusCannotCreateOrRemovePresence() {
+        controller.updateUserStatus(Map.of("userId", 7, "sessionId", "forged", "isOnline", true), alice);
+        controller.updateUserStatus(Map.of("userId", 7, "isOnline", false), alice);
+        verify(presenceService, never()).userConnected(anyLong(), any());
+        verify(presenceService, never()).userDisconnected(anyLong(), any());
+        verifyNoInteractions(contactService);
+    }
+
     private final Principal alice = () -> "7";
 
     private Map<String, Object> chatMessage(Object senderId) {
@@ -82,13 +97,13 @@ class WebSocketControllerIdentityTest {
     @Test
     void presenceAndHeartbeatCannotBeSentForAnotherUser() {
         controller.updateUserStatus(Map.of("userId", 8, "isOnline", false), alice);
-        controller.heartbeat(Map.of("userId", 8), alice);
+        controller.heartbeat(Map.of("userId", 8), alice, headers());
 
         verifyNoInteractions(presenceService, contactService);
 
-        controller.heartbeat(Map.of("userId", 7), alice);
+        controller.heartbeat(Map.of("userId", 7, "sessionId", "forged"), alice, headers());
 
-        verify(presenceService).refreshPresence(7L);
+        verify(presenceService).refreshPresence(7L, "server-session");
     }
 
     @Test

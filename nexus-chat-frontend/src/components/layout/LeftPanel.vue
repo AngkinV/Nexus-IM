@@ -30,15 +30,7 @@
             :title="chatStore.activeChat.name"
             @click.stop="toggleList"
           >
-            <img
-              v-if="chatStore.activeChat.avatar"
-              class="w-full h-full object-cover grayscale"
-              :src="chatStore.activeChat.avatar"
-              alt=""
-            />
-            <div v-else class="w-full h-full flex items-center justify-center bg-surface-container-high text-[10px] font-code text-primary">
-              {{ initialOf(chatStore.activeChat.name) }}
-            </div>
+            <IdentityAvatar :src="chatStore.activeChat.avatarUrl || chatStore.activeChat.avatar" :entity-id="chatStore.activeChat.id" :label="chatStore.activeChat.name" :kind="isGroup(chatStore.activeChat.type) ? 'group' : 'user'" class="w-full h-full object-cover" />
           </div>
 
           <!-- Popover -->
@@ -63,10 +55,7 @@
                 @click.stop="openFromRibbon(chat)"
               >
                 <div class="relative shrink-0 w-8 h-8 rounded-full overflow-hidden bg-surface-container-high ring-1 ring-outline-variant/40 mt-0.5">
-                  <img v-if="chat.avatar" class="w-full h-full object-cover grayscale" :src="chat.avatar" alt="" />
-                  <div v-else class="w-full h-full flex items-center justify-center text-[11px] font-code text-primary">
-                    {{ initialOf(chat.name) }}
-                  </div>
+                  <IdentityAvatar :src="chat.avatarUrl || chat.avatar" :entity-id="chat.id" :label="chat.name" :kind="isGroup(chat.type) ? 'group' : 'user'" class="w-full h-full object-cover" />
                 </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center justify-between mb-0.5">
@@ -299,6 +288,8 @@
 </template>
 
 <script setup>
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import { isGroup, presence } from '@/components/identity/presentation.mjs'
 import { computed, ref, inject, watch, onMounted, onBeforeUnmount } from 'vue'
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
@@ -581,7 +572,6 @@ const handleGroupSelect = (group) => {
 
 .ribbon-micro-avatar {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
-  filter: grayscale(100%);
   transition: box-shadow 0.15s ease;
 }
 

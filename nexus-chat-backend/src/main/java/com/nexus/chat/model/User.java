@@ -51,7 +51,7 @@ public class User {
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 
-    @UpdateTimestamp
+    // Historical DB field is not display presence; never update it on profile saves.
     @Column(name = "last_seen")
     private LocalDateTime lastSeen;
 

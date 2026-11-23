@@ -36,6 +36,7 @@ import java.util.stream.Collectors;
 public class ContactService {
 
     private final ContactRepository contactRepository;
+    private final PresenceService presenceService;
     private final ContactRequestRepository contactRequestRepository;
     private final BlockedUserRepository blockedUserRepository;
     private final UserRepository userRepository;
@@ -289,7 +290,7 @@ public class ContactService {
         dto.setFromUsername(fromUser.getUsername());
         dto.setFromNickname(fromUser.getNickname());
         dto.setFromAvatarUrl(fromUser.getAvatarUrl());
-        dto.setFromIsOnline(fromUser.getIsOnline());
+        dto.setFromIsOnline(presenceService.getVisibleStatus(fromUser.getId()));
         dto.setToUserId(request.getToUserId());
         dto.setToUsername(toUser.getUsername());
         dto.setToNickname(toUser.getNickname());
@@ -379,8 +380,8 @@ public class ContactService {
                                 user.getUsername(),
                                 user.getNickname(),
                                 user.getAvatarUrl(),
-                                user.getIsOnline(),
-                                user.getLastSeen());
+                                presenceService.getVisibleStatus(user.getId()),
+                                presenceService.getVisibleLastSeen(user.getId()));
                     }
                     return null;
                 })
@@ -453,8 +454,8 @@ public class ContactService {
                                 user.getUsername(),
                                 user.getNickname(),
                                 user.getAvatarUrl(),
-                                user.getIsOnline(),
-                                user.getLastSeen());
+                                presenceService.getVisibleStatus(user.getId()),
+                                presenceService.getVisibleLastSeen(user.getId()));
                     }
                     return null;
                 })
@@ -469,16 +470,7 @@ public class ContactService {
      * After: findByContactUserId() uses idx_contacts_contact_user index
      */
     public void notifyContactsOfStatusChange(Long userId, boolean isOnline) {
-        // Indexed reverse lookup: find users who have this user as a contact
-        List<Contact> reverseContacts = contactRepository.findByContactUserId(userId);
-
-        WebSocketMessage wsMessage = new WebSocketMessage(
-                WebSocketMessage.MessageType.CONTACT_STATUS_CHANGED,
-                Map.of("userId", userId, "isOnline", isOnline));
-
-        for (Contact contact : reverseContacts) {
-            messagingTemplate.convertAndSend("/topic/user." + contact.getUserId() + ".contacts", wsMessage);
-        }
+        // Compatibility only: transport lease transitions own notifications.
     }
 
     /**
@@ -493,8 +485,8 @@ public class ContactService {
                 user.getEmail(),
                 user.getPhone(),
                 user.getAvatarUrl(),
-                user.getIsOnline(),
-                user.getLastSeen(),
+                presenceService.getVisibleStatus(user.getId()),
+                presenceService.getVisibleLastSeen(user.getId()),
                 contact.getCreatedAt());
     }
 
@@ -512,11 +504,11 @@ public class ContactService {
         dto.setAddedAt(contact.getCreatedAt());
 
         // Apply privacy settings
-        if (privacy == null || privacy.getShowOnlineStatus()) {
-            dto.setIsOnline(user.getIsOnline());
+        if (privacy == null || Boolean.TRUE.equals(privacy.getShowOnlineStatus())) {
+            dto.setIsOnline(presenceService.getVisibleStatus(user.getId()));
         }
-        if (privacy == null || privacy.getShowLastSeen()) {
-            dto.setLastSeen(user.getLastSeen());
+        if (privacy == null || Boolean.TRUE.equals(privacy.getShowLastSeen())) {
+            dto.setLastSeen(presenceService.getVisibleLastSeen(user.getId()));
         }
         if (privacy != null && privacy.getShowEmail()) {
             dto.setEmail(user.getEmail());

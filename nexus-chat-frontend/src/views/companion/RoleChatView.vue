@@ -778,7 +778,11 @@ const onViewport = () => {
 }
 window.addEventListener('resize', onViewport)
 
+let stagesAlive = true
+let stagesGeneration = 0
 function mountStages() {
+  if (!stagesAlive || !stageVisible.value) return
+  try {
   if (stageHost.value && !stage) {
     stage = mountTavernStage(stageHost.value, {
       shouldRender: () => !stageCollapsed.value,
@@ -798,13 +802,19 @@ function mountStages() {
     mini.setCharacter(activeRole.value)
     if (import.meta.env.DEV) window.__tavernMini = mini
   }
+  } catch (error) {
+    teardownStages()
+    throw error
+  }
 }
 
 function teardownStages() {
-  stage?.destroy()
+  stagesGeneration++
+  const oldStage = stage, oldMini = mini
   stage = null
-  mini?.destroy()
   mini = null
+  try { oldStage?.destroy() } catch (error) { console.warn('Stage cleanup failed', error) }
+  try { oldMini?.destroy() } catch (error) { console.warn('Mini cleanup failed', error) }
   if (import.meta.env.DEV) {
     delete window.__tavernStage
     delete window.__tavernMini
@@ -835,8 +845,10 @@ watch(() => {
 }, { flush: 'sync' })
 
 watch(stageVisible, async (visible) => {
+  const generation = ++stagesGeneration
   if (visible) {
     await nextTick()
+    if (!stagesAlive || generation !== stagesGeneration) return
     mountStages()
   } else {
     teardownStages()
@@ -845,8 +857,11 @@ watch(stageVisible, async (visible) => {
 
 onMounted(async () => {
   if (!userId()) return
+  const generation = stagesGeneration
   await companionStore.ensureInitialized(userId())
+  if (!stagesAlive) return
   await nextTick()
+  if (!stagesAlive || generation !== stagesGeneration) return
   scrollToBottom()
   if (stageVisible.value) mountStages()
   // Which model is behind this character — shown in the header capsule.
@@ -854,6 +869,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stagesAlive = false
   window.removeEventListener('resize', onViewport)
   motionQuery.removeEventListener('change', onMotionPreference)
   cancelAnimationFrame(scrollFrame)

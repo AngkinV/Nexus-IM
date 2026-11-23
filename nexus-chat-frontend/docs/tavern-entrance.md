@@ -1,72 +1,70 @@
 # 酒馆入场转场
 
-从工作台进入酒馆时播放：山水从点击处起稿，线稿、墨色、彩色依次铺开，随后整幅画揉成纸团丢开，露出酒馆。画面全部由程序生成，没有图片素材。
+现有全屏舞台、`useTavernEntrance` 和 `/dev/warp`；不新增页面、路由或 store。画面全部程序生成，原 WebGL2 揉纸 shader / `crumpler.draw` 保留。
 
-## 文件
+## 时间线（统一 scene transport，重复观看不自动加速）
 
-| 文件 | 作用 |
+| 秒 | 内容 |
 |---|---|
-| `src/composables/useTavernEntrance.js` | 转场状态机（全窗口单例）：`idle → playing → (leaving) → idle` |
-| `src/composables/useTavernEntrance.test.mjs` | 状态机的单元测试（`node --test`） |
-| `src/components/warp/TavernEntrance.vue` | 全屏舞台：两张画布、键盘与点击、深浅判断。Teleport 到 `<body>` |
-| `src/components/warp/tavernEntranceScene.js` | 画面本身：Canvas 2D 画山水，WebGL2 把画揉成纸团 |
-| `src/views/dev/WarpPreview.vue` | 仅开发环境的预览页 `/dev/warp`，不需要登录和后端；生产构建不打包 |
+| 0–.25 | 原 PAL 深/浅纸面进入；.25 commit 酒馆 |
+| .25–.72 | 墨滴落下，落点限制在画面内部 |
+| .72–1.35 | 短湿墨团与局部柔和晕染 |
+| 1.35–4.4 | 原画线稿、原灰山逐渐显现；局部墨团消退 |
+| 4.4–5.1 | 原灰山停留 |
+| 5.1–6.3 | 原灰山向 HEAD 原全彩渐渗 |
+| 6.3–6.8 | 原全彩成画落定；上传相同最终画 |
+| 6.8–8.7 | 原 WebGL 揉纸；无 WebGL 时原画淡出 |
 
-## 用法
+点击最多扰动墨滴 ±40 CSS px；不平移山、不重新生成峰线。最终无墨团覆盖，恢复原 PAL 纸面、原山与倒影。
+
+## 原画与预算
+
+HEAD 的 PAL、U=1536/RN/LH、LAY/STACK/MIST、buildRidge、bakeBody/bakeFar、buildStrokes、ribbon/strokes、bakeMist、composeLayer、buildPano、silk/hair/RIP、renderWater 与原 WebGL createCrumpler 恢复。原 paint 仅更名 originalPaint，内部单参数 smooth 更名 originalSmooth 避免和时序模块冲突；不改变绘画公式或最终调色。
+
+过渡包装层只把同一 pano 的 ink/colour 按时间混合，再交给原 painter；到 6.3 秒直接使用原 colour。原绘画时间固定在 2.65，以便 seek、最终贴图和揉纸交接拿到同一张画（倒影公式仍为原 renderWater）。原尺寸、构图与完整纹理保留。准备使用 3.5ms 分片目标、尺寸/主题缓存及提前揉纸预热。tavernEntranceGrowth.js 仅保留 timing/clock/origin；错误的低分辨率生成器与密度测试已删除。
+
+**预算是调度目标，不是已测到的耗时保证。** WebGL shader 编译、mesh/texture 上传仍为不可分的驱动调用；`maxSliceMs`、`finalizeMs`、`uploadMs` 暴露实际耗时，需主线程实测。缓存占用也需在目标设备检查。
+
+统一时钟排除准备等待与后台暂停；前台长帧不再 `min(.05)` 慢放。renderGovernor 暂停事件立即 pause 音乐，恢复后的首帧重置基准。主动等待准备最多 20 秒，失败/resize 不计完整首看，优雅进入酒馆；resize 当前选择退出并重新预热，而非强行保留旧尺寸画面。
+
+## 首次、声音与交接
+
+首次不可点击/Enter/Space/Esc 跳过，这些按键阻止默认行为和底层快捷键。之后保留屏幕、按键、真实可访问的跳过按钮；Tab 将焦点留在该按钮，按钮不在 aria-hidden 祖先中。来电仍可 `cancel(true)`。
+
+只有自然 `onDone('done')` 才记 seen；账号 key 在 enter 时冻结。失败、resize、skip/cancel、卸载与 preview seek 不记。没有舞台或 reduced-motion 直接进入也不记首看完成。
+
+`Main.vue` 仅把真实 `settings.soundEnabled` 传给舞台。Scene 使用独立音乐接口：prepare 预热、真实 pointer/key gesture unlock、start(1)、每次 transport 绘制 tick(T)、等待/后台 pause/resume、结束/跳过 stop、卸载 dispose。未使用或更改全局 uiSound context。配乐文件和配乐专属测试本次未改。
+
+## 主线程验收入口（无 sleep）
+
+`/dev/warp` 安装 `window.__tavernEntrancePreview`：
 
 ```js
-import { useTavernEntrance } from '@/composables/useTavernEntrance'
-
-const entrance = useTavernEntrance()
-entrance.enter({
-  onCommit: () => { /* 画面盖住界面时自动执行：真正切到酒馆 */ },
-  onCancel: () => { /* 可选：切换之前按了 Esc */ }
-})
+await window.__tavernEntrancePreview.prepare() // boolean，真实准备 promise
+window.__tavernEntrancePreview.ready
+window.__tavernEntrancePreview.diagnostics()
+await window.__tavernEntrancePreview.seek(.2)
+await window.__tavernEntrancePreview.seek(.65)
+await window.__tavernEntrancePreview.seek(1.1)
+await window.__tavernEntrancePreview.seek(2.4)
+await window.__tavernEntrancePreview.seek(3.8)
+await window.__tavernEntrancePreview.seek(4.7)
+await window.__tavernEntrancePreview.seek(5.7)
+await window.__tavernEntrancePreview.seek(6.5)
+await window.__tavernEntrancePreview.seek(7.6)
 ```
 
-页面上挂一个 `<TavernEntrance />` 即可。没有挂载舞台、或系统开启「减少动态效果」时，`enter` 直接执行 `onCommit`，不播放画面。
+`?t=.2` / `?t=.65` 也等待准备后精确定格，不把时间强制提到 .5。seek 不触发 destination commit，不记 seen。点击画面解除冻结。`play()` 走真实 composable，不模拟完成。
 
-没有确认步骤：`onCommit` 由舞台在 0.62 秒时自动触发。
+diagnostics 包含 status / error / seconds / phase / suspended / waiting / artReady / paperReady / frozen / webgl / soundEnabled / coldStarts / warmStarts / prepareMs / slices / maxSliceMs / finalizeMs / uploadMs。聚焦后分别测冷启动、prepare 后暖启动、后台暂停与最终 WebGL 纸团；`suspended:true` 时等待不是绘画 Bug。
 
-## 时间线
+## 串行验证命令（本执行通道未运行）
 
-首次进入完整播放 4.55 秒；同一窗口内再次进入以两倍速播放，约 2.3 秒。
+```sh
+node --test src/composables/useTavernEntrance.test.mjs
+node --test src/components/warp/tavernEntranceGrowth.test.mjs
+node --test src/components/warp/tavernEntranceScene.test.mjs
+npx vite build
+```
 
-| 秒 | 画面 |
-|---|---|
-| 0 | 线稿从点击处向外长出，界面退成纸色 |
-| 0.62 | 画面已盖住界面，后面切到酒馆（`onCommit`）。到 0.75 秒之间画面有意静止，酒馆挂载造成的卡顿落在这里 |
-| 0.75 | 墨色化开 |
-| 1.3 | 彩色化开 |
-| 2.35 | 整幅彩色 |
-| 2.65 | 起皱，四边向后收拢，团成纸团 |
-| 4.1 | 纸团丢向远处并淡出 |
-| 4.55 | 结束 |
-
-## 打断
-
-| 操作 | 0.62 秒之前 | 0.62 秒之后 |
-|---|---|---|
-| Esc | 取消，留在原处（`onCancel`） | 画面淡出，停在酒馆 |
-| 点击、回车、空格 | 立即切到酒馆，画面淡出 | 画面淡出，停在酒馆 |
-| 窗口大小变化 | 同上 | 同上 |
-| 来电 | 取消 | 画面淡出，停在酒馆 |
-
-转场期间应用自己的快捷键不生效，键盘归舞台所有。
-
-## 接入点
-
-- `views/Main.vue`：挂载 `<TavernEntrance />`；`enterTavern(commit)` 包住 `setActiveView('companion')`。从酒馆外面进来才播放；已经在酒馆里时直接执行。来电时调用 `cancel()`。
-- `router/index.js`：仅开发环境的 `/dev/warp` 路由。
-
-## 实现要点
-
-- **深浅**：开始时对界面上 5 个点实际绘制的背景色取样，取中位数。深色界面用暖白线起稿、玄墨配色；浅色界面用墨线、素绢配色。
-- **起点**：0.6 秒内有过点击就从点击的横坐标起稿，否则（快捷键、命令面板）从屏幕中间。
-- **烘焙**：山形与罩染在应用空闲时分片计算一次（挂载 1.5 秒后开始，每片不超过 6 毫秒），两套配色一起出，常驻内存。按窗口尺寸拼出的三张大图（线稿、墨色、彩色）在点击时才生成，转场结束 45 秒后释放。
-- **揉纸**：把最后一帧彩色画面作为贴图交给 WebGL。纸面形变和法线都在着色器里按同一个函数计算，折痕来自三层大小不同的折面。
-- **退化**：没有 WebGL2 时，彩色画面直接淡出；画布不可用时不播放，直接进酒馆。
-
-## 预览
-
-`/dev/warp` 用两个示意界面演示转场。`?t=3.2` 把画面定格在第 3.2 秒，`?theme=light` 用浅色界面。
+相邻测试覆盖 phase/clock/origin、账号冻结、cold/warm ready、精确 seek、无 WebGL 完整时间线、scene 调用音乐生命周期。Canvas mocks 不是视觉验收或性能证据；主线程仍须实看各阶段、真实 WebGL 交接，并在同一受控聚焦视口对照原 baseline。

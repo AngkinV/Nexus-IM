@@ -9,16 +9,7 @@
       <div class="flex items-start justify-between flex-wrap gap-space-sm">
         <div class="flex items-center gap-space-md min-w-0">
           <div class="relative w-14 h-14 shrink-0 rounded bg-surface-container-high p-1 flex items-center justify-center border border-outline-variant/40">
-            <img
-              v-if="group.avatar && !avatarFailed"
-              class="w-full h-full rounded object-cover grayscale contrast-125"
-              :src="group.avatar"
-              alt=""
-              @error="avatarFailed = true"
-            />
-            <div v-else class="w-full h-full rounded bg-surface-container-highest flex items-center justify-center text-primary font-headline-md text-headline-md font-semibold">
-              {{ (group.name || '?').trim().charAt(0) }}
-            </div>
+            <IdentityAvatar :src="group.avatarUrl || group.avatar" :entity-id="group.id" :label="group.name" kind="group" class="w-full h-full rounded object-cover" />
             <span class="absolute -bottom-1 -right-1 px-1 rounded bg-surface-container-highest border border-outline-variant/30 text-on-surface-variant font-code text-[9px] leading-tight">
               {{ memberTotal }}
             </span>
@@ -102,20 +93,8 @@
               :class="m.role === 'owner' ? 'text-primary' : 'text-on-surface-variant'"
             >{{ m.role === 'owner' ? $t('group.owner') : $t('group.admin') }}</span>
             <div class="relative w-10 h-10 shrink-0">
-              <img
-                v-if="m.avatarUrl && !failed[m.id]"
-                class="w-10 h-10 rounded-full object-cover grayscale contrast-125"
-                :src="resolveFileUrl(m.avatarUrl)"
-                alt=""
-                @error="failed[m.id] = true"
-              />
-              <div v-else class="w-10 h-10 rounded-full bg-surface-container-high text-primary flex items-center justify-center font-label-md text-label-md">
-                {{ (m.nickname || m.username || '?').trim().charAt(0) }}
-              </div>
-              <span
-                class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-surface-container-lowest"
-                :class="m.isOnline ? 'bg-primary' : 'bg-outline'"
-              ></span>
+              <IdentityAvatar :src="m.avatarUrl || m.avatar" :entity-id="m.id" :label="m.nickname || m.username" kind="user" class="w-10 h-10 rounded-full object-cover" />
+              <PresenceDot class="absolute bottom-0 right-0 w-2.5 h-2.5 ring-2 ring-surface-container-lowest" :value="m.isOnline" />
             </div>
             <span class="font-label-md text-label-md text-on-surface font-medium mt-1.5 truncate max-w-full">{{ m.nickname || m.username }}</span>
             <span class="font-label-sm text-[10px] text-on-surface-variant/70 truncate max-w-full">@{{ m.username }}</span>
@@ -163,12 +142,19 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { membershipSignature, currentGroupRecord } from '@/components/identity/displayFacts.mjs'
+import { useContactStore } from '@/stores/contact'
+import { memberRows, requestGate } from '@/components/identity/presentation.mjs'
+import { onBeforeUnmount } from 'vue'
+import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
+import PresenceDot from '@/components/identity/PresenceDot.vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
-import { groupAPI, resolveFileUrl } from '@/services/api'
+import { groupAPI } from '@/services/api'
 import { useChatStore } from '@/stores/chat'
+import { useUserStore } from '@/stores/user'
 
 const props = defineProps({
   group: { type: Object, required: true }
@@ -178,24 +164,25 @@ defineEmits(['enter', 'close'])
 const { t } = useI18n()
 const router = useRouter()
 const chatStore = useChatStore()
+const userStore = useUserStore()
 
 const iconBtn = 'flex items-center justify-center w-8 h-8 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-primary transition-colors border border-solid border-outline-variant/30 cursor-pointer'
 
+const contactStore = useContactStore()
 const members = ref([])
+const identityMembers = computed(() => memberRows(members.value, id => contactStore.getUserIdentity(id)))
 const info = ref(null)
 const loading = ref(false)
 const loadFailed = ref(false)
-const avatarFailed = ref(false)
-const failed = reactive({})
 
 const ROLE_ORDER = { owner: 0, admin: 1 }
 const sortedMembers = computed(() =>
-  [...members.value].sort(
+  [...identityMembers.value].sort(
     (a, b) => (ROLE_ORDER[a.role] ?? 2) - (ROLE_ORDER[b.role] ?? 2) || Number(!!b.isOnline) - Number(!!a.isOnline)
   )
 )
-const owner = computed(() => members.value.find((m) => m.role === 'owner'))
-const memberTotal = computed(() => members.value.length || info.value?.memberCount || props.group.memberCount || 0)
+const owner = computed(() => identityMembers.value.find((m) => m.role === 'owner'))
+const memberTotal = computed(() => info.value?.memberCount ?? props.group.memberCount ?? members.value.length)
 const description = computed(() => info.value?.description || props.group.description || '')
 const createdText = computed(() => {
   const at = info.value?.createdAt || props.group.createdAt
@@ -224,24 +211,33 @@ const prefs = computed(() => [
 const openMember = (m) => router.push(`/user/${m.id}`)
 
 // Reload members + group info on selection change; drop stale responses.
-let requestId = 0
+const gate = requestGate()
+onBeforeUnmount(() => gate.dispose())
 const load = async () => {
   const id = props.group.id
-  const current = ++requestId
+  const current = gate.begin()
+  const identityToken = contactStore.captureIdentityRevision()
   members.value = []
+  loading.value = false
   info.value = null
   loadFailed.value = false
-  avatarFailed.value = false
-  if (!id) return
+  if (!id || userStore.currentUser?.id == null) return
   loading.value = true
   const [m, g] = await Promise.allSettled([groupAPI.getGroupMembers(id), groupAPI.getGroupById(id)])
-  if (current !== requestId) return
-  members.value = m.status === 'fulfilled' ? m.value.data || [] : []
+  if (!gate.current(current) || props.group.id !== id || !contactStore.isIdentityRevisionCurrent(identityToken)) return
+  const rows = m.status === 'fulfilled' ? m.value.data || [] : []
+  if (m.status === 'fulfilled' && !contactStore.ingestUserSnapshots(rows, identityToken)) return
+  members.value = rows
   loadFailed.value = m.status !== 'fulfilled'
   info.value = g.status === 'fulfilled' ? g.value.data : null
   loading.value = false
 }
-watch(() => props.group.id, load, { immediate: true })
+const membershipFacts = computed(() => membershipSignature(currentGroupRecord(chatStore, props.group.id)))
+watch(() => [userStore.currentUser?.id, props.group.id], load, { immediate: true, flush: 'sync' })
+watch(() => JSON.stringify([userStore.currentUser?.id, props.group.id, membershipFacts.value]), (next, previous) => {
+  const a = JSON.parse(next), b = JSON.parse(previous)
+  if (a[0] === b[0] && a[1] === b[1]) load()
+})
 </script>
 
 <style scoped>

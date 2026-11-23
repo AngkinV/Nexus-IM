@@ -1,3 +1,4 @@
+import { attempt, createResourceOwner, releaseRenderer, resourceCounts } from './resourceOwner.js'
 import * as THREE from 'three'
 import { createTavernSpeech } from './tavernSpeech.js'
 import {
@@ -116,11 +117,23 @@ export function characterModelSource(character) {
   return url
 }
 
-export function mountTavernStage(container, { shouldRender = () => true, reducedMotion = false, onActorStatus = () => {}, requestAsset = (url) => ({ url, headers: {} }) } = {}) {
-  const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(42, 1.5, 0.1, 100)
+export function mountTavernStage(container, options = {}) {
+  const rollback = []
+  try { return createTavernStage(container, options, rollback) }
+  catch (error) {
+    for (const cleanup of rollback.reverse()) attempt(cleanup)
+    throw error
+  }
+}
+
+function createTavernStage(container, { shouldRender = () => true, reducedMotion = false, onActorStatus = () => {}, requestAsset = (url) => ({ url, headers: {} }) } = {}, rollback = []) {
+  let scene = new THREE.Scene()
+  let camera = new THREE.PerspectiveCamera(42, 1.5, 0.1, 100)
   camera.position.set(0, 0.1, 6.4)
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
+  let renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
+  rollback.push(() => releaseRenderer(renderer))
+  const initOwner = createResourceOwner()
+  rollback.push(() => { initOwner.track(scene); initOwner.retire() })
   renderer.localClippingEnabled = true
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.setPixelRatio(scaledPixelRatio(1.5))
@@ -136,6 +149,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   const emberMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05, transparent: true, opacity: 0.85 })
   const counterMaterial = new THREE.MeshStandardMaterial({ color: 0x4d3529, roughness: 0.78 })
   const sharedMaterials = [brightMaterial, dimMaterial, roomMaterial, rainMaterial, pointMaterial, dustMaterial, emberMaterial, counterMaterial]
+  initOwner.track(sharedMaterials)
 
   const wire = (geometry, material) => {
     const lines = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), material)
@@ -172,6 +186,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let actorAbort = null
   let actorRequest = 0
   let destroyed = false
+  let contextLost = false
 
   const ambient = new THREE.HemisphereLight(0xf5e9db, 0x423c48, 0.8)
   const keyLight = new THREE.DirectionalLight(0xffe2be, 0.9)
@@ -188,13 +203,13 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   function selectActor(character) {
     const source = characterModelSource(character)
     const key = `${character?.id ?? ''}|${source ?? ''}`
-    if (key === actorKey) return
+    if (destroyed || key === actorKey) return
     actorKey = key
     actorSeed = characterShape(character).seed
     actorSource = source
     actorRequest++
     actorAbort?.abort()
-    actor?.destroy()
+    attempt(() => actor?.destroy())
     actor = null
     figure.visible = true
     dirty = true
@@ -202,7 +217,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   }
 
   async function loadActor() {
-    if (actorStatus !== 'queued') return
+    if (destroyed || contextLost || actorStatus !== 'queued') return
     const request = actorRequest
     const source = actorSource
     const controller = new AbortController()
@@ -412,8 +427,10 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     targetY = Math.max(-1.5, Math.min(1.5, ((event.clientY - rect.top) / rect.height) * 2 - 1))
   }
   window.addEventListener('mousemove', onMouseMove)
+  rollback.push(() => window.removeEventListener('mousemove', onMouseMove))
 
   const resize = () => {
+    if (destroyed || contextLost || !renderer) return
     const width = container.clientWidth
     const height = container.clientHeight
     if (!width || !height) return
@@ -425,15 +442,18 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     dirty = true
   }
   const resizeObserver = new ResizeObserver(resize)
+  rollback.push(() => resizeObserver.disconnect())
   resizeObserver.observe(container)
   resize()
   const stopQualityWatch = onRenderQualityChange(resize)
+  rollback.push(stopQualityWatch)
 
   const clock = new THREE.Clock()
   let lastFrameAt = 0
   let lastTime = 0
 
   function step(time, delta, ease) {
+    if (destroyed || contextLost) return
     const mood = MOODS[moodKey] || MOODS.calm
     const motion = MOTIONS[motionKey] || MOTIONS.idle
 
@@ -533,9 +553,10 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     }
   }
 
-  const drawable = () => !!shape && !!container.clientWidth && !!container.clientHeight
+  const drawable = () => !destroyed && !contextLost && !!renderer && !!shape && !!container.clientWidth && !!container.clientHeight
 
   function renderFrame(time, delta, ease) {
+    if (destroyed || contextLost || !renderer) return
     step(time, delta, ease)
     renderer.render(scene, camera)
     frames++
@@ -559,10 +580,12 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     dirty = true
   }
   document.addEventListener('visibilitychange', onVisibility)
+  rollback.push(() => document.removeEventListener('visibilitychange', onVisibility))
 
   let paused = false
   let frame = 0
   const animate = (now) => {
+    if (destroyed || contextLost) return
     frame = requestFrame(animate)
     // Settings → 后台失焦智能挂起 is treated exactly like a hidden tab here.
     if (!shouldRender() || document.hidden || isRenderSuspended() || !drawable()) {
@@ -587,11 +610,37 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     lastTime = time
     renderFrame(time, delta, Math.min(1, delta * 4))
   }
+  const canvas = renderer.domElement
+  const onContextLost = (event) => {
+    event.preventDefault()
+    contextLost = true
+    cancelFrame(frame)
+    frame = 0
+    pause()
+  }
+  const onContextRestored = () => {
+    if (destroyed || !contextLost) return
+    contextLost = false
+    dirty = true
+    lastTime = clock.getElapsedTime()
+    frame = requestFrame(animate)
+  }
+  canvas.addEventListener('webglcontextlost', onContextLost)
+  canvas.addEventListener('webglcontextrestored', onContextRestored)
   frame = requestFrame(animate)
+  rollback.push(() => {
+    destroyed = true
+    cancelFrame(frame)
+    canvas.removeEventListener('webglcontextlost', onContextLost)
+    canvas.removeEventListener('webglcontextrestored', onContextRestored)
+  })
 
+  rollback.length = 0
   return {
+    resourceSnapshot() { return { destroyed, contextLost, scheduled: !!frame, ...resourceCounts } },
     /** Whose silhouette is on stage. Rebuilds only when the character changes. */
     setCharacter(character) {
+      if (destroyed) return
       speech.reset()
       pendingGesture = null
       speaking = false
@@ -603,6 +652,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     },
     /** Which room. Rebuilds only when the scene changes. */
     setScene(key) {
+      if (destroyed) return
       const next = key || null
       if (sceneKey === next && room.children.length) return
       buildRoom(next)
@@ -610,6 +660,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     },
     /** Mood and motion as she reported them. Unknown or missing keeps the pose. */
     setState(state) {
+      if (destroyed) return
       const mood = state?.mood && MOODS[state.mood] ? state.mood : null
       const motion = state?.motion && MOTIONS[state.motion] ? state.motion : null
       if (state?.gesture && !reducedMotion && shouldRender() && !document.hidden) {
@@ -625,17 +676,20 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     },
     /** Back to the neutral pose, e.g. when switching to a character with no reported state. */
     clearState() {
+      if (destroyed) return
       moodKey = null
       motionKey = null
       nodStartedAt = -1
       dirty = true
     },
     setSpeaking(value) {
+      if (destroyed) return
       speaking = !!value
       if (!speaking) speech.finish()
       dirty = true
     },
     speak(text) {
+      if (destroyed) return
       speech.push(text, reducedMotion || !shouldRender() || document.hidden)
     },
     hush,
@@ -709,21 +763,31 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       }
     },
     destroy() {
+      if (destroyed) return
       destroyed = true
       actorRequest++
-      actorAbort?.abort()
-      actor?.destroy()
-      actor = null
-      cancelFrame(frame)
-      stopQualityWatch()
+      attempt(() => cancelFrame(frame))
+      frame = 0
+      attempt(() => pause())
+      attempt(() => stopQualityWatch())
       window.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('visibilitychange', onVisibility)
-      resizeObserver.disconnect()
-      scene.traverse((node) => node.geometry?.dispose())
-      sharedMaterials.forEach((material) => material.dispose())
-      renderer.dispose()
-      renderer.forceContextLoss()
-      renderer.domElement.remove()
+      canvas.removeEventListener('webglcontextlost', onContextLost)
+      canvas.removeEventListener('webglcontextrestored', onContextRestored)
+      attempt(() => resizeObserver.disconnect())
+      attempt(() => actorAbort?.abort())
+      actorAbort = null
+      const retiringActor = actor, retiringScene = scene
+      actor = null
+      const retirement = releaseRenderer(renderer, () => {
+        attempt(() => retiringActor?.destroy())
+        const owner = createResourceOwner()
+        owner.track(retiringScene)
+        sharedMaterials.forEach(owner.track)
+        owner.retire()
+      })
+      renderer = scene = camera = null
+      return retirement
     }
   }
 }
