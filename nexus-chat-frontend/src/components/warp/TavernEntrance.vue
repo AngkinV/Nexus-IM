@@ -196,10 +196,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
   pointer-events: none;
   user-select: none;
+  /* Preparation paints cached frames too. Inactive must mean visually hidden,
+     not merely aria-hidden or unable to receive pointer events. */
+  visibility: hidden;
+  opacity: 0;
 }
 
 .tavern-entrance.is-open {
   pointer-events: auto;
+  visibility: visible;
+  opacity: 1;
 }
 
 .te-canvas {

@@ -1,6 +1,7 @@
 <template>
-  <!-- Prism pane: every companion role the user has, the active one pinned on top.
-       Mirrors the AI session list so the two canvases read the same way. -->
+  <!-- Prism pane: every companion conversation the user has, most recently
+       spoken to first. Mirrors the AI session list so the two canvases read
+       the same way. -->
   <div class="flex flex-col h-full min-h-0">
     <div class="p-space-md flex flex-col gap-space-sm border-b border-outline-variant/20 shrink-0">
       <div class="flex items-center justify-between">
@@ -68,63 +69,98 @@
         </div>
         <kbd class="px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant font-code text-[11px]">⌘,</kbd>
       </button>
+
+      <!-- Filters the rows already loaded: names and last lines. Nothing is
+           requested, reordered or selected by typing here. -->
+      <div class="relative flex items-center">
+        <span
+          class="material-symbols-outlined pointer-events-none absolute left-2.5 text-[16px] text-on-surface-variant"
+          aria-hidden="true"
+        >search</span>
+        <input
+          ref="searchInput"
+          v-model="query"
+          class="role-search h-9 w-full rounded-lg border border-solid border-outline-variant/40 bg-surface-container-low pl-8 pr-9 font-body-md text-[14px] text-primary placeholder:text-on-surface-variant/60"
+          type="search"
+          autocomplete="off"
+          :placeholder="localT('search')"
+          :aria-label="localT('search')"
+        />
+        <button
+          v-if="query"
+          class="role-search-clear absolute right-0 h-9 w-9 p-0 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-150"
+          type="button"
+          :aria-label="localT('clearSearch')"
+          :title="localT('clearSearch')"
+          @click="clearSearch"
+        >
+          <span class="material-symbols-outlined text-[16px]" aria-hidden="true">close</span>
+        </button>
+      </div>
     </div>
 
     <div class="role-scroll flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-4">
-      <div class="space-y-1">
+      <!-- Empty groups take no space, whether empty to begin with or filtered. -->
+      <div v-if="regularRows.length" class="space-y-1">
         <div class="px-3 py-1 flex items-center justify-between text-on-surface-variant/60 font-label-sm text-label-sm uppercase tracking-wider">
           <span>{{ $t('companion.seats.current') }}</span>
-          <span class="font-code text-[10px]">{{ $t('companion.roleCount', { n: regularRoles.length }) }}</span>
+          <span class="font-code text-[10px]">{{ $t('companion.roleCount', { n: regularRows.length }) }}</span>
         </div>
 
         <div
-          v-for="role in regularRoles"
+          v-for="{ role, preview } in regularRows"
           :key="role.id"
-          class="relative group cursor-pointer px-3 py-2.5 rounded-lg transition-all flex items-start gap-3"
+          class="relative group px-3 py-2.5 rounded-lg transition-all flex items-start gap-3"
           :class="
             role.id === companionStore.activeRoleId
               ? 'bg-surface-container border border-outline-variant/40 text-primary'
               : 'hover:bg-surface-container-low text-on-surface-variant hover:text-primary'
           "
-          role="button"
-          tabindex="0"
-          @click="selectRole(role)"
-          @keydown.enter="selectRole(role)"
         >
           <div
             v-if="role.id === companionStore.activeRoleId"
             class="w-1 absolute left-0 top-2 bottom-2 bg-primary rounded-r"
           ></div>
-          <div
-            class="w-8 h-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center border border-outline-variant/40"
-            :class="role.id === companionStore.activeRoleId ? 'bg-surface-container-high text-primary' : 'bg-surface-container-low text-on-surface-variant'"
+          <button
+            class="role-row-main flex-1 min-w-0 p-0 flex items-start gap-3 text-left"
+            type="button"
+            :aria-current="role.id === companionStore.activeRoleId ? 'true' : undefined"
+            @click="selectRole(role)"
           >
-            <img v-if="role.avatarUrl" class="w-full h-full object-cover grayscale" :src="role.avatarUrl" alt="" />
-            <span v-else class="material-symbols-outlined text-[16px]">person</span>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center justify-between gap-2">
-              <div
-                class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
-                :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
-              >{{ role.name || $t('companion.defaultName') }}</div>
+            <span
+              class="w-8 h-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center border border-outline-variant/40"
+              :class="role.id === companionStore.activeRoleId ? 'bg-surface-container-high text-primary' : 'bg-surface-container-low text-on-surface-variant'"
+            >
+              <img v-if="role.avatarUrl" class="w-full h-full object-cover grayscale" :src="role.avatarUrl" alt="" />
+              <span v-else class="material-symbols-outlined text-[16px]" aria-hidden="true">person</span>
+            </span>
+            <span class="block flex-1 min-w-0">
+              <span class="flex items-center justify-between gap-2">
+                <span
+                  class="block font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
+                  :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
+                >{{ role.name || $t('companion.defaultName') }}</span>
+                <span
+                  v-if="role.lastMessageAt"
+                  class="font-code text-[10px] text-on-surface-variant/60 shrink-0 tabular-nums"
+                >{{ formatStamp(role.lastMessageAt) }}</span>
+              </span>
+              <!-- The last line actually said, the way a chat list row reads;
+                   her greeting, labelled, before anything has been. The tooltip
+                   is the original text, narration and line breaks included. -->
               <span
-                v-if="role.lastMessageAt"
-                class="font-code text-[10px] text-on-surface-variant/60 shrink-0 tabular-nums"
-              >{{ formatStamp(role.lastMessageAt) }}</span>
-            </div>
-            <!-- The last line said, the way a chat list row reads. Falls back to
-                 what she is doing when nothing has been said yet. -->
-            <div
-              class="font-body-md text-[13px] leading-[17px] truncate mt-0.5"
-              :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
-            >{{ previewOf(role) }}</div>
-          </div>
-          <span
-            v-if="role.id === companionStore.activeRoleId"
-            class="material-symbols-outlined text-[15px] text-primary shrink-0 mt-1"
-          >chat_bubble</span>
-          <ClearConversationButton :role="role" />
+                class="block font-body-md text-[13px] leading-[17px] truncate mt-0.5"
+                :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
+                :title="preview.title"
+              >{{ preview.text }}</span>
+            </span>
+            <span
+              v-if="role.id === companionStore.activeRoleId"
+              class="material-symbols-outlined text-[15px] text-primary shrink-0 mt-1"
+              aria-hidden="true"
+            >chat_bubble</span>
+          </button>
+          <ClearConversationButton class="role-row-action" :role="role" />
         </div>
       </div>
 
@@ -136,64 +172,80 @@
       <div v-else-if="!companionStore.conversationRoles.length" class="px-3 py-6 text-center font-body-md text-[14px] text-on-surface-variant/60">
         {{ localT(hiddenRoles.length ? 'emptyWithHidden' : 'empty') }}
       </div>
+      <!-- Conversations exist, none match: say so, and offer the way back. -->
+      <div v-else-if="searching && !regularRows.length && !guestRows.length" class="px-3 py-6 flex flex-col items-center gap-3 text-center">
+        <p class="m-0 max-w-full break-words font-body-md text-[14px] text-on-surface-variant/60" role="status">
+          {{ localT('noMatch', { q: query.trim() }) }}
+        </p>
+        <button
+          class="role-search-reset py-1.5 px-3 rounded-lg bg-surface-container-low border border-outline-variant/40 text-primary font-label-md text-[13px] leading-[18px] hover:bg-surface-container hover:border-outline-variant transition-all duration-150 active:scale-[0.99]"
+          type="button"
+          @click="clearSearch"
+        >{{ localT('clearSearch') }}</button>
+      </div>
 
       <!-- Guests: faces met in one evening, not part of the household. -->
-      <div v-if="guestRoles.length" class="space-y-1">
+      <div v-if="guestRows.length" class="space-y-1">
         <div class="px-3 py-1 flex items-center justify-between text-on-surface-variant/60 font-label-sm text-label-sm uppercase tracking-wider">
           <span>{{ $t('companion.seats.past') }}</span>
-          <span class="font-code text-[10px]">{{ $t('companion.seats.pastCount', { n: guestRoles.length }) }}</span>
+          <span class="font-code text-[10px]">{{ $t('companion.seats.pastCount', { n: guestRows.length }) }}</span>
         </div>
 
         <div
-          v-for="role in guestRoles"
+          v-for="{ role, preview } in guestRows"
           :key="role.id"
-          class="relative group cursor-pointer px-3 py-2.5 rounded-lg transition-all flex items-start gap-3"
+          class="relative group px-3 py-2.5 rounded-lg transition-all flex items-start gap-3"
           :class="
             role.id === companionStore.activeRoleId
               ? 'bg-surface-container border border-outline-variant/40 text-primary'
               : 'hover:bg-surface-container-low text-on-surface-variant hover:text-primary'
           "
-          role="button"
-          tabindex="0"
-          @click="selectRole(role)"
-          @keydown.enter="selectRole(role)"
         >
           <div
             v-if="role.id === companionStore.activeRoleId"
             class="w-1 absolute left-0 top-2 bottom-2 bg-primary rounded-r"
           ></div>
-          <div
-            class="w-8 h-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center border border-outline-variant/40"
-            :class="role.id === companionStore.activeRoleId ? 'bg-surface-container-high text-primary' : 'bg-surface-container-low text-on-surface-variant'"
-          >
-            <img v-if="role.avatarUrl" class="w-full h-full object-cover grayscale" :src="role.avatarUrl" alt="" />
-            <span v-else class="material-symbols-outlined text-[16px]">person</span>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center justify-between gap-2">
-              <div
-                class="font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
-                :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
-              >{{ role.name || $t('companion.defaultName') }}</div>
-              <span
-                v-if="role.lastMessageAt"
-                class="font-code text-[10px] text-on-surface-variant/60 shrink-0 tabular-nums"
-              >{{ formatStamp(role.lastMessageAt) }}</span>
-            </div>
-            <div
-              class="font-body-md text-[13px] leading-[17px] truncate mt-0.5"
-              :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
-            >{{ previewOf(role) }}</div>
-          </div>
           <button
-            class="role-adopt-btn shrink-0 mt-0.5"
+            class="role-row-main flex-1 min-w-0 p-0 flex items-start gap-3 text-left"
+            type="button"
+            :aria-current="role.id === companionStore.activeRoleId ? 'true' : undefined"
+            @click="selectRole(role)"
+          >
+            <span
+              class="w-8 h-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center border border-outline-variant/40"
+              :class="role.id === companionStore.activeRoleId ? 'bg-surface-container-high text-primary' : 'bg-surface-container-low text-on-surface-variant'"
+            >
+              <img v-if="role.avatarUrl" class="w-full h-full object-cover grayscale" :src="role.avatarUrl" alt="" />
+              <span v-else class="material-symbols-outlined text-[16px]" aria-hidden="true">person</span>
+            </span>
+            <span class="block flex-1 min-w-0">
+              <span class="flex items-center justify-between gap-2">
+                <span
+                  class="block font-label-md text-[14px] leading-[18px] tracking-[0.01em] font-medium truncate"
+                  :class="role.id === companionStore.activeRoleId ? 'text-primary font-medium' : 'group-hover:text-primary'"
+                >{{ role.name || $t('companion.defaultName') }}</span>
+                <span
+                  v-if="role.lastMessageAt"
+                  class="font-code text-[10px] text-on-surface-variant/60 shrink-0 tabular-nums"
+                >{{ formatStamp(role.lastMessageAt) }}</span>
+              </span>
+              <span
+                class="block font-body-md text-[13px] leading-[17px] truncate mt-0.5"
+                :class="role.id === companionStore.activeRoleId ? 'text-on-surface-variant' : 'text-on-surface-variant/70'"
+                :title="preview.title"
+              >{{ preview.text }}</span>
+            </span>
+          </button>
+          <button
+            class="role-adopt-btn role-row-action shrink-0 mt-0.5"
             type="button"
             :title="$t('companion.seats.adopt')"
+            :aria-label="$t('companion.seats.adopt')"
             @click.stop="adopt(role)"
           >
-            <span class="material-symbols-outlined text-[15px]">home</span>
+            <span class="material-symbols-outlined text-[15px]" aria-hidden="true">home</span>
           </button>
-          <ClearConversationButton :role="role" />
+          <ClearConversationButton class="role-row-action" :role="role" />
         </div>
       </div>
     </div>
@@ -333,6 +385,7 @@ import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
 import { ElButton, ElDialog, ElMessage } from 'element-plus'
 import { readSceneKey } from '@/components/companion/tavernScenes'
+import { matchesQuery, previewOf } from '@/components/companion/roleText'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
 import ClearConversationButton from '@/components/companion/ClearConversationButton.vue'
 
@@ -349,7 +402,12 @@ const { t: localT } = useI18n({
       startConversation: '开始对话',
       restoring: '正在开启…',
       restoreFailed: '无法重新开启对话，请稍后重试。',
-      noLineYet: '还没有说过话',
+      noLineYet: '暂无消息',
+      you: '你：',
+      greeting: '开场白：',
+      search: '搜索角色或消息',
+      clearSearch: '清除搜索',
+      noMatch: '没有匹配“{q}”的会话',
       inviteTitle: '邀请一个人入座',
       inviteHint: '选一个建模给她，或者让酒馆自己挑一个还没人用的。',
       letTavernChoose: '让酒馆挑选',
@@ -369,7 +427,12 @@ const { t: localT } = useI18n({
       startConversation: 'Start conversation',
       restoring: 'Starting…',
       restoreFailed: 'Could not reopen the conversation. Please try again later.',
-      noLineYet: 'Nothing said yet',
+      noLineYet: 'No messages yet',
+      you: 'You: ',
+      greeting: 'Opening line: ',
+      search: 'Search characters or messages',
+      clearSearch: 'Clear search',
+      noMatch: 'No conversations match “{q}”',
       inviteTitle: 'Invite someone to sit down',
       inviteHint: 'Give her a model, or let the tavern pick one nobody is wearing.',
       letTavernChoose: 'Let the tavern choose',
@@ -399,17 +462,6 @@ function formatStamp(value) {
   if (d.isSame(now, 'day')) return settings.format(value, 'HH:mm')
   if (d.isSame(now, 'year')) return d.format('MM-DD')
   return d.format('YYYY-MM-DD')
-}
-
-/**
- * The line under the name. The last thing actually said wins — that is what a
- * conversation row is for. A character nobody has spoken to yet falls back to
- * what she is doing, then to her tone, so the row is never blank.
- */
-function previewOf(role) {
-  const line = role.lastMessage
-  if (line) return line.replace(/\s+/g, ' ').trim()
-  return role.presence || role.tone || localT('noLineYet')
 }
 
 /** A model's file size, so two same-named uploads can be told apart. */
@@ -449,6 +501,33 @@ const guestRoles = computed(() =>
     .slice()
     .sort(byRecency)
 )
+
+// ── Search ───────────────────────────────────────────────────────────────────
+// Local and passive: it narrows the two groups above to the rows whose name or
+// last line contains the query. The line is matched both as written (so words
+// inside narration are found) and as the row shows it. Order, grouping and the
+// selected character are untouched, and conversations the user removed stay out
+// because the groups are built from conversationRoles only.
+const query = ref('')
+const searchInput = ref(null)
+const searching = computed(() => !!query.value.trim())
+
+function clearSearch() {
+  query.value = ''
+  // Back to the field, whichever control cleared it: the caret must not be
+  // left on a button that is about to disappear.
+  searchInput.value.focus()
+}
+
+// A row is the role plus the line under its name (see previewOf in roleText).
+const toRows = (roles) => {
+  const labels = { you: localT('you'), greeting: localT('greeting'), empty: localT('noLineYet') }
+  return roles
+    .map((role) => ({ role, preview: previewOf(role, labels) }))
+    .filter((row) => matchesQuery(query.value, row.role.name || t('companion.defaultName'), row.preview.full, row.preview.line))
+}
+const regularRows = computed(() => toRows(regularRoles.value))
+const guestRows = computed(() => toRows(guestRoles.value))
 
 const hiddenRoles = computed(() => companionStore.roles.filter((role) => role.conversationHidden))
 const restoreDialogVisible = ref(false)
@@ -573,6 +652,60 @@ async function adopt(role) {
 
 @keyframes role-list-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Search field. The base reset removes an input's border and outline, so both
+   the edge and the focus state are restored here; the browser's own clear cross
+   is hidden in favour of the button that also returns focus. */
+.role-search {
+  -webkit-appearance: none;
+  appearance: none;
+  transition: border-color 0.15s;
+}
+
+.role-search:focus-visible {
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.role-search::-webkit-search-cancel-button {
+  display: none;
+}
+
+.role-search-clear:focus-visible,
+.role-search-reset:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: -2px;
+}
+
+/* The row's own button. Its hit area is stretched over the whole row, so a
+   click on the padding still selects as it always did, while Adopt and Delete
+   sit above it as siblings instead of buttons nested inside a button. The
+   content is lifted over that area so the preview's tooltip still shows. */
+.role-row-main::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 8px;
+}
+
+.role-row-main > * {
+  position: relative;
+  z-index: 1;
+}
+
+.role-row-main:focus-visible {
+  outline: none;
+}
+
+.role-row-main:focus-visible::after {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: -2px;
+}
+
+.role-row-action {
+  position: relative;
+  z-index: 1;
 }
 
 /* Adopt button: quiet until hovered, so the guest row still reads as a name

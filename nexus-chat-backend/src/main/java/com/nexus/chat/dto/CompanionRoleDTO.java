@@ -29,7 +29,7 @@ public class CompanionRoleDTO {
      */
     private java.time.LocalDateTime lastMessageAt;
 
-    /** What she is doing right now, shown as the row's subtitle. */
+    /** Stored character status, separate from the conversation's message preview. */
     private String presence;
 
     /**
@@ -38,6 +38,13 @@ public class CompanionRoleDTO {
      * Null when nothing has been said yet.
      */
     private String lastMessage;
+
+    /**
+     * Who said {@link #lastMessage}: the sender type of that same message —
+     * "user", "role" or "system", as in a conversation's own messages. Null when
+     * nothing has been said yet or the message names no sender; never a guess.
+     */
+    private String lastMessageSender;
     /** Backstory, in the card's own words. */
     private String background;
     /** Her opening line for a new evening. */
