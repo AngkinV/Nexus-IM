@@ -796,6 +796,7 @@ function mountStages() {
     // Reopening the stage restores persistent mood, never an old one-shot cue.
     stage.setState(stageState.value, { ...stageMeta.value, replay: true })
     stage.setSpeaking(speaking.value)
+    stage.setWaiting(awaitingFirstWord.value)
     // Lets the stage be checked by reading it instead of looking at it.
     if (import.meta.env.DEV) window.__tavernStage = stage
   }
@@ -828,6 +829,19 @@ watch(stageState, (state) => {
   else stage?.clearState()
 })
 watch(speaking, (value) => stage?.setSpeaking(value))
+// What is really happening in the conversation: she attends while the user
+// writes, and thinks while the model has not yet answered.
+let listeningTimer = 0
+const settleListening = () => {
+  clearTimeout(listeningTimer)
+  const writing = !!draft.value.trim() && !sending.value
+  stage?.setListening(writing)
+  // Text left sitting in the box is not someone writing to her.
+  if (writing) listeningTimer = setTimeout(() => stage?.setListening(false), 4000)
+}
+watch(draft, settleListening)
+watch(() => awaitingFirstWord.value, (value) => stage?.setWaiting(value))
+watch(sending, settleListening)
 watch(activeRoleId, () => stage?.hush('role-change'), { flush: 'sync' })
 watch(() => activeSession.value?.id, () => stage?.hush('session-change'), { flush: 'sync' })
 watch(() => interruptedStageReply(messages.value.at(-1)), (interrupted) => {
@@ -873,6 +887,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', onViewport)
   motionQuery.removeEventListener('change', onMotionPreference)
   cancelAnimationFrame(scrollFrame)
+  clearTimeout(listeningTimer)
   clearInterval(clockTimer)
   clearInterval(waitTimer)
   teardownStages()

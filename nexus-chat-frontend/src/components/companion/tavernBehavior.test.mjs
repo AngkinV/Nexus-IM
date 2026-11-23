@@ -40,25 +40,49 @@ test('every supported gesture has preparing, holding, returning and rest phases'
     const track = createTavernGestures()
     track.play(name, { turnId: name })
     const phases = new Set()
-    for (let index = 0; index < 300; index++) {
+    for (let index = 0; index < 480; index++) {
       const frame = track.update(1 / 60)
       phases.add(frame.phase)
       assert.ok(frame.weight >= 0 && frame.weight <= 1)
-      assert.ok(Object.values(frame.pose).flat().every(Number.isFinite))
+      assert.ok(frame.hold >= 0 && frame.hold <= 1)
+      assert.ok([frame.lift.left, frame.lift.right, frame.roll].every(value => Number.isFinite(value) && Math.abs(value) < 0.4))
     }
     assert.deepEqual(phases, new Set(['preparing', 'holding', 'returning', 'rest']))
+    assert.equal(track.snapshot().stats.completed, 1)
   }
 })
 
-test('wave exposes changing wrist pose and two-handed actions declare both owners', () => {
+test('wave rolls the wrist, a shrug lifts both shoulders, two-handed actions declare both owners', () => {
   const wave = createTavernGestures(); wave.play('wave')
   const wrist = []
-  for (let index = 0; index < 100; index++) wrist.push(wave.update(1 / 60).pose.rightHand[2])
+  for (let index = 0; index < 100; index++) wrist.push(wave.update(1 / 60).roll)
   assert.ok(Math.max(...wrist) - Math.min(...wrist) > 0.2)
+  const shrug = createTavernGestures(); shrug.play('shrug')
+  const lifted = advance(shrug, 0.6)
+  assert.ok(lifted.lift.left > 0.1 && lifted.lift.right > 0.1)
   for (const name of ['cross', 'shrug', 'wipe']) {
     const track = createTavernGestures(); track.play(name)
     assert.deepEqual(advance(track, 0.8).owners, ['leftHand', 'rightHand'])
   }
+})
+
+test('a new reply lets the current gesture come down instead of snapping it away; idle life never interrupts', () => {
+  const track = createTavernGestures(); track.play('cross', { turnId: 'one' })
+  advance(track, 1.2)
+  track.beginTurn('two')
+  assert.equal(track.snapshot().phase, 'returning')
+  assert.ok(track.snapshot().weight > 0.9)
+  const weights = Array.from({ length: 30 }, () => track.update(1 / 60).weight)
+  assert.ok(weights.every((value, index) => index === 0 || value <= weights[index - 1]))
+  track.play('chin', { turnId: 'two' })
+  advance(track, 0.3)
+  assert.equal(track.play('tuck', { source: 'idle' }), false)
+  assert.equal(track.snapshot().active, 'chin')
+  advance(track, 6)
+  assert.equal(track.play('tuck', { source: 'idle' }), true)
+  advance(track, 6)
+  // Idle gestures are not part of a reply, so the same one may come round again.
+  assert.equal(track.play('tuck', { source: 'idle' }), true)
 })
 
 test('cancellation releases smoothly while pause and reduced motion clear transients', () => {
@@ -75,16 +99,17 @@ test('cancellation releases smoothly while pause and reduced motion clear transi
   assert.equal(track.play('sip', { turnId: 'three' }), true)
 })
 
-test('old and malformed cues do not start actions; sip releases when speech starts', () => {
+test('old and malformed cues do not start actions; a sip keeps her mouth still and ends by itself', () => {
   const track = createTavernGestures({ now: () => 5000 })
   assert.equal(track.play('sip', { receivedAt: 1 }), false)
   assert.equal(track.play('dance'), false)
   track.play('sip', { turnId: 'fresh' })
+  assert.equal(advance(track, 0.3).blocksMouth, false)
   const held = advance(track, 1.1)
   assert.equal(held.blocksMouth, true)
-  advance(track, 0.15, { speaking: true })
-  assert.equal(track.snapshot().reason, 'speaking')
-  assert.equal(advance(track, 1).active, 'rest')
+  // She finishes the sip on her own time; her lips stay still while the glass is at them.
+  assert.equal(advance(track, 0.4).active, 'sip')
+  assert.equal(advance(track, 3).active, 'rest')
 })
 
 test('negation, recollection, hypothetical and other-subject narration are not instructions', () => {

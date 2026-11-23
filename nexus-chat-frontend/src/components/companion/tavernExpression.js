@@ -56,13 +56,20 @@ export function createTavernExpression(vrm, json) {
   }
   return {
     profile,
-    update({ mood, delta = 0, articulation = {}, blink = 0, reducedMotion = false, settled = false, blockMouth = false } = {}) {
+    update({ mood, delta = 0, articulation = {}, blink = 0, reducedMotion = false, settled = false, blockMouth = false, accent = null } = {}) {
       delta = Math.max(0, Math.min(0.1, Number.isFinite(delta) ? delta : 0))
       settled ||= reducedMotion
       lastMood = Object.hasOwn(REGIONAL_MOODS, mood) ? mood : null
       const recipe = { ...REGIONAL_MOODS[lastMood || 'calm'] }
       if (lastMood === 'shy' && profile.channels.eyeJoyLeft && profile.channels.eyeJoyRight) {
         recipe.eyeJoy = 0; recipe.eyeJoyLeft = 0.1; recipe.eyeJoyRight = 0.08
+      }
+      // A passing reaction (a laugh, a start) adds to the mood's face; the regional
+      // budgets below still cap the result.
+      if (accent && !reducedMotion) {
+        for (const [name, value] of Object.entries(accent)) {
+          if (value > 0 && Object.hasOwn(regional, name)) recipe[name] = (recipe[name] || 0) + value
+        }
       }
       blinkWeight = reducedMotion ? 0 : clamp(blink)
       const open = reducedMotion || blockMouth ? 0 : Math.min(REGION_BUDGETS.vowels, clamp(articulation.open))

@@ -95,7 +95,7 @@ test('gestures remain bounded, return to rest and respect reduced motion', () =>
     for (let i = 0; i < 500; i++) {
       const frame = track.update(0.02)
       assert.ok(frame.weight >= 0 && frame.weight <= 1)
-      assert.ok(Object.values(frame.pose).flat().every(value => Number.isFinite(value) && Math.abs(value) < Math.PI))
+      assert.ok([frame.lift.left, frame.lift.right, frame.roll].every(value => Number.isFinite(value) && Math.abs(value) < Math.PI))
     }
     assert.equal(track.snapshot().active, 'rest')
     track.play(name)
@@ -115,7 +115,9 @@ test('seated profiles are stable, varied and independently mutable', () => {
   const seats = [0, 1, 2].map(seatedPose)
   assert.equal(new Set(seats.map(seat => seat.name)).size, 3)
   assert.equal(new Set(seats.map(seat => seat.yaw)).size, 3)
-  assert.equal(new Set(seats.map(seat => `${seat.left}/${seat.right}`)).size, 3)
+  // The right hand always rests by the glass; the left varies.
+  assert.ok(seats.every(seat => seat.right === 'table' && ['table', 'across'].includes(seat.left)))
+  assert.equal(new Set(seats.map(seat => seat.left)).size, 2)
   for (const seed of [0, 1, 2, -1, 4294967295]) {
     assert.deepEqual(seatedPose(seed), seatedPose(seed))
     assert.ok(Number.isFinite(seatedPose(seed).hipY))

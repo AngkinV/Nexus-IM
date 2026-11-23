@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { createTavernSpeech } from './tavernSpeech.js'
 import { createTavernAtmosphere } from './tavernAtmosphere.js'
+import { createTavernDirector } from './tavernDirector.js'
+import { COUNTER, STAGE_CAMERA } from './tavernLayout.js'
 import {
   getFrameCap,
   scaledPixelRatio,
@@ -75,13 +77,20 @@ function headGeometry(shape) {
 // ── Scenes ───────────────────────────────────────────────────────────────────
 // Keys match tavernScenes.js. An unknown key draws the bare counter: a wrong
 // room is worse than no room.
+// interest: what she glances at when her eyes wander. glow: where the room's own
+// light pools on the back wall [x, y, width, height]. tends: she is working the
+// bar here, so an idle moment may go to wiping the glass.
 const SCENES = {
-  'rain-fireplace': { light: 1.0, flicker: 0.16, window: 'small', rain: 46, rainSpeed: 2.6, hearth: true, dust: 40, dustDrift: 0.12 },
-  'late-rain': { light: 0.72, flicker: 0.0, window: 'wide', rain: 120, rainSpeed: 4.2, hearth: false, dust: 24, dustDrift: 0.05 },
-  'empty-bar': { light: 1.08, flicker: 0.0, window: null, rain: 0, rainSpeed: 0, hearth: false, shelf: true, dust: 70, dustDrift: 0.06 },
-  'closing-time': { light: 0.56, flicker: 0.0, window: null, rain: 0, rainSpeed: 0, hearth: false, lamp: true, dust: 54, dustDrift: -0.08 }
+  'rain-fireplace': { light: 1.0, flicker: 0.16, window: 'small', rain: 46, rainSpeed: 2.6, hearth: true, dust: 40, dustDrift: 0.12,
+    interest: [2.7, -0.7, -2], glow: [2.7, -0.75, 4.4, 3.4] },
+  'late-rain': { light: 0.72, flicker: 0.0, window: 'wide', rain: 120, rainSpeed: 4.2, hearth: false, dust: 24, dustDrift: 0.05,
+    interest: [-2.9, 0.6, -2.2], glow: [-2.75, 0.5, 4.6, 4.2] },
+  'empty-bar': { light: 1.08, flicker: 0.0, window: null, rain: 0, rainSpeed: 0, hearth: false, shelf: true, dust: 70, dustDrift: 0.06,
+    interest: [3.2, 0.5, -2.4], glow: [0, 0.9, 9.5, 4.4], tends: true },
+  'closing-time': { light: 0.56, flicker: 0.0, window: null, rain: 0, rainSpeed: 0, hearth: false, lamp: true, dust: 54, dustDrift: -0.08,
+    interest: [2.2, 1.2, -0.6], glow: [2.2, 0.2, 4.2, 4.2], tends: true }
 }
-const BARE_SCENE = { light: 0.9, flicker: 0, window: null, rain: 0, rainSpeed: 0, hearth: false, dust: 30, dustDrift: 0.05 }
+const BARE_SCENE = { light: 0.9, flicker: 0, window: null, rain: 0, rainSpeed: 0, hearth: false, dust: 30, dustDrift: 0.05, interest: null, glow: null }
 
 // ── Mood and motion ──────────────────────────────────────────────────────────
 // pitch: + looks down. yaw: + turns to her left. roll: head tilt.
@@ -119,8 +128,10 @@ export function characterModelSource(character) {
 
 export function mountTavernStage(container, { shouldRender = () => true, reducedMotion = false, onActorStatus = () => {}, requestAsset = (url) => ({ url, headers: {} }) } = {}) {
   const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(42, 1.5, 0.1, 100)
-  camera.position.set(0, 0.1, 6.4)
+  // A medium shot: her head, her hands and the counter top fill the frame.
+  const camera = new THREE.PerspectiveCamera(STAGE_CAMERA.fov, 1.5, 0.1, 100)
+  camera.position.fromArray(STAGE_CAMERA.position)
+  camera.lookAt(...STAGE_CAMERA.target)
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' })
   renderer.localClippingEnabled = true
   renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -136,8 +147,20 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   const dustMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.028, transparent: true, opacity: 0.5 })
   const emberMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05, transparent: true, opacity: 0.85 })
   const counterMaterial = new THREE.MeshStandardMaterial({ color: 0x353535, roughness: 0.78 })
+  const counterFrontMaterial = new THREE.MeshStandardMaterial({ color: 0x242424, roughness: 0.9 })
   const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x7e7e7e, transparent: true, opacity: 0.2, depthWrite: false })
-  const sharedMaterials = [brightMaterial, dimMaterial, roomMaterial, rainMaterial, pointMaterial, dustMaterial, emberMaterial, counterMaterial, windowMaterial]
+  // A soft pool of the room's own light on the back wall, so she is not cut out of pure black.
+  const glowPixels = new Uint8Array(64 * 64 * 4)
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+    const falloff = Math.max(0, 1 - Math.hypot((x - 31.5) / 31.5, (y - 31.5) / 31.5))
+    glowPixels.set([255, 255, 255, Math.round(255 * falloff * falloff * (3 - 2 * falloff))], (y * 64 + x) * 4)
+  }
+  const glowTexture = new THREE.DataTexture(glowPixels, 64, 64, THREE.RGBAFormat)
+  glowTexture.magFilter = THREE.LinearFilter
+  glowTexture.minFilter = THREE.LinearFilter
+  glowTexture.needsUpdate = true
+  const glowMaterial = new THREE.MeshBasicMaterial({ map: glowTexture, color: 0x9a9a9a, transparent: true, opacity: 0, depthWrite: false })
+  const sharedMaterials = [brightMaterial, dimMaterial, roomMaterial, rainMaterial, pointMaterial, dustMaterial, emberMaterial, counterMaterial, counterFrontMaterial, windowMaterial, glowMaterial]
   const atmosphere = createTavernAtmosphere()
   const vignette = document.createElement('div')
   vignette.style.cssText = 'position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 52% 45%,transparent 38%,rgba(0,0,0,.7) 100%);opacity:.1'
@@ -226,6 +249,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
         return
       }
       actor = loaded
+      actor.setInterest(sceneConfig.interest ? interestPoint.fromArray(sceneConfig.interest) : null)
       if (currentTurn) actor.beginTurn(currentTurn)
       if (pendingGesture && !reducedMotion && performance.now() - pendingGesture.receivedAt < 3000 && shouldRender() && !document.hidden && !isRenderSuspended()) {
         actor.playGesture(pendingGesture.name, pendingGesture.cue)
@@ -316,12 +340,22 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     sceneConfig = SCENES[key] || BARE_SCENE
     const rand = mulberry32(hashString(`room|${key}`))
 
-    const counter = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.12, 1.05), counterMaterial)
-    counter.position.set(0, -1.28, 1.3)
-    const counterFront = new THREE.Mesh(new THREE.BoxGeometry(8.4, 1.5, 0.12), counterMaterial)
-    counterFront.position.set(0, -2.03, 1.72)
+    const depth = COUNTER.front - COUNTER.back
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(COUNTER.width, COUNTER.thickness, depth), counterMaterial)
+    counter.position.set(0, COUNTER.top - COUNTER.thickness / 2, (COUNTER.front + COUNTER.back) / 2)
+    const counterFront = new THREE.Mesh(new THREE.BoxGeometry(COUNTER.width, 1.5, 0.12), counterFrontMaterial)
+    counterFront.position.set(0, COUNTER.top - COUNTER.thickness - 0.75, COUNTER.front - 0.105)
     room.add(counter, counterFront)
-    room.add(polyline([[-4.2, -1.22, 1.825], [4.2, -1.22, 1.825]], roomMaterial))
+    room.add(polyline([[-COUNTER.width / 2, COUNTER.top, COUNTER.front], [COUNTER.width / 2, COUNTER.top, COUNTER.front]], roomMaterial))
+    if (sceneConfig.glow) {
+      const [x, y, width, height] = sceneConfig.glow
+      const glow = new THREE.Mesh(new THREE.PlaneGeometry(width, height), glowMaterial)
+      glow.position.set(x, y, -2.7)
+      glow.renderOrder = -3
+      room.add(glow)
+    }
+    actor?.setInterest(sceneConfig.interest ? interestPoint.fromArray(sceneConfig.interest) : null)
+    director.setTends(!!sceneConfig.tends)
     fallbackCup = polyline([
       [1.28, -1.22, 1.2], [1.24, -0.87, 1.2], [1.52, -0.87, 1.2], [1.48, -1.22, 1.2]
     ], roomMaterial)
@@ -420,6 +454,8 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
   let motionKey = null
   let speaking = false
   const speech = createTavernSpeech()
+  const director = createTavernDirector()
+  const interestPoint = new THREE.Vector3()
   let pendingGesture = null
   let currentTurn = null
   let finishIssued = false
@@ -435,6 +471,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     actor?.beginTurn(id)
   }
   let nodStartedAt = -1
+  let lastThoughtAt = -Infinity
   const pose = { pitch: 0, yaw: 0, roll: 0, forward: 0, light: 1, breath: 1, amp: 1, jitter: 0, follow: 1, speak: 0 }
   let gazeX = 0
   let gazeY = 0
@@ -513,12 +550,20 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     headPivot.rotation.y = pose.yaw * 0.65 + gazeX * 0.3 * pose.follow
     headPivot.rotation.z = pose.roll
     const articulation = speech.update(reducedMotion ? 0 : delta)
-    if (articulation.gesture) actor?.playGesture(articulation.gesture, { turnId: currentTurn, cueId: currentTurn, source: 'narration' })
-    if (turnCompleted && !finishIssued && !articulation.mouth && speech.snapshot().queued === 0) {
-      actor?.finishTurn?.()
-      finishIssued = true
+    // What she narrates about herself, and reactions carried by her own words.
+    if (articulation.gesture && actor?.playGesture(articulation.gesture, { turnId: currentTurn, cueId: currentTurn, source: 'narration' })) director.touched()
+    if (articulation.beat && actor?.playBeat(articulation.beat)) director.touched()
+    if (articulation.spoken) director.spoken(articulation.spoken)
+    director.setSpeaking(speaking || !!articulation.mouth)
+    director.setMood(moodKey)
+    const direction = director.update(delta, { busy: !actor || actor.isBusy(), reducedMotion })
+    for (const cue of direction.cues) {
+      if (cue.kind === 'beat') actor?.playBeat(cue.name)
+      else actor?.playGesture(cue.name, { source: 'idle' })
     }
-    actor?.update({ time, delta, pose, mood: moodKey, motion: motionKey, nod, gazeX, gazeY, reducedMotion, articulation, settled: ease === 1, partner: camera.position })
+    // The model's nod reaches her as a head beat; the wireframe figure keeps its own.
+    actor?.update({ time, delta, pose, mood: moodKey, motion: motionKey, nod: 0, gazeX, gazeY, reducedMotion, articulation,
+      settled: ease === 1, partner: camera.position, attention: direction.posture.lean })
     if (fallbackCup) fallbackCup.visible = !actor
     const speakPulse = articulation.open * 2
     if (headPoints) headPoints.scale.setScalar(0.96 + speakPulse * 0.035)
@@ -540,6 +585,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     roomMaterial.opacity = air.line
     dustMaterial.opacity = air.dust
     windowMaterial.opacity = air.window
+    glowMaterial.opacity = sceneConfig.glow ? Math.max(0, Math.min(0.3, 0.2 * air.key + (sceneConfig.hearth ? flicker * 0.6 : 0))) : 0
     vignette.style.opacity = String(air.vignette)
     if (lamp) lamp.rotation.z = air.lampRotation
 
@@ -601,6 +647,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     finishIssued = false
     turnCompleted = false
     nodStartedAt = -1
+    director.setWaiting(false)
     actor?.cancelTransient(reason, reason === 'character-change')
     dirty = true
   }
@@ -608,6 +655,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
     speech.pause()
     pendingGesture = null
     nodStartedAt = -1
+    director.reset()
     actor?.cancelTransient('paused')
     targetX = 0; targetY = 0
     dirty = true
@@ -692,7 +740,15 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       }
       if (mood) { moodKey = mood; atmosphere.setMood(mood) }
       if (motion) {
-        if (MOTIONS[motion].nod && !meta.replay && meta.source !== 'stored' && !reducedMotion && (motion !== motionKey || newTurn)) nodStartedAt = stageTime
+        const live = !meta.replay && meta.source !== 'stored' && !reducedMotion && (motion !== motionKey || newTurn)
+        if (MOTIONS[motion].nod && live) { nodStartedAt = stageTime; actor?.playBeat('nod', { force: true }) }
+        // "Thinking" is shown once, as a hand to her chin, not held for the whole reply.
+        if (motion === 'think' && live && !state?.gesture) {
+          // Not every thoughtful reply: the hand comes up now and then, a glance aside otherwise.
+          if (stageTime - lastThoughtAt > 30 && actor?.playGesture('chin', { turnId: currentTurn, cueId: currentTurn, source: 'motion' })) lastThoughtAt = stageTime
+          else actor?.playBeat('lookAway')
+        }
+        if (motion === 'lean_in' && live) actor?.playBeat('leanIn')
         motionKey = motion
       }
       dirty = true
@@ -719,6 +775,10 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       speech.push(text, reducedMotion || !shouldRender() || document.hidden || isRenderSuspended())
       dirty = true
     },
+    /** The user is writing to her. */
+    setListening(value) { director.setListening(value); dirty = true },
+    /** A message has gone out and the model has not answered yet. */
+    setWaiting(value) { director.setWaiting(value); dirty = true },
     beginTurn,
     hush,
     pause,
@@ -749,6 +809,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
         pose: { ...pose },
         turnId: currentTurn,
         reducedMotion,
+        director: director.snapshot(),
         atmosphere: atmosphere.snapshot(),
         room: { rain: rain?.count ?? 0, embers: embers?.count ?? 0, dust: dust?.count ?? 0, lamp: !!lamp, window: !!windowBox, builds: roomBuilds,
           cups: actor || fallbackCup?.visible ? 1 : 0, localLight: { source: sceneConfig.hearth ? 'hearth' : sceneConfig.lamp ? 'lamp' : null, intensity: roomLight.intensity },
@@ -811,6 +872,7 @@ export function mountTavernStage(container, { shouldRender = () => true, reduced
       resizeObserver.disconnect()
       scene.traverse((node) => node.geometry?.dispose())
       sharedMaterials.forEach((material) => material.dispose())
+      glowTexture.dispose()
       renderer.dispose()
       renderer.forceContextLoss()
       renderer.domElement.remove()
