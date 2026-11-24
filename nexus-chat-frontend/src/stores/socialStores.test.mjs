@@ -33,8 +33,19 @@ async function setup() {
     setActivePinia(createPinia())
     const f = {
         user: reactive({ currentUser: { id: 1 } }),
-        resolveFileUrl: v => resolveAvatarUrl(v, 'https://server'), userAPI: {}, contactAPI: {}, chatAPI: {},
-        offlineStore: { saveContacts: async () => {}, saveChats: async () => {}, getContacts: async () => [], getChats: async () => [], deleteChat: async () => {} }
+        resolveFileUrl: v => resolveAvatarUrl(v, 'https://server'), userAPI: {}, contactAPI: {},
+        // Read receipts are recorded so the badge tests can assert on the PUT
+        // that keeps a cleared unread count from coming back.
+        readReceipts: [],
+        savedChats: [],
+        chatAPI: {
+            markChatMessagesAsRead: async (chatId, userId) => { f.readReceipts.push([chatId, userId]) }
+        },
+        offlineStore: {
+            saveContacts: async () => {},
+            saveChats: async chats => { f.savedChats.push(chats.map(c => ({ id: c.id, unreadCount: c.unreadCount }))) },
+            getContacts: async () => [], getChats: async () => [], deleteChat: async () => {}
+        }
     }
     f.contact = (await loadStore('./contact.js', f)).useContactStore()
     f.chat = (await loadStore('./chat.js', f)).useChatStore()
@@ -96,4 +107,66 @@ test('real stores: contact removal beats older full snapshot; cache presence is 
     await f.contact.loadFromCache()
     assert.equal(f.contact.getUserIdentity(8).isOnline, null)
     assert.equal(f.contact.getUserIdentity(9), null)
+})
+test('real stores: opening a chat persists the read state so the badge stays gone', async () => {
+    const f = await setup()
+    const flush = () => new Promise(r => setTimeout(r, 0))
+    const snapshot = () => [{ id: 11, type: 'direct', members: [{ id: 1 }, { id: 7 }], unreadCount: 1 }]
+
+    f.chat.mergeChats(snapshot(), 1)
+    assert.equal(f.chat.chats.find(c => c.id === 11).unreadCount, 1)
+
+    f.chat.setActiveChat(f.chat.chats.find(c => c.id === 11))
+    await flush()
+    assert.equal(f.chat.chats.find(c => c.id === 11).unreadCount, 0)
+    assert.deepEqual(f.readReceipts, [[11, 1]])
+    assert.deepEqual(f.savedChats.at(-1), [{ id: 11, unreadCount: 0 }])
+
+    // A later snapshot still carrying the old server count must not revive it;
+    // because that means the reset has not landed yet, it self-heals with a
+    // second receipt instead of trusting the stale number.
+    f.chat.mergeChats(snapshot(), 1)
+    await flush()
+    assert.equal(f.chat.chats.find(c => c.id === 11).unreadCount, 0)
+    assert.equal(f.chat.activeChat.unreadCount, 0)
+    assert.deepEqual(f.readReceipts, [[11, 1], [11, 1]])
+
+    // Re-activating the same chat sends no duplicate receipt.
+    f.chat.setActiveChat(f.chat.chats.find(c => c.id === 11))
+    await flush()
+    assert.equal(f.readReceipts.length, 2)
+
+    // A closed chat keeps the server count; reopening sends a fresh receipt.
+    f.chat.setActiveChat(null)
+    f.chat.mergeChats(snapshot(), 1)
+    await flush()
+    assert.equal(f.chat.chats.find(c => c.id === 11).unreadCount, 1)
+    f.chat.setActiveChat(f.chat.chats.find(c => c.id === 11))
+    await flush()
+    assert.deepEqual(f.readReceipts, [[11, 1], [11, 1], [11, 1]])
+
+    // The virtual AI chat has no backend row, so it must not send a receipt.
+    f.chat.setActiveChat({ id: 'ai', isAi: true })
+    await flush()
+    assert.equal(f.readReceipts.length, 3)
+})
+
+test('real stores: mark-all-read also persists, and the AI chat is skipped', async () => {
+    const f = await setup()
+    const flush = () => new Promise(r => setTimeout(r, 0))
+    f.chat.mergeChats([
+        { id: 11, type: 'direct', members: [{ id: 1 }, { id: 7 }], unreadCount: 2 },
+        { id: 12, type: 'direct', members: [{ id: 1 }, { id: 8 }], unreadCount: 1 }
+    ], 1)
+
+    f.chat.markAllChatsRead()
+    await flush()
+    assert.deepEqual(f.chat.chats.map(c => c.unreadCount), [0, 0])
+    assert.equal(f.chat.totalUnreadCount, 0)
+    assert.deepEqual(f.readReceipts.map(r => r[0]).sort((a, b) => a - b), [11, 12])
+
+    // Everything is already read: no further requests.
+    f.chat.markAllChatsRead()
+    await flush()
+    assert.equal(f.readReceipts.length, 2)
 })

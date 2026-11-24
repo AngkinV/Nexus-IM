@@ -321,7 +321,9 @@ const newAgentSession = async () => {
 }
 
 const markAllRead = () => {
-  ;(chatStore.chats || []).forEach((c) => { c.unreadCount = 0 })
+  // The store also persists the read state; a local-only reset came back on the
+  // next snapshot merge.
+  chatStore.markAllChatsRead()
 }
 
 const handlePaletteAction = (command) => {
