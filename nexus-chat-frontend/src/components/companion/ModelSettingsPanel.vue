@@ -103,7 +103,7 @@
               </span>
               <p class="ms-field-note">{{ $t('companion.modelSettings.contextNote') }}</p>
             </div>
-            <select v-model.number="draft.contextHorizon" class="ms-select" :aria-label="$t('companion.modelSettings.contextHorizon')" :disabled="busy">
+            <select v-model.number="draft.contextHorizon" class="ms-select nx-field nx-field-sm" :aria-label="$t('companion.modelSettings.contextHorizon')" :disabled="busy">
               <option v-if="![128000, 64000, 32000].includes(draft.contextHorizon)" :value="draft.contextHorizon">{{ draft.contextHorizon }}</option>
               <option :value="128000">{{ $t('companion.modelSettings.horizon128') }}</option>
               <option :value="64000">{{ $t('companion.modelSettings.horizon64') }}</option>
@@ -705,16 +705,14 @@ async function save() {
   color: rgba(142, 145, 146, 0.5);
 }
 
+/* Shape and states come from the shared `nx-field`. */
 .ms-select {
-  padding: 6px 8px;
-  border-radius: 4px;
-  border: 1px solid rgba(68, 71, 72, 0.3);
-  background: #1f1f22;
-  color: #e4e1e6;
+  width: auto;
+  flex: none;
+  padding-right: 30px;
+  background-position: right 11px center;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 10px;
-  outline: none;
-  cursor: pointer;
+  font-size: 10.5px;
 }
 
 .ms-btn {

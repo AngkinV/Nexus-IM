@@ -464,53 +464,342 @@ button.tg-button:hover {
 .el-message-box__headerbtn .el-message-box__close { color: #8e9192; }
 .el-message-box__headerbtn:hover .el-message-box__close { color: #e4e1e6; }
 
-/* Inputs */
-.el-input__wrapper,
-.el-textarea__inner {
-  background-color: #16161a;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
-  border-radius: 8px;
-  transition: box-shadow 0.15s ease, background 0.15s ease;
+/* ── Fields ─────────────────────────────────────────────────
+   Every text field in the app shares one shape: a capsule one step
+   lighter than the surface under it, outlined by an inset hairline that
+   brightens on hover and again on focus. Nothing else moves, so a form
+   reads as a quiet stack of the same object. Components reach for the
+   `--field-*` values instead of repeating colours, and a field inside a
+   dialog or a popper lifts itself one more step so it stays visible there.
+
+   The shape is the one exception to "transcribed from the export" at the top
+   of this file: fields were redrawn later (2026-11) after the composer on
+   thisisask.com, in this file's own greys.
+
+   The focus hairline is #6f7274 on purpose: against the field fill that is
+   a 3:1 change, the least a keyboard user can still find. */
+:root {
+  --field-bg: #1f1f22;
+  --field-ring: #2c2c30;
+  --field-ring-hover: #3a3a3e;
+  --field-ring-focus: #6f7274;
+  --field-text: #e4e1e6;
+  --field-placeholder: #6f7274;
+  --field-icon: #8e9192;
+  --field-radius: 999px;
+  /* Anything that can grow past one line keeps a fixed corner, so the
+     capsule turns into a card instead of a stretched ellipse. */
+  --field-radius-area: 18px;
+  --field-ease: 0.2s cubic-bezier(0.2, 0, 0, 1);
+  /* The round controls that live inside a composer. */
+  --field-btn: 32px;
+  --field-btn-bg: #2a2a2d;
+  --field-btn-bg-hover: #353438;
+  --field-btn-ink: #c4c7c8;
 }
 
-.el-input__wrapper:hover,
-.el-textarea__inner:hover {
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.55) inset;
+/* Native fields. `nx-field` goes on the <input>, <textarea> or <select>
+   itself; `nx-field-shell` goes on a wrapper that holds an icon or a button
+   next to a bare input. They sit in the components layer so a utility on the
+   same element (pl-8, w-56 …) still wins. */
+@layer components {
+  .nx-field,
+  .nx-field-shell {
+    box-sizing: border-box;
+    height: 36px;
+    border: 0;
+    border-radius: var(--field-radius);
+    background-color: var(--field-bg);
+    box-shadow: 0 0 0 1px var(--field-ring) inset;
+    color: var(--field-text);
+    font-family: inherit;
+    font-size: 13.5px;
+    line-height: 20px;
+    transition: box-shadow var(--field-ease);
+  }
+
+  .nx-field {
+    width: 100%;
+    padding: 0 14px;
+    outline: none;
+    caret-color: #ffffff;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .nx-field-shell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px;
+  }
+
+  .nx-field-shell > input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    caret-color: #ffffff;
+  }
+
+  .nx-field:hover,
+  .nx-field-shell:hover { box-shadow: 0 0 0 1px var(--field-ring-hover) inset; }
+
+  .nx-field:focus,
+  .nx-field-shell:focus-within { box-shadow: 0 0 0 1px var(--field-ring-focus) inset; }
+
+  .nx-field::placeholder,
+  .nx-field-shell > input::placeholder { color: var(--field-placeholder); }
+
+  /* Each search field brings its own clear button. */
+  .nx-field::-webkit-search-cancel-button,
+  .nx-field-shell > input::-webkit-search-cancel-button { display: none; }
+
+  .nx-field:disabled {
+    background-color: transparent;
+    box-shadow: 0 0 0 1px var(--field-ring) inset;
+    color: #6f7274;
+    cursor: not-allowed;
+  }
+
+  .nx-field-sm { height: 30px; padding: 0 12px; font-size: 12.5px; }
+  .nx-field-lg { height: 44px; padding: 0 18px; font-size: 14px; }
+
+  textarea.nx-field {
+    height: auto;
+    min-height: 40px;
+    padding: 10px 14px;
+    border-radius: var(--field-radius-area);
+    line-height: 1.55;
+    resize: vertical;
+  }
+
+  select.nx-field {
+    padding-right: 34px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238e9192' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 13px center;
+    cursor: pointer;
+  }
+
+  select.nx-field:disabled { cursor: not-allowed; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nx-field,
+    .nx-field-shell { transition: none; }
+  }
 }
+
+.el-dialog,
+.el-drawer,
+.el-message-box {
+  --field-bg: #222225;
+  --field-ring: #353438;
+  --field-ring-hover: #444748;
+}
+
+.el-popper {
+  --field-bg: #26262a;
+  --field-ring: #3a3a3e;
+  --field-ring-hover: #444748;
+}
+
+.el-input {
+  --el-input-height: 36px;
+  --el-input-border-radius: var(--field-radius);
+  --el-input-bg-color: var(--field-bg);
+  --el-input-border-color: var(--field-ring);
+  --el-input-hover-border-color: var(--field-ring-hover);
+  --el-input-focus-border-color: var(--field-ring-focus);
+  --el-input-text-color: var(--field-text);
+  --el-input-placeholder-color: var(--field-placeholder);
+  --el-input-icon-color: var(--field-icon);
+  --el-input-clear-hover-color: #e4e1e6;
+}
+
+.el-input--large { --el-input-height: 44px; }
+.el-input--small { --el-input-height: 30px; }
+
+.el-input__wrapper {
+  padding: 1px 14px;
+  border-radius: var(--field-radius);
+  background-color: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  transition: box-shadow var(--field-ease);
+}
+
+.el-input--large .el-input__wrapper { padding: 1px 18px; }
+.el-input--small .el-input__wrapper { padding: 1px 12px; }
+
+.el-input__wrapper:hover { box-shadow: 0 0 0 1px var(--field-ring-hover) inset; }
 
 .el-input__wrapper.is-focus,
-.el-input__wrapper:focus-within,
-.el-textarea__inner:focus {
-  background-color: #1b1b1e;
-  box-shadow: 0 0 0 1px #8e9192 inset;
+.el-input__wrapper:focus-within {
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
 }
 
 .el-input__inner,
 .el-textarea__inner {
-  color: #e4e1e6;
+  color: var(--field-text);
   font-size: 13.5px;
+  caret-color: #ffffff;
 }
+
+.el-input--large .el-input__inner { font-size: 14px; }
+.el-input--small .el-input__inner { font-size: 12.5px; }
 
 .el-input__inner::placeholder,
-.el-textarea__inner::placeholder { color: #6f7274; }
+.el-textarea__inner::placeholder { color: var(--field-placeholder); }
 
-.el-input.is-disabled .el-input__wrapper {
-  background-color: #1b1b1e;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.18) inset;
+.el-input__prefix,
+.el-input__suffix { color: var(--field-icon); }
+
+.el-input .el-input__clear,
+.el-input .el-input__password {
+  color: var(--field-icon);
+  transition: color var(--field-ease);
 }
 
-.el-input.is-disabled .el-input__inner { color: #6f7274; }
+.el-input .el-input__clear:hover,
+.el-input .el-input__password:hover { color: #e4e1e6; }
 
-/* Select */
+/* A label or button attached to the field shares its capsule: the outer
+   end stays round, the seam between the two is a single hairline. */
+.el-input-group__append,
+.el-input-group__prepend {
+  padding: 0 20px;
+  background-color: var(--field-btn-bg);
+  color: var(--field-btn-ink);
+  box-shadow: 0 1px 0 0 var(--field-ring) inset, 0 -1px 0 0 var(--field-ring) inset, -1px 0 0 0 var(--field-ring) inset;
+}
+
+.el-input-group__prepend {
+  box-shadow: 0 1px 0 0 var(--field-ring) inset, 0 -1px 0 0 var(--field-ring) inset, 1px 0 0 0 var(--field-ring) inset;
+}
+
+/* The character counter sits on the field, not in a box of its own. */
+.el-input .el-input__count,
+.el-textarea .el-input__count {
+  color: var(--field-placeholder);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+}
+
+.el-input .el-input__count .el-input__count-inner { background: transparent; }
+
+.el-textarea .el-input__count {
+  right: 14px;
+  bottom: 8px;
+  background: var(--field-bg);
+}
+
+.el-textarea__inner {
+  padding: 10px 14px;
+  border-radius: var(--field-radius-area);
+  background-color: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  line-height: 1.55;
+  transition: box-shadow var(--field-ease);
+}
+
+.el-textarea__inner:hover { box-shadow: 0 0 0 1px var(--field-ring-hover) inset; }
+.el-textarea__inner:focus { box-shadow: 0 0 0 1px var(--field-ring-focus) inset; }
+
+.el-input.is-disabled .el-input__wrapper,
+.el-input.is-disabled .el-input__wrapper:hover,
+.el-textarea.is-disabled .el-textarea__inner,
+.el-textarea.is-disabled .el-textarea__inner:hover {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  cursor: not-allowed;
+}
+
+.el-input.is-disabled .el-input__inner,
+.el-textarea.is-disabled .el-textarea__inner {
+  color: #6f7274;
+  -webkit-text-fill-color: #6f7274;
+}
+
+.el-form-item.is-error .el-input__wrapper,
+.el-form-item.is-error .el-input__wrapper:hover,
+.el-form-item.is-error .el-input__wrapper.is-focus,
+.el-form-item.is-error .el-textarea__inner,
+.el-form-item.is-error .el-textarea__inner:focus,
+.el-form-item.is-error .el-select__wrapper {
+  box-shadow: 0 0 0 1px #b3261e inset;
+}
+
+/* Select: the same capsule. With several values chosen the tags wrap, so
+   it takes the multi-line corner. */
 .el-select__wrapper {
-  background-color: #16161a;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
-  border-radius: 8px;
+  min-height: 36px;
+  padding: 4px 14px;
+  border-radius: var(--field-radius);
+  background-color: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  font-size: 13.5px;
+  transition: box-shadow var(--field-ease);
 }
 
-.el-select__wrapper.is-focused { box-shadow: 0 0 0 1px #8e9192 inset; }
-.el-select__placeholder { color: #6f7274; }
-.el-select__selected-item { color: #e4e1e6; }
+.el-select--large .el-select__wrapper { min-height: 44px; padding: 4px 18px; }
+.el-select--small .el-select__wrapper { min-height: 30px; padding: 2px 12px; }
+
+.el-select__wrapper:has(.el-select__selection.is-near),
+.el-select__wrapper:has(.el-tag) { border-radius: var(--field-radius-area); padding-left: 8px; }
+
+.el-select__wrapper.is-hovering:not(.is-focused) { box-shadow: 0 0 0 1px var(--field-ring-hover) inset; }
+.el-select__wrapper.is-focused { box-shadow: 0 0 0 1px var(--field-ring-focus) inset; }
+
+.el-select__wrapper.is-disabled,
+.el-select__wrapper.is-disabled:hover {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+}
+
+.el-select__placeholder { color: var(--field-placeholder); }
+.el-select__selected-item { color: var(--field-text); }
+.el-select__caret { color: var(--field-icon); }
+
+/* Number field: the steppers become two round buttons inside the capsule. */
+.el-input-number { width: 148px; }
+
+.el-input-number .el-input__wrapper { padding-left: 38px; padding-right: 38px; }
+
+.el-input-number__decrease,
+.el-input-number__increase {
+  top: 50%;
+  bottom: auto;
+  width: 28px;
+  height: 28px;
+  margin-top: -14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--field-btn-bg);
+  color: var(--field-btn-ink);
+  transition: background-color var(--field-ease), color var(--field-ease);
+}
+
+.el-input-number__decrease { left: 4px; }
+.el-input-number__increase { right: 4px; }
+
+.el-input-number__decrease:hover,
+.el-input-number__increase:hover {
+  background: var(--field-btn-bg-hover);
+  color: #ffffff;
+}
+
+.el-input-number__decrease.is-disabled,
+.el-input-number__increase.is-disabled {
+  background: transparent;
+  color: #6f7274;
+}
+
+.el-input-number__decrease:hover ~ .el-input:not(.is-disabled) .el-input__wrapper,
+.el-input-number__increase:hover ~ .el-input:not(.is-disabled) .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--field-ring-hover) inset;
+}
 
 /* Poppers: dropdown / select / tooltip */
 .el-popper.is-light,

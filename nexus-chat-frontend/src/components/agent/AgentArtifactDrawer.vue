@@ -440,7 +440,9 @@ h4, .field-label { display: block; font-size: 12px; font-weight: 600; margin-blo
 .hashes { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; font-size: 12px; }
 .hashes dt { color: var(--muted); }
 select { color: var(--ink); background: var(--raised); border: 1px solid #565656; border-radius: 4px; padding-inline: 8px; font: inherit; }
-.workspace-card select { width: 100%; }.workspace-card .field-label { margin-top: 0; }
+.workspace-card select { width: 100%; padding-inline: 14px; border: 0; border-radius: var(--field-radius); background: var(--field-bg); box-shadow: 0 0 0 1px var(--field-ring) inset; transition: box-shadow var(--field-ease); }
+.workspace-card select:hover:not(:disabled) { box-shadow: 0 0 0 1px var(--field-ring-hover) inset; }
+.workspace-card select:focus-visible { outline: 0; border-radius: var(--field-radius); box-shadow: 0 0 0 1px var(--field-ring-focus) inset; }.workspace-card .field-label { margin-top: 0; }
 .hint { margin-block: 8px; }
 .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .comparison h4 { margin-top: 0; color: var(--muted); }

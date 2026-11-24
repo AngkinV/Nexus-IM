@@ -550,34 +550,6 @@ const saveProfile = async () => {
   padding-bottom: 4px;
 }
 
-.nexus-form :deep(.el-input__wrapper),
-.nexus-form :deep(.el-textarea__inner) {
-  background: #16161a;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
-  border-radius: 8px;
-  padding-left: 12px;
-}
-
-.nexus-form :deep(.el-input__wrapper.is-focus),
-.nexus-form :deep(.el-textarea__inner:focus) {
-  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
-}
-
-.nexus-form :deep(.el-input.is-disabled .el-input__wrapper) {
-  background: #1b1b1e;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.2) inset;
-}
-
-.nexus-form :deep(.el-input__prefix-inner) {
-  color: #6f7274;
-}
-
-.nexus-form :deep(.el-input__count) {
-  background: transparent;
-  color: #6f7274;
-  font-size: 10px;
-}
-
 .input-icon {
   display: none;
 }

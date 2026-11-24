@@ -53,14 +53,14 @@
       <!-- Inline search box only on the screens that have one (群组). -->
       <div
         v-if="searchPlaceholder"
-        class="hidden md:flex items-center gap-space-xs h-8 px-2 rounded bg-surface-container-low border border-outline-variant/30 w-56"
+        class="nx-field-shell hidden md:flex h-8 px-3 w-56 text-[12.5px]"
       >
         <span class="material-symbols-outlined text-[16px] text-on-surface-variant/60">search</span>
         <input
           v-model="searchValue"
           type="text"
           :placeholder="searchPlaceholder"
-          class="flex-1 bg-transparent text-on-surface font-label-sm text-label-sm outline-none placeholder-on-surface-variant/40"
+          class="bg-transparent outline-none"
         />
       </div>
 

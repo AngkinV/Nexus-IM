@@ -1503,40 +1503,44 @@ onBeforeUnmount(() => {
 
 .header-search .material-symbols-outlined {
   position: absolute;
-  left: 8px;
-  font-size: 16px;
-  color: rgba(196, 199, 200, 0.6);
+  left: 10px;
+  font-size: 15px;
+  color: var(--field-icon);
   pointer-events: none;
 }
 
 .header-search input {
-  width: 144px;
+  width: 156px;
   height: 28px;
-  padding: 0 26px 0 24px;
-  border-radius: 999px;
-  font-size: 11px;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  padding: 0 30px 0 30px;
+  border-radius: var(--field-radius);
+  font-size: 11.5px;
+  color: var(--field-text);
+  caret-color: #ffffff;
+  background: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
   outline: none;
-  transition: border-color 0.15s;
+  transition: box-shadow var(--field-ease);
 }
 
 .header-search input::placeholder {
-  color: rgba(196, 199, 200, 0.4);
+  color: var(--field-placeholder);
 }
 
 .header-search input:focus {
-  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
+}
+
+.header-search input:hover:not(:focus) {
+  box-shadow: 0 0 0 1px var(--field-ring-hover) inset;
 }
 
 .header-search kbd {
   position: absolute;
-  right: 8px;
+  right: 10px;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 9px;
-  color: rgba(196, 199, 200, 0.6);
+  color: var(--field-icon);
   pointer-events: none;
 }
 
@@ -2107,20 +2111,26 @@ onBeforeUnmount(() => {
 
 .native-select {
   width: 100%;
-  height: 32px;
-  padding: 0 28px 0 10px;
-  border-radius: 8px;
-  font-size: 11.5px;
-  color: #fafafa;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  height: 34px;
+  padding: 0 32px 0 14px;
+  border: 0;
+  border-radius: var(--field-radius);
+  font-size: 12px;
+  color: var(--field-text);
+  background: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
   outline: none;
   appearance: none;
   cursor: pointer;
+  transition: box-shadow var(--field-ease);
 }
 
 .native-select:focus {
-  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
+}
+
+.native-select:hover:not(:focus) {
+  box-shadow: 0 0 0 1px var(--field-ring-hover) inset;
 }
 
 .native-select option {

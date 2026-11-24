@@ -341,19 +341,26 @@
             ></textarea>
             <!-- While she is writing, the same button stops her. What she has
                  said so far stays. -->
-            <button v-if="sending" class="role-send is-stop" type="button" @click="stop">
-              <span>{{ $t('companion.session.stop') }}</span>
-              <span class="material-symbols-outlined">stop</span>
+            <button
+              v-if="sending"
+              class="role-send is-stop"
+              type="button"
+              :title="$t('companion.session.stop')"
+              :aria-label="$t('companion.session.stop')"
+              @click="stop"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">stop</span>
             </button>
             <button
               v-else
               class="role-send"
               type="button"
+              :title="$t('companion.send')"
+              :aria-label="$t('companion.send')"
               :disabled="!draft.trim()"
               @click="send()"
             >
-              <span>{{ $t('companion.send') }}</span>
-              <span class="material-symbols-outlined">send</span>
+              <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
             </button>
           </div>
         </div>
@@ -2087,70 +2094,106 @@ function stop() {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 8px 8px 8px 12px;
-  border-radius: 10px;
-  background: rgba(14, 14, 17, 0.9);
-  border: 1px solid rgba(68, 71, 72, 0.4);
+  padding: 6px 6px 6px 16px;
+  border-radius: 22px;
+  /* The stage shows through behind the composer, so the fill stays a
+     little translucent instead of taking the solid field colour. */
+  background: rgba(27, 27, 30, 0.86);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  transition: box-shadow var(--field-ease);
+}
+
+.role-composer-box:hover {
+  box-shadow: 0 0 0 1px var(--field-ring-hover) inset;
 }
 
 .role-composer-box:focus-within {
-  border-color: #8e9192;
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
 }
 
 .role-input-area {
   flex: 1;
   min-width: 0;
+  min-height: 32px;
   max-height: 160px;
-  padding: 4px 0;
+  padding: 6px 0;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: var(--field-text);
+  caret-color: #ffffff;
   font-family: inherit;
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 13.5px;
+  line-height: 20px;
   resize: none;
   outline: none;
 }
 
 .role-input-area::placeholder {
-  color: #6f7274;
+  color: var(--field-placeholder);
 }
 
 .role-send {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 14px;
+  justify-content: center;
+  width: var(--field-btn);
+  height: var(--field-btn);
+  padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 50%;
   background: #ffffff;
-  color: #131316;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
+  color: #2f3131;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background-color var(--field-ease), color var(--field-ease), box-shadow var(--field-ease);
+}
+
+.role-send:hover:not(:disabled) {
+  background: #e2e2e2;
 }
 
 .role-send:disabled {
-  opacity: 0.3;
+  background: var(--field-btn-bg);
+  color: #6f7274;
   cursor: not-allowed;
+}
+
+.role-send:focus-visible {
+  outline: 2px solid #e4e1e6;
+  outline-offset: 2px;
 }
 
 .role-send.is-stop {
   background: transparent;
-  border: 1px solid #8e9192;
+  box-shadow: 0 0 0 1px #8e9192 inset;
   color: #ffffff;
 }
 
 .role-send.is-stop:hover {
-  border-color: #ffffff;
+  background: transparent;
+  box-shadow: 0 0 0 1px #ffffff inset;
 }
 
 .role-send .material-symbols-outlined {
-  font-size: 16px;
+  font-size: 18px;
+}
+
+@media (pointer: coarse) {
+  .role-composer-box {
+    border-radius: 28px;
+  }
+
+  .role-input-area {
+    min-height: 44px;
+    padding: 10px 0;
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  .role-send {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 @media (max-width: 899px) {
@@ -2192,7 +2235,9 @@ function stop() {
 
 @media (prefers-reduced-motion: reduce) {
   .role-stage,
-  .role-mini-badge {
+  .role-mini-badge,
+  .role-composer-box,
+  .role-send {
     transition: none;
   }
 

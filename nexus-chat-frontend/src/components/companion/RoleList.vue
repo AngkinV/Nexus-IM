@@ -76,13 +76,13 @@
            requested, reordered or selected by typing here. -->
       <div class="relative flex items-center">
         <span
-          class="material-symbols-outlined pointer-events-none absolute left-2.5 text-[16px] text-on-surface-variant"
+          class="material-symbols-outlined pointer-events-none absolute left-3 text-[16px] text-on-surface-variant"
           aria-hidden="true"
         >search</span>
         <input
           ref="searchInput"
           v-model="query"
-          class="role-search h-9 w-full rounded-lg border border-solid border-outline-variant/40 bg-surface-container-low pl-8 pr-9 font-body-md text-[14px] text-primary placeholder:text-on-surface-variant/60"
+          class="role-search nx-field pl-9 pr-9"
           type="search"
           autocomplete="off"
           :placeholder="localT('search')"
@@ -90,7 +90,7 @@
         />
         <button
           v-if="query"
-          class="role-search-clear absolute right-0 h-9 w-9 p-0 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-150"
+          class="role-search-clear absolute right-0 h-9 w-9 p-0 flex items-center justify-center rounded-full text-on-surface-variant hover:text-primary transition-colors duration-150"
           type="button"
           :aria-label="localT('clearSearch')"
           :title="localT('clearSearch')"
@@ -646,23 +646,9 @@ async function adopt(role) {
   to { transform: rotate(360deg); }
 }
 
-/* Search field. The base reset removes an input's border and outline, so both
-   the edge and the focus state are restored here; the browser's own clear cross
-   is hidden in favour of the button that also returns focus. */
-.role-search {
-  -webkit-appearance: none;
-  appearance: none;
-  transition: border-color 0.15s;
-}
-
-.role-search:focus-visible {
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-.role-search::-webkit-search-cancel-button {
-  display: none;
-}
-
+/* Search field. Its shape and focus state come from the shared `nx-field`;
+   the browser's own clear cross is hidden there in favour of the button that
+   also returns focus. */
 .role-search-clear:focus-visible,
 .role-search-reset:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.5);

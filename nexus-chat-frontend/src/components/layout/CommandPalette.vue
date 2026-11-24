@@ -309,35 +309,46 @@ watch(
 }
 
 /* ── search row ── */
+/* The field is a capsule set into the top of the card, the same one the rest
+   of the app types into, a little larger because it is the whole point here. */
 .palette-search {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid rgba(68, 71, 72, 0.2);
-  background: rgba(27, 27, 30, 0.5);
+  margin: 0.625rem 0.625rem 0.5rem;
+  padding: 0.375rem 0.5rem 0.375rem 0.875rem;
+  border-radius: 22px;
+  background: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  transition: box-shadow var(--field-ease);
+}
+
+.palette-search:focus-within {
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
 }
 
 .palette-search-icon {
-  font-size: 20px;
-  color: #ffffff;
+  font-size: 18px;
+  color: var(--field-icon);
   flex-shrink: 0;
 }
 
 .palette-input {
   flex: 1;
   min-width: 0;
+  height: 32px;
   background: transparent;
   border: none;
   outline: none;
-  color: #e4e1e6;
+  color: var(--field-text);
+  caret-color: #ffffff;
   font-family: 'Geist Sans', system-ui, sans-serif;
-  font-size: 1rem;
-  line-height: 1.5rem;
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
 }
 
 .palette-input::placeholder {
-  color: rgba(196, 199, 200, 0.4);
+  color: var(--field-placeholder);
 }
 
 .palette-search-actions {
@@ -376,15 +387,22 @@ watch(
   white-space: nowrap;
 }
 
+/* Inside the field the key hint needs a step more contrast than the field fill. */
+.palette-search .palette-esc {
+  background: var(--field-btn-bg);
+  border-color: transparent;
+  border-radius: 999px;
+}
+
 .palette-icon-btn {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 0.25rem;
+  border-radius: 50%;
   color: #c4c7c8;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
@@ -392,7 +410,7 @@ watch(
 
 .palette-icon-btn:hover {
   color: #ffffff;
-  background: #1f1f22;
+  background: var(--field-btn-bg);
 }
 
 .palette-icon-btn .material-symbols-outlined {
