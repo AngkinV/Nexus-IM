@@ -27,7 +27,7 @@
 
         <nav class="aside-nav">
           <button
-            class="nav-item"
+            class="nav-item nav-ov"
             :class="{ active: activeSection === 'overview' }"
             @click="activeSection = 'overview'"
           >
@@ -35,7 +35,7 @@
             <span>{{ $t('profile.overview') }}</span>
           </button>
           <button
-            class="nav-item"
+            class="nav-item nav-sec"
             :class="{ active: activeSection === 'security' }"
             @click="activeSection = 'security'"
           >
@@ -43,7 +43,7 @@
             <span>{{ $t('profile.security') }}</span>
           </button>
           <button
-            class="nav-item"
+            class="nav-item nav-soc"
             :class="{ active: activeSection === 'social' }"
             @click="activeSection = 'social'"
           >
@@ -57,23 +57,23 @@
           <svg viewBox="0 0 160 160" width="150" height="150">
             <defs>
               <linearGradient id="planetBody" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stop-color="#e4e1e6" />
-                <stop offset="55%" stop-color="#c4c7c8" />
-                <stop offset="100%" stop-color="#8e9192" />
+                <stop offset="0%" stop-color="#60a5fa" />
+                <stop offset="55%" stop-color="#3b82f6" />
+                <stop offset="100%" stop-color="#1e40af" />
               </linearGradient>
               <linearGradient id="planetRing" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#c4c7c8" />
-                <stop offset="100%" stop-color="#e4e1e6" />
+                <stop offset="0%" stop-color="#93c5fd" />
+                <stop offset="100%" stop-color="#dbeafe" />
               </linearGradient>
             </defs>
             <circle cx="80" cy="78" r="40" fill="url(#planetBody)" />
-            <ellipse cx="80" cy="78" rx="38" ry="14" fill="#ffffff" opacity="0.22" />
-            <circle cx="66" cy="66" r="6" fill="#ffffff" opacity="0.4" />
-            <circle cx="92" cy="86" r="9" fill="#ffffff" opacity="0.16" />
-            <ellipse cx="80" cy="86" rx="64" ry="20" fill="none" stroke="url(#planetRing)" stroke-width="7" opacity="0.85" transform="rotate(-18 80 86)" />
-            <circle cx="32" cy="40" r="2.4" fill="#8e9192" />
-            <circle cx="128" cy="44" r="2" fill="#8e9192" />
-            <circle cx="120" cy="118" r="2.6" fill="#8e9192" />
+            <ellipse cx="80" cy="78" rx="38" ry="14" fill="#dbeafe" opacity="0.2" />
+            <circle cx="66" cy="66" r="6" fill="#dbeafe" opacity="0.4" />
+            <circle cx="92" cy="86" r="9" fill="#dbeafe" opacity="0.16" />
+            <ellipse cx="80" cy="86" rx="64" ry="20" fill="none" stroke="url(#planetRing)" stroke-width="7" opacity="0.8" transform="rotate(-18 80 86)" />
+            <circle cx="32" cy="40" r="2.4" fill="#60a5fa" />
+            <circle cx="128" cy="44" r="2" fill="#60a5fa" />
+            <circle cx="120" cy="118" r="2.6" fill="#93c5fd" />
           </svg>
         </div>
       </aside>
@@ -103,32 +103,32 @@
                   <svg viewBox="0 0 220 150" width="220" height="150">
                     <defs>
                       <linearGradient id="podium" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stop-color="#c4c7c8" />
-                        <stop offset="100%" stop-color="#8e9192" />
+                        <stop offset="0%" stop-color="#3b82f6" />
+                        <stop offset="100%" stop-color="#1e3a8a" />
                       </linearGradient>
                       <linearGradient id="bubbleA" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#ffffff" />
-                        <stop offset="100%" stop-color="#c4c7c8" />
+                        <stop offset="0%" stop-color="#93c5fd" />
+                        <stop offset="100%" stop-color="#3b82f6" />
                       </linearGradient>
                       <linearGradient id="bubbleB" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="#8e9192" />
-                        <stop offset="100%" stop-color="#6f7274" />
+                        <stop offset="0%" stop-color="#3b82f6" />
+                        <stop offset="100%" stop-color="#1d4ed8" />
                       </linearGradient>
                     </defs>
-                    <ellipse cx="120" cy="120" rx="92" ry="20" fill="url(#podium)" opacity="0.55" />
-                    <ellipse cx="120" cy="116" rx="70" ry="14" fill="#ffffff" opacity="0.5" />
+                    <ellipse cx="120" cy="120" rx="92" ry="20" fill="url(#podium)" opacity="0.5" />
+                    <ellipse cx="120" cy="116" rx="70" ry="14" fill="#93c5fd" opacity="0.45" />
                     <rect x="58" y="44" width="78" height="54" rx="16" fill="url(#bubbleA)" />
-                    <path d="M78 96 l0 16 l16 -12 z" fill="#c4c7c8" />
-                    <circle cx="80" cy="71" r="4.4" fill="#8e9192" />
-                    <circle cx="97" cy="71" r="4.4" fill="#8e9192" />
-                    <circle cx="114" cy="71" r="4.4" fill="#8e9192" />
+                    <path d="M78 96 l0 16 l16 -12 z" fill="#3b82f6" />
+                    <circle cx="80" cy="71" r="4.4" fill="#1e3a8a" />
+                    <circle cx="97" cy="71" r="4.4" fill="#1e3a8a" />
+                    <circle cx="114" cy="71" r="4.4" fill="#1e3a8a" />
                     <rect x="120" y="30" width="70" height="48" rx="15" fill="url(#bubbleB)" />
-                    <path d="M168 76 l0 15 l15 -11 z" fill="#6f7274" />
-                    <rect x="132" y="46" width="46" height="6" rx="3" fill="#ffffff" opacity="0.85" />
-                    <rect x="132" y="58" width="30" height="6" rx="3" fill="#ffffff" opacity="0.6" />
-                    <circle cx="44" cy="40" r="4" fill="#c4c7c8" />
-                    <circle cx="196" cy="96" r="5" fill="#c4c7c8" />
-                    <circle cx="182" cy="20" r="3" fill="#e4e1e6" />
+                    <path d="M168 76 l0 15 l15 -11 z" fill="#1d4ed8" />
+                    <rect x="132" y="46" width="46" height="6" rx="3" fill="#e0f2fe" opacity="0.9" />
+                    <rect x="132" y="58" width="30" height="6" rx="3" fill="#e0f2fe" opacity="0.6" />
+                    <circle cx="44" cy="40" r="4" fill="#60a5fa" />
+                    <circle cx="196" cy="96" r="5" fill="#60a5fa" />
+                    <circle cx="182" cy="20" r="3" fill="#93c5fd" />
                   </svg>
                 </div>
               </section>
@@ -481,7 +481,8 @@ const formatTime = (time) => {
 }
 
 .status-dot.online {
-  background: #ffffff;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
 }
 
 .identity-name-row {
@@ -560,6 +561,7 @@ const formatTime = (time) => {
 
 .nav-item .el-icon {
   font-size: 18px;
+  transition: color 0.2s ease;
 }
 
 .nav-item:hover {
@@ -583,6 +585,27 @@ const formatTime = (time) => {
   border-radius: 2px;
   background: #ffffff;
 }
+
+/* Per-tab accent tints: icon keeps its hue, active state borrows it */
+.nav-ov .el-icon { color: #60a5fa; }
+.nav-sec .el-icon { color: #34d399; }
+.nav-soc .el-icon { color: #818cf8; }
+
+.nav-ov:hover { background: rgba(96, 165, 250, 0.08); }
+.nav-sec:hover { background: rgba(52, 211, 153, 0.08); }
+.nav-soc:hover { background: rgba(129, 140, 248, 0.08); }
+
+.nav-ov.active { background: rgba(96, 165, 250, 0.14); }
+.nav-sec.active { background: rgba(52, 211, 153, 0.14); }
+.nav-soc.active { background: rgba(129, 140, 248, 0.14); }
+
+.nav-ov.active::before { background: #60a5fa; }
+.nav-sec.active::before { background: #34d399; }
+.nav-soc.active::before { background: #818cf8; }
+
+.nav-ov.active .el-icon { color: #93c5fd; }
+.nav-sec.active .el-icon { color: #6ee7b7; }
+.nav-soc.active .el-icon { color: #a5b4fc; }
 
 /* Decoration */
 .aside-decoration {
@@ -632,6 +655,22 @@ const formatTime = (time) => {
   margin-bottom: 22px;
 }
 
+.ov-heading {
+  position: relative;
+  padding-left: 14px;
+}
+
+.ov-heading::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+}
+
 .ov-title {
   margin: 0;
   font-size: 26px;
@@ -665,7 +704,7 @@ const formatTime = (time) => {
   font-size: 30px;
   font-style: normal;
   line-height: 1;
-  color: #353438;
+  color: rgba(96, 165, 250, 0.38);
 }
 
 .ov-quote::before { content: "\201C"; left: 0; top: -6px; }
@@ -680,7 +719,11 @@ const formatTime = (time) => {
   min-height: 132px;
   padding: 26px 30px;
   border-radius: 16px;
-  background: linear-gradient(120deg, #222225 0%, #1b1b1e 55%, #16161a 100%);
+  background:
+    radial-gradient(120% 160% at 8% 0%, rgba(37, 99, 235, 0.42) 0%, rgba(37, 99, 235, 0) 58%),
+    radial-gradient(90% 130% at 96% 100%, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 62%),
+    linear-gradient(120deg, #1c2540 0%, #1b1b1e 58%, #16161a 100%);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.16);
   overflow: hidden;
 }
 
@@ -788,15 +831,15 @@ const formatTime = (time) => {
   font-size: 12px;
 }
 
-.stat-delta.up { color: #ffffff; }
+.stat-delta.up { color: #4ade80; }
 .stat-delta.down { color: #f2b8b5; }
 .stat-delta.flat { color: #6f7274; }
 
 /* Icon tones */
-.blue { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.green { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
-.purple { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.orange { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.blue { background: rgba(96, 165, 250, 0.14); color: #7eb6fb; }
+.green { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+.purple { background: rgba(167, 139, 250, 0.14); color: #b39bfb; }
+.orange { background: rgba(251, 146, 60, 0.14); color: #fb923c; }
 
 /* Bottom columns */
 .ov-columns {
@@ -834,14 +877,16 @@ const formatTime = (time) => {
   gap: 2px;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: #7eb6fb;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: color 0.2s ease;
 }
 
-.panel-link:hover { opacity: 0.7; }
+.panel-link:hover {
+  color: #a8cdfd;
+}
 
 /* Personal info rows */
 .pi-rows {
@@ -910,7 +955,10 @@ const formatTime = (time) => {
   flex-shrink: 0;
 }
 
-.dot-online.on { background: #ffffff; }
+.dot-online.on {
+  background: #4ade80;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.16);
+}
 
 .pi-arrow {
   font-size: 14px;

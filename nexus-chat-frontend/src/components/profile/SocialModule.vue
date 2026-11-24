@@ -35,12 +35,12 @@
           <svg viewBox="0 0 240 64" preserveAspectRatio="none" width="100%" height="56">
             <defs>
               <linearGradient id="fcFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22" />
-                <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+                <stop offset="0%" stop-color="#818cf8" stop-opacity="0.3" />
+                <stop offset="100%" stop-color="#818cf8" stop-opacity="0" />
               </linearGradient>
             </defs>
             <path d="M0,50 C28,46 46,30 70,30 C98,30 110,42 138,35 C168,27 196,14 240,9 L240,64 L0,64 Z" fill="url(#fcFill)" />
-            <path d="M0,50 C28,46 46,30 70,30 C98,30 110,42 138,35 C168,27 196,14 240,9" fill="none" stroke="#c4c7c8" stroke-width="2.5" stroke-linecap="round" />
+            <path d="M0,50 C28,46 46,30 70,30 C98,30 110,42 138,35 C168,27 196,14 240,9" fill="none" stroke="#818cf8" stroke-width="2.5" stroke-linecap="round" />
           </svg>
         </div>
         <button class="panel-link foot" @click="goContacts">
@@ -406,6 +406,22 @@ onMounted(async () => {
   margin-bottom: 22px;
 }
 
+.sec-heading {
+  position: relative;
+  padding-left: 14px;
+}
+
+.sec-heading::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #818cf8 0%, #4f46e5 100%);
+}
+
 .sec-title {
   margin: 0;
   font-size: 26px;
@@ -439,7 +455,7 @@ onMounted(async () => {
   font-size: 30px;
   font-style: normal;
   line-height: 1;
-  color: #353438;
+  color: rgba(129, 140, 248, 0.38);
 }
 
 .so-quote::before { content: "\201C"; left: 0; top: -6px; }
@@ -514,14 +530,14 @@ onMounted(async () => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: #a5b4fc;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: color 0.2s ease;
 }
 
-.panel-link:hover { opacity: 0.7; }
+.panel-link:hover { color: #c7d2fe; }
 
 .panel-link.foot {
   margin-top: auto;
@@ -530,11 +546,11 @@ onMounted(async () => {
 }
 
 /* ===== Icon tones ===== */
-.blue { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.green { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
-.purple { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.orange { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.teal { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.blue { background: rgba(96, 165, 250, 0.14); color: #7eb6fb; }
+.green { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+.purple { background: rgba(167, 139, 250, 0.14); color: #b39bfb; }
+.orange { background: rgba(251, 146, 60, 0.14); color: #fb923c; }
+.teal { background: rgba(45, 212, 191, 0.14); color: #2dd4bf; }
 .red { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 /* ===== Friend count ===== */
@@ -567,7 +583,7 @@ onMounted(async () => {
 }
 
 .fc-delta .el-icon { font-size: 12px; }
-.fc-delta.up { color: #ffffff; }
+.fc-delta.up { color: #4ade80; }
 .fc-delta.down { color: #f2b8b5; }
 .fc-delta.flat { color: #6f7274; }
 
@@ -628,7 +644,7 @@ onMounted(async () => {
   text-overflow: ellipsis;
 }
 
-.row-sub.ok { color: #ffffff; }
+.row-sub.ok { color: #4ade80; }
 
 .list-empty {
   padding: 18px 4px;
@@ -648,8 +664,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #c4c7c8;
+  background: rgba(129, 140, 248, 0.16);
+  color: #a5b4fc;
   font-size: 12px;
   font-weight: 700;
 }
@@ -677,7 +693,7 @@ onMounted(async () => {
 
 .req-btn:disabled { opacity: 0.5; cursor: default; }
 .req-btn:not(:disabled):hover { transform: scale(1.06); }
-.req-btn.accept { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
+.req-btn.accept { background: rgba(74, 222, 128, 0.14); color: #4ade80; }
 .req-btn.reject { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 /* ===== Row action (unblock) ===== */
@@ -718,10 +734,23 @@ onMounted(async () => {
   border: 2px solid #131316;
 }
 
-.online-dot.on { background: #ffffff; }
+.online-dot.on {
+  background: #4ade80;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.16);
+}
 
 /* ===== Preferences ===== */
 .row.pref { align-items: center; }
+
+/* Checked switches take the tab's indigo instead of the global white. */
+.row.pref :deep(.el-switch.is-checked .el-switch__core) {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+.row.pref :deep(.el-switch.is-checked .el-switch__action) {
+  background: #ffffff;
+}
 
 /* ===== Responsive ===== */
 @media (max-width: 1080px) {
