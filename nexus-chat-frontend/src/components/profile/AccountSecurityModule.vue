@@ -235,6 +235,7 @@
       v-model="showTwoFactorDialog"
       :title="$t('profile.twoFactorSetup')"
       width="420px"
+      class="security-dialog"
       append-to-body
       @closed="resetTwoFactorDialog"
     >
@@ -330,7 +331,7 @@ const lastChangedDays = computed(() => {
 })
 
 const scoreColor = computed(() =>
-  securityScore.value >= 70 ? '#ffffff' : securityScore.value >= 40 ? '#c4c7c8' : '#f2b8b5'
+  securityScore.value >= 70 ? '#4ade80' : securityScore.value >= 40 ? '#fb923c' : '#f2b8b5'
 )
 const scoreGrade = computed(() =>
   securityScore.value >= 70 ? t('profile.strengthStrong')
@@ -578,8 +579,8 @@ const strengthText = computed(() => {
 
 const getStrengthColor = (strength) => {
   if (strength < 40) return '#f2b8b5'
-  if (strength < 70) return '#c4c7c8'
-  return '#ffffff'
+  if (strength < 70) return '#fb923c'
+  return '#4ade80'
 }
 
 // Map backend BusinessException keys to friendly i18n messages.
@@ -643,6 +644,22 @@ const changePassword = async () => {
   margin-bottom: 22px;
 }
 
+.sec-heading {
+  position: relative;
+  padding-left: 14px;
+}
+
+.sec-heading::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #34d399 0%, #059669 100%);
+}
+
 .sec-title {
   margin: 0;
   font-size: 26px;
@@ -673,8 +690,8 @@ const changePassword = async () => {
 }
 
 .sec-refresh:hover {
-  color: #ffffff;
-  border-color: rgba(142, 145, 146, 0.5);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.42);
 }
 
 .sec-refresh.spinning .el-icon {
@@ -754,14 +771,14 @@ const changePassword = async () => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: #6ee7b7;
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: color 0.2s ease;
 }
 
-.panel-link:hover { opacity: 0.7; }
+.panel-link:hover { color: #a7f3d0; }
 
 .panel-link.foot {
   margin-top: auto;
@@ -769,12 +786,25 @@ const changePassword = async () => {
   align-self: flex-start;
 }
 
+/* Primary action buttons inside the security panels take the tab's green. */
+.panel :deep(.el-button--primary) {
+  --el-button-bg-color: #15803d;
+  --el-button-border-color: #15803d;
+  --el-button-text-color: #ffffff;
+  --el-button-hover-bg-color: #166534;
+  --el-button-hover-border-color: #166534;
+  --el-button-hover-text-color: #ffffff;
+  --el-button-active-bg-color: #14532d;
+  --el-button-active-border-color: #14532d;
+  --el-button-active-text-color: #ffffff;
+}
+
 /* ===== Icon tones ===== */
-.blue { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.green { background: rgba(255, 255, 255, 0.06); color: #ffffff; }
-.purple { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.orange { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
-.teal { background: rgba(255, 255, 255, 0.06); color: #c4c7c8; }
+.blue { background: rgba(96, 165, 250, 0.14); color: #7eb6fb; }
+.green { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+.purple { background: rgba(167, 139, 250, 0.14); color: #b39bfb; }
+.orange { background: rgba(251, 146, 60, 0.14); color: #fb923c; }
+.teal { background: rgba(45, 212, 191, 0.14); color: #2dd4bf; }
 
 /* ===== Device count ===== */
 .dm-stat {
@@ -856,7 +886,7 @@ const changePassword = async () => {
   text-overflow: ellipsis;
 }
 
-.row-sub.ok { color: #ffffff; }
+.row-sub.ok { color: #4ade80; }
 .row-sub.fail { color: #f2b8b5; }
 
 .row-time {
@@ -869,8 +899,8 @@ const changePassword = async () => {
   flex-shrink: 0;
   padding: 2px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #ffffff;
+  background: rgba(52, 211, 153, 0.14);
+  color: #6ee7b7;
   font-size: 10.5px;
   font-weight: 700;
 }
@@ -926,12 +956,14 @@ const changePassword = async () => {
   gap: 12px;
   padding: 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(52, 211, 153, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.16);
   margin-bottom: 12px;
 }
 
 .ts-status.off {
   background: rgba(255, 255, 255, 0.03);
+  box-shadow: none;
 }
 
 .ts-badge {
@@ -942,13 +974,14 @@ const changePassword = async () => {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: #e4e1e6;
-  color: #131316;
+  background: linear-gradient(135deg, #34d399 0%, #059669 100%);
+  color: #06251b;
   font-size: 20px;
 }
 
 .ts-badge.off {
   background: #6f7274;
+  color: #131316;
 }
 
 .ts-status-text {
@@ -1031,7 +1064,7 @@ const changePassword = async () => {
   align-items: center;
 }
 
-.tfa-copy:hover { color: #ffffff; }
+.tfa-copy:hover { color: #6ee7b7; }
 
 .tfa-code-input :deep(.el-input__inner) {
   letter-spacing: 6px;
@@ -1070,7 +1103,7 @@ const changePassword = async () => {
   font-size: 14px;
 }
 
-.status-dot-ic.success { background: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.status-dot-ic.success { background: rgba(74, 222, 128, 0.14); color: #4ade80; }
 .status-dot-ic.failed { background: rgba(242, 184, 181, 0.12); color: #f2b8b5; }
 
 /* ===== Recommendations ===== */
@@ -1084,20 +1117,21 @@ const changePassword = async () => {
   font-size: 18px;
 }
 
-.rec-ic.done { color: #ffffff; }
-.rec-ic.todo { color: #c4c7c8; }
+.rec-ic.done { color: #4ade80; }
+.rec-ic.todo { color: #8e9192; }
 
 .rec-action {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: #6ee7b7;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  transition: color 0.2s ease;
 }
 
-.rec-action:hover { opacity: 0.7; }
+.rec-action:hover { color: #a7f3d0; }
 
 /* ===== Change-password dialog strength meter ===== */
 .strength-meter {
@@ -1118,8 +1152,8 @@ const changePassword = async () => {
 }
 
 .strength-value.weak { color: #f2b8b5; }
-.strength-value.medium { color: #c4c7c8; }
-.strength-value.strong { color: var(--tg-primary); }
+.strength-value.medium { color: #fb923c; }
+.strength-value.strong { color: #4ade80; }
 
 /* ===== Responsive ===== */
 @media (max-width: 1080px) {
@@ -1129,5 +1163,26 @@ const changePassword = async () => {
 
 @media (max-width: 720px) {
   .sec-grid-top { grid-template-columns: 1fr; }
+}
+</style>
+
+<style>
+/* Dialogs are teleported to <body>, so their footer buttons sit outside this
+   component's scope. Key the rule on the dialog's own class instead, and
+   restate the whole --el-button-* set so the global white primary palette
+   (prism.css) does not win. */
+.security-dialog .el-button--primary {
+  --el-button-bg-color: #15803d;
+  --el-button-border-color: #15803d;
+  --el-button-text-color: #ffffff;
+  --el-button-hover-bg-color: #166534;
+  --el-button-hover-border-color: #166534;
+  --el-button-hover-text-color: #ffffff;
+  --el-button-active-bg-color: #14532d;
+  --el-button-active-border-color: #14532d;
+  --el-button-active-text-color: #ffffff;
+  --el-button-disabled-bg-color: #353438;
+  --el-button-disabled-border-color: #353438;
+  --el-button-disabled-text-color: #6f7274;
 }
 </style>
