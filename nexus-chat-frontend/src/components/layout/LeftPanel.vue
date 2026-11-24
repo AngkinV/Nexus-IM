@@ -344,7 +344,8 @@ const initialOf = (name) => (name || '?').trim().charAt(0) || '?'
 const formatTime = (time) => settings.format(time)
 
 const markAllRead = () => {
-  ;(chatStore.chats || []).forEach((c) => { c.unreadCount = 0 })
+  // Delegated to the store so the cleared state is persisted to the backend.
+  chatStore.markAllChatsRead()
 }
 
 const openFromRibbon = (chat) => {

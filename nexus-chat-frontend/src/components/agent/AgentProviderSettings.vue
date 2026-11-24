@@ -373,7 +373,12 @@ async function removeOne(row) {
       {
         confirmButtonText: t('common.confirm'),
         cancelButtonText: t('common.cancel'),
-        type: 'warning'
+        type: 'warning',
+        // This dialog is pinned at z-index 10010; ElMessageBox uses the global
+        // nextZIndex() counter (~2000), so without an override the confirm box
+        // renders behind the dialog. See the unscoped <style> at the end.
+        customClass: 'provider-confirm-on-top',
+        modalClass: 'provider-confirm-on-top'
       }
     )
   } catch { return }
@@ -513,5 +518,19 @@ function testOne(row) {
   font-size: 11px;
   color: var(--tg-text-secondary);
   margin-top: 4px;
+}
+</style>
+
+<style>
+/* ElMessageBox is teleported to <body>, so this rule cannot be scoped.
+   The provider dialog is pinned at z-index 10010 (10020 for the edit dialog);
+   the delete confirm must render above both.
+   Why :has(): in Element Plus 2.x the inline z-index from nextZIndex() is set on
+   the .el-overlay-message-box wrapper, not the inner .el-message-box that
+   customClass targets. */
+.provider-confirm-on-top,
+.el-overlay-message-box:has(.provider-confirm-on-top),
+.el-overlay:has(.provider-confirm-on-top) {
+  z-index: 20000 !important;
 }
 </style>
