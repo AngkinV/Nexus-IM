@@ -24,6 +24,8 @@ async def test_native_reasoning_has_real_node_and_public_order_not_answer(monkey
     assert all(e.data['runId'] == events[0].data['runId'] and e.data['at'] >= 0 for e in public)
     node = next(e.data for e in public if e.name == 'stage' and e.data.get('phase') == 'model')
     assert node['parentIds'] == ['context']
+    # The parent it names is a step that was itself reported under that id, exactly once.
+    assert [e.data['phase'] for e in public if e.name == 'stage' and e.data.get('nodeId') == 'context'] == ['context']
     assert next(e.data for e in public if e.name == 'reasoning')['nodeId'] == node['nodeId']
     assert public[0].data['model'] == 'eval-model'
     assert public[-2].data['usageReported'] is True

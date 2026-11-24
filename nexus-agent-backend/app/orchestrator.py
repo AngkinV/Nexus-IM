@@ -450,8 +450,10 @@ async def _prepare_context(state: AgentState, ctx: _RunContext) -> dict[str, Any
     )
 
     # Each of these is announced once the step is over, so it says how the step ended.
+    # The id is the one the first model call (and a collaboration) names as its parent.
     await ctx.outbox.emit("stage", {
         "phase": "context",
+        "nodeId": "context",
         "status": "done",
         "shortTerm": len(short_term),
         "recalled": len(relevant_history),

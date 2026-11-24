@@ -140,7 +140,7 @@ T1 本会话拥有：身份/终态/错误分级/调用统计/取消与 call 提�
 - T2 范围：每轮/恢复/取回结果都要当前授权；`install_run_policies()` 在服务启动时通过 `install_authorizers` 安装 T2 的复用/重放判定，授权绑定为 `[scopeKey, sessionGeneration]`。
 - 恢复顺序：Java `AgentRunService.resumeWriter(..., authorize)` 先接受恢复，再轮换授权；重复的恢复请求在轮换前被拒绝。
 - 工具执行只有一条路径：Nexus 内建工具走范围校验；`srv_*` 托管工具交给 T4A `ManagedMcpExecutor` → `T4BPolicyAdapter` → T4B 守卫；旧式外部 MCP 注册不再提供也不可调用。
-- T6 像素工作区读取本契约的 `agentId / nodeId / parentIds / status / reused`；context、knowledge、attachments 阶段事件现在带 `status`。
+- T6 像素工作区读取本契约的 `agentId / nodeId / parentIds / status / reused`；context、knowledge、attachments 阶段事件现在带 `status`。context 阶段事件另带 `nodeId: "context"`，与首个模型节点和协同节点 `parentIds` 里的 `context` 对上，界面据此画出这条依赖；没有这个字段的历史记录不画连线。
 
 已合入但运行链路尚未调用（模块与各自回归在，行为未生效）：
 - T3 `app/efficiency`（运行预算、事实读取）与 Java `facts/AgentMessageReader`：`get_recent_messages` 仍是 T2 的范围版，未切到分页读取器；切换前需配置 `agent.message-query.storage-zone`。
