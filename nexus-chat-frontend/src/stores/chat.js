@@ -131,11 +131,17 @@ export const useChatStore = defineStore('chat', () => {
     // group avatar appear inconsistent across clients.
     const ledger = createRevisionLedger()
     const membership = new Map()
+    // Chats whose read state is already persisted on the backend. The key is
+    // dropped again as soon as a new unread message arrives for that chat, so
+    // the next activation sends a fresh read receipt.
+    const readSyncedChats = new Set()
+
     const userStore = useUserStore()
     watch(() => userStore.currentUser?.id, owner => {
         if (ledger.setOwner(owner)) {
             isLoading.value = false; loadError.value = false; membership.clear(); chats.value = []; activeChat.value = null; messages.value = []
             subscribedChatIds.value = new Set()
+            readSyncedChats.clear()
             // Never import the legacy unscoped preference keys into another account.
             const read = key => { try { return JSON.parse(localStorage.getItem(`${key}:${owner}`) || '[]') } catch { return [] } }
             mutedChats.value = new Set(read('mutedChats'))
@@ -280,6 +286,8 @@ export const useChatStore = defineStore('chat', () => {
         if (chatIndex !== -1) {
             chats.value[chatIndex].unreadCount = (chats.value[chatIndex].unreadCount || 0) + 1
         }
+        // New unread content: the next activation must send a fresh receipt.
+        readSyncedChats.delete(String(chatId))
     }
 
     // Mark chat as subscribed
@@ -322,14 +330,66 @@ export const useChatStore = defineStore('chat', () => {
         if (lastFetchUserId != null) fetchChats(lastFetchUserId)
     }
 
+    // The AI assistant chat is virtual: it has no backend chat row, so a read
+    // receipt for it would 404.
+    const isPersistedChat = (chatId) => chatId != null && String(chatId) !== String(AI_ASSISTANT_CHAT_ID)
+
+    /**
+     * Persist the read state to the backend. Clearing the badge locally is not
+     * enough: every later snapshot merge (cache / delta sync / fetchChats)
+     * carries the server's stale unreadCount and would bring the badge back.
+     * Fire-and-forget so a failing request never blocks opening a chat.
+     */
+    const syncChatReadState = (chatId) => {
+        if (!isPersistedChat(chatId)) return
+        const key = String(chatId)
+        if (readSyncedChats.has(key)) return
+        const userId = userStore.currentUser?.id
+        if (userId == null) return
+        readSyncedChats.add(key)
+        Promise.resolve()
+            .then(() => chatAPI.markChatMessagesAsRead?.(chatId, userId))
+            .catch((e) => {
+                readSyncedChats.delete(key)
+                console.warn('[ChatStore] Read-state sync failed', e)
+            })
+    }
+
+    // Write the current list (unread counts included) to the offline cache so a
+    // restart cannot resurrect a badge we already cleared.
+    const persistChatCache = () => {
+        const owner = userStore.currentUser?.id
+        if (owner == null) return
+        offlineStore.saveChats(chats.value.map(c => ({ ...c, _socialOwner: owner })))
+            .catch(e => console.warn('[ChatStore] Cache write failed', e))
+    }
+
+    // Mark every chat read, locally and on the backend (same defect class as
+    // setActiveChat: a local-only reset is undone by the next merge).
+    const markAllChatsRead = () => {
+        let changed = false
+        for (const chat of chats.value) {
+            if ((chat.unreadCount || 0) > 0) {
+                chat.unreadCount = 0
+                changed = true
+                syncChatReadState(chat.id)
+            }
+        }
+        if (activeChat.value) activeChat.value.unreadCount = 0
+        if (changed) persistChatCache()
+    }
+
     const setActiveChat = (chat) => {
         activeChat.value = chat
         // Mark as read when opening chat
         if (chat) {
             const chatIndex = chats.value.findIndex(c => c.id === chat.id)
-            if (chatIndex !== -1) {
+            if (chatIndex !== -1 && (chats.value[chatIndex].unreadCount || 0) > 0) {
                 chats.value[chatIndex].unreadCount = 0
+                persistChatCache()
             }
+            // Persist it, otherwise the next merge restores the server count.
+            syncChatReadState(chat.id)
         }
     }
 
@@ -572,6 +632,17 @@ export const useChatStore = defineStore('chat', () => {
             const merged = ledger.merge(dto.id, existing, normalized, token)
             if (!merged) continue
             if (merged.type === 'GROUP') { delete merged.online; delete merged.status; delete merged.isOnline }
+            // The server count is authoritative for a closed chat, so keep the
+            // read receipt pending. The chat the user is looking at is read by
+            // definition: its reset may still be in flight when this snapshot
+            // was produced, which is exactly how the badge came back.
+            if ((merged.unreadCount || 0) > 0) {
+                readSyncedChats.delete(String(merged.id))
+                if (sameId(merged.id, activeChat.value?.id)) {
+                    merged.unreadCount = 0
+                    syncChatReadState(merged.id)
+                }
+            }
             if (idx < 0) chats.value.push(merged)
             else chats.value[idx] = merged
             for (const member of merged.members || []) {
@@ -598,6 +669,7 @@ export const useChatStore = defineStore('chat', () => {
         chats.value = []
         messages.value = []
         subscribedChatIds.value = new Set()
+        readSyncedChats.clear()
         // hiddenChats is per-account state; clear so the next user does not
         // inherit it. (mutedChats / pinnedChats follow the same pattern via
         // localStorage scoping handled at logout elsewhere if needed.)
@@ -643,6 +715,7 @@ export const useChatStore = defineStore('chat', () => {
         getMessagesForChat,
         updateChat,
         incrementUnreadCount,
+        markAllChatsRead,
         markChatSubscribed,
         isChatSubscribed,
         updateMemberOnlineStatus,

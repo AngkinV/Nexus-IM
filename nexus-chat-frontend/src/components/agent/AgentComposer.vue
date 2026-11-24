@@ -9,6 +9,11 @@
         <el-select :model-value="targetKeys" multiple :aria-label="g('agentScope.title')" :disabled="busy || workspace.scopeLoading" @update:model-value="chooseTargets">
           <el-option v-for="item in resources" :key="resourceKey(item)" :value="resourceKey(item)" :label="`${g('agentScope.' + item.type)} · ${item.label} (#${item.id})`" />
         </el-select>
+        <div v-if="scopeGroups.length" class="scope-groups">
+          <button v-for="entry in scopeGroups" :key="entry.key" type="button" class="scope-group" :title="`${t('openGroupChat')} · ${entry.label}`" @click="enterGroupChat(entry)">
+            <span aria-hidden="true" class="material-symbols-outlined">forum</span>{{ t('openGroupChat') }} · {{ entry.label }}
+          </button>
+        </div>
         <el-input :model-value="workspace.scopeSelection.timeRange.fromInclusive || ''" :aria-label="g('agentScope.fromLabel')" :placeholder="g('agentScope.fromLabel')" @update:model-value="v => changeRange('fromInclusive', v)" />
         <el-input :model-value="workspace.scopeSelection.timeRange.toExclusive || ''" :aria-label="g('agentScope.toLabel')" :placeholder="g('agentScope.toLabel')" @update:model-value="v => changeRange('toExclusive', v)" />
         <el-input :model-value="workspace.scopeSelection.timeRange.timeZone" :aria-label="g('agentScope.zone')" :placeholder="g('agentScope.zone')" @update:model-value="v => changeRange('timeZone', v)" />
@@ -29,23 +34,27 @@
         <p v-if="workspace.scopeError" role="alert">{{ workspace.scopeError }}</p>
       </el-collapse-item>
     </el-collapse>
+    <!-- The field is a capsule: add on the left, send on the right, the text between
+         them. Everything that tunes the next message sits on the line underneath. -->
     <div class="prompt-box">
       <div v-if="selected.length" class="selected-files"><button v-for="file in selected" :key="file.id" type="button" :title="t('removeContext')" @click="toggle(file)"><span aria-hidden="true" class="material-symbols-outlined">draft</span>{{ file.fileName }} <span aria-hidden="true">×</span></button></div>
       <label class="sr-only" for="agent-workbench-prompt">{{ t('prompt') }}</label>
-      <textarea id="agent-workbench-prompt" ref="input" rows="2" :value="draft" :placeholder="g('agent.placeholder')" @input="inputChanged" @keydown="keyDown" @compositionstart="composing = true" @compositionend="endComposition"></textarea>
-      <div class="control-line"><div class="tools"><button type="button" class="tool" :aria-label="t('attach')" :title="t('attach')" :disabled="uploading || busy" @click="picker.click()"><span class="material-symbols-outlined" aria-hidden="true">attach_file</span></button><input ref="picker" type="file" multiple hidden @change="uploadFiles" />
+      <div class="prompt-row">
+        <button type="button" class="tool attach" :aria-label="t('attach')" :title="t('attach')" :disabled="uploading || busy" @click="picker.click()"><span class="material-symbols-outlined" aria-hidden="true">add</span></button><input ref="picker" type="file" multiple hidden @change="uploadFiles" />
+        <textarea id="agent-workbench-prompt" ref="input" rows="1" :value="draft" :placeholder="g('agent.placeholder')" @input="inputChanged" @keydown="keyDown" @compositionstart="composing = true" @compositionend="endComposition"></textarea>
+        <button v-if="!agent.streaming" type="button" class="send" :aria-label="g('agent.send')" :title="g('agent.send')" :disabled="!draft.trim() || busy || uploading || (targetKeys.length > 0 && !workspace.scopeConfirmed)" @click="send"><span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span></button>
+        <button v-else type="button" class="send" :aria-label="g(agent.messages.at(-1)?.status === 'stop_requested' ? 'agent.stopping' : 'agent.stop')" :title="g(agent.messages.at(-1)?.status === 'stop_requested' ? 'agent.stopping' : 'agent.stop')" :disabled="agent.messages.at(-1)?.status === 'stop_requested'" @click="agent.cancelStream()?.catch?.(() => {})"><span class="material-symbols-outlined" aria-hidden="true">stop</span></button>
+      </div>
+    </div>
+    <div class="control-line"><div class="tools">
         <button type="button" class="tool" :class="{ on: web }" :aria-label="t('web')" :aria-pressed="web" :title="t('webHint')" @click="web = !web"><span class="material-symbols-outlined" aria-hidden="true">language</span></button>
         <button type="button" class="tool" :class="{ on: collaboration }" :aria-label="t('collaboration')" :aria-pressed="collaboration" :title="t('collaborationHint')" @click="collaboration = !collaboration"><span class="material-symbols-outlined" aria-hidden="true">hub</span></button>
         <button type="button" class="tool" :aria-label="t('workspace')" :aria-expanded="workspaceOpen" :title="t('workspace')" @click="openWorkspace"><span class="material-symbols-outlined" aria-hidden="true">folder_open</span></button>
         <ElButton text class="tool mcp-entry" :aria-label="t('mcp')" :aria-expanded="mcpOpen" :title="t('mcp')" :disabled="agent.switching" @click="mcpOpen = true"><span class="material-symbols-outlined" aria-hidden="true">extension</span></ElButton>
         <KnowledgeBaseSelector @manage="emit('manage-kb')" />
-      </div><div class="send-tools"><span class="count">{{ count }}/4000</span>
-        <button v-if="!agent.streaming" type="button" class="send" :aria-label="g('agent.send')" :title="g('agent.send')" :disabled="!draft.trim() || busy || uploading || (targetKeys.length > 0 && !workspace.scopeConfirmed)" @click="send"><span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span></button>
-        <button v-else type="button" class="send" :aria-label="g(agent.messages.at(-1)?.status === 'stop_requested' ? 'agent.stopping' : 'agent.stop')" :title="g(agent.messages.at(-1)?.status === 'stop_requested' ? 'agent.stopping' : 'agent.stop')" :disabled="agent.messages.at(-1)?.status === 'stop_requested'" @click="agent.cancelStream()?.catch?.(() => {})"><span class="material-symbols-outlined" aria-hidden="true">stop</span></button>
-      </div></div>
-      <p v-if="uploading" role="status" class="feedback">{{ t('uploading') }}</p>
-      <p v-if="errorText" class="feedback" role="alert">{{ errorText }} <button v-if="retryFile" type="button" @click="upload([retryFile])">{{ t('retry') }}</button></p>
-    </div>
+      </div><div class="send-tools"><span class="count">{{ count }}/4000</span></div></div>
+    <p v-if="uploading" role="status" class="feedback">{{ t('uploading') }}</p>
+    <p v-if="errorText" class="feedback" role="alert">{{ errorText }} <button v-if="retryFile" type="button" @click="upload([retryFile])">{{ t('retry') }}</button></p>
     <div v-if="web || collaboration" class="disclosure" role="status"><span v-if="web">{{ t('webHint') }}</span><span v-if="collaboration">{{ t('collaborationHint') }}</span></div>
     <el-dialog v-model="workspaceOpen" :title="t('workspace')" width="min(92vw, 520px)" append-to-body>
       <section class="workspace"><h4>{{ t('files') }}</h4><p v-if="!workspace.attachments.length">{{ t('noFiles') }}</p>
@@ -60,11 +69,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import { ElButton, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent'
+import { useChatStore } from '@/stores/chat'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useUserStore } from '@/stores/user'
 import { useAgentWorkspaceStore } from '@/stores/agentWorkspace'
 import KnowledgeBaseSelector from './KnowledgeBaseSelector.vue'
 import AgentMcpManager from './AgentMcpManager.vue'
@@ -73,10 +84,14 @@ const props = defineProps({ options: { type: Object, required: true }, mcpRunAut
 const emit = defineEmits(['manage-kb'])
 const { t: g } = useI18n({ useScope: 'global' })
 const { t } = useI18n({ useScope: 'local', messages: {
-  en: { prompt:'Message', attach:'Attach context files', removeContext:'Remove from this prompt', web:'Web search', webHint:'Web search sends your question, not attachment contents, to the search service.', collaboration:'Collaboration', collaborationHint:'Collaboration runs three analyses and a synthesis using the selected model.', workspace:'Session files and tasks', mcp:'MCP services', uploading:'Uploading…', maxFiles:'Choose up to four files for this message.', fileSize:'Each attachment must be 5 MB or less.', files:'Context files', noFiles:'No files in this session.', tasks:'Session tasks', noTasks:'No tasks created from artifacts.', retry:'Retry', deleteFile:'Remove this file from the session?', sendFailed:'Could not send the message.' },
-  zh: { prompt:'消息', attach:'添加上下文附件', removeContext:'从本轮移除', web:'联网检索', webHint:'联网检索只向搜索服务发送问题，不发送附件内容。', collaboration:'多智能体协同', collaborationHint:'协同模式将使用所选模型分别执行三次分析，再汇总回答。', workspace:'会话文件与任务', mcp:'MCP 服务', uploading:'正在上传…', maxFiles:'每轮最多选择四个文件。', fileSize:'单个附件不能超过 5 MB。', files:'上下文文件', noFiles:'会话中暂无文件。', tasks:'会话任务', noTasks:'尚未从产物创建任务。', retry:'重试', deleteFile:'从本会话移除这个文件？', sendFailed:'消息未发送。' }
+  en: { prompt:'Message', attach:'Attach context files', removeContext:'Remove from this prompt', web:'Web search', webHint:'Web search sends your question, not attachment contents, to the search service.', collaboration:'Collaboration', collaborationHint:'Collaboration runs three analyses and a synthesis using the selected model.', workspace:'Session files and tasks', mcp:'MCP services', uploading:'Uploading…', maxFiles:'Choose up to four files for this message.', fileSize:'Each attachment must be 5 MB or less.', files:'Context files', noFiles:'No files in this session.', tasks:'Session tasks', noTasks:'No tasks created from artifacts.', retry:'Retry', deleteFile:'Remove this file from the session?', sendFailed:'Could not send the message.', openGroupChat:'Open group chat', groupUnavailable:'That group conversation is not available yet. Reload the chat list and try again.' },
+  zh: { prompt:'消息', attach:'添加上下文附件', removeContext:'从本轮移除', web:'联网检索', webHint:'联网检索只向搜索服务发送问题，不发送附件内容。', collaboration:'多智能体协同', collaborationHint:'协同模式将使用所选模型分别执行三次分析，再汇总回答。', workspace:'会话文件与任务', mcp:'MCP 服务', uploading:'正在上传…', maxFiles:'每轮最多选择四个文件。', fileSize:'单个附件不能超过 5 MB。', files:'上下文文件', noFiles:'会话中暂无文件。', tasks:'会话任务', noTasks:'尚未从产物创建任务。', retry:'重试', deleteFile:'从本会话移除这个文件？', sendFailed:'消息未发送。', openGroupChat:'进入群聊', groupUnavailable:'这个群聊还没加载出来，请刷新会话列表后重试。' }
 } })
 const agent = useAgentStore(), knowledge = useKnowledgeStore(), workspace = useAgentWorkspaceStore()
+const chatStore = useChatStore(), user = useUserStore()
+// The workspace already offers a group as a readable scope target; opening that
+// group's conversation is the same click, not a second place to look for it.
+const setActiveView = inject('setActiveView', () => {})
 const receiptMessage = computed(() => agent.messages.findLast(m => m.role === 'assistant' && m.runId))
 const receipt = computed(() => receiptMessage.value?.scopeState === 'observed' ? receiptMessage.value.actualScope : null)
 const receiptActive = computed(() => agent.streaming && receiptMessage.value?.status === 'streaming')
@@ -89,6 +104,24 @@ const busy = computed(() => agent.switching || submitting.value || agent.streami
 const selected = computed(() => workspace.attachments.filter(f => selection.value.includes(f.id)))
 const resources = computed(() => [...workspace.scopeResources.contacts, ...workspace.scopeResources.groups])
 const resourceKey = item => `${item.type}:${item.id}`
+// A scope row is an authorization candidate, not a conversation, so the entry
+// resolves the real chat from the chat store and only then opens it.
+const scopeGroups = computed(() => workspace.scopeResources.groups
+  .map(item => ({ key: resourceKey(item), label: item.label, chatId: item.chatId ?? item.id })))
+const groupChatOf = chatId => chatStore.groupChats.find(c => String(c.id) === String(chatId))
+async function enterGroupChat(entry) {
+  errorText.value = ''
+  let group = groupChatOf(entry.chatId)
+  if (!group) {
+    // The chat snapshot may not have arrived yet; ask once instead of hiding the entry.
+    const userId = user.currentUser?.id
+    try { if (userId) await chatStore.fetchChats(userId) } catch (e) { errorText.value = messageOf(e) }
+    group = groupChatOf(entry.chatId)
+  }
+  if (!group) { errorText.value = t('groupUnavailable'); return }
+  chatStore.setActiveChat(group)
+  setActiveView('chats')
+}
 const targetKeys = computed(() => workspace.scopeSelection.targets.map(resourceKey))
 function chooseTargets(keys) {
   // A half-typed time boundary must not make choosing a target fail silently.
@@ -165,6 +198,51 @@ async function changeTask(task) { try { await workspace.updateTask(agent.session
 
 <style scoped>
 .scope-controls{--el-color-primary:#888;--el-color-primary-light-3:#aaa;--el-color-primary-light-5:#bbb;--el-color-primary-light-7:#ccc;--el-color-primary-light-9:#eee;--el-color-primary-dark-2:#666;min-width:0;max-width:100%;margin-bottom:8px;color:inherit}.scope-controls :deep(.el-collapse-item__content){display:grid;gap:8px;color:inherit;overflow-wrap:anywhere}.scope-controls :deep(.el-select),.scope-controls :deep(.el-input){width:100%;min-width:0}.scope-controls :deep(.el-button){min-height:44px;margin:0;max-width:100%;white-space:normal}.scope-controls :deep(.el-collapse-item__header){min-height:44px}.scope-controls :deep(.el-input__wrapper),.scope-controls :deep(.el-select__wrapper){min-height:44px}.scope-controls :deep(:focus-visible){outline:2px solid #999;outline-offset:2px}
-.mcp-entry.el-button{min-width:44px;min-height:44px;padding:0;margin:0;color:#aaaab2;background:transparent;border:0}.mcp-entry.el-button:hover,.mcp-entry.el-button:focus-visible{color:#fff;background:#323236}
-.composer-foot{flex:none;padding:4px max(16px,calc((100% - 768px)/2)) max(10px,env(safe-area-inset-bottom));background:var(--wb-base,#131316);min-width:0}.prompt-box{padding:9px 10px 7px;background:var(--wb-card,#101012);border:1px solid #39393d;border-radius:12px}.prompt-box:focus-within{border-color:#9d9da3}textarea{display:block;width:100%;resize:none;background:transparent;border:0;outline:0;color:#eee;font:inherit;font-size:14px;line-height:1.55;min-height:40px;max-height:132px;padding:2px 4px;overflow-y:auto}textarea::placeholder{color:#96969e}.control-line,.tools,.send-tools,.selected-files{display:flex;align-items:center;gap:4px}.control-line{justify-content:space-between}.tools{min-width:0;flex-wrap:wrap}.send-tools{gap:6px}.tool,.send{width:30px;height:30px;display:grid;place-items:center;border-radius:6px;color:#aaaab2}.tool:hover,.tool.on,.tool:focus-visible{color:white;background:#323236}.tool.on{box-shadow:inset 0 0 0 1px #777}.send{background:#fafafa;color:#131316}.send:disabled,.tool:disabled{opacity:.45}.material-symbols-outlined{font-size:17px}.count,.disclosure,.feedback{font:11px/1.5 var(--wb-mono,monospace);color:#aaaab2}.disclosure{display:flex;gap:6px;flex-wrap:wrap;margin:4px 4px 0}.selected-files{flex-wrap:wrap;padding-bottom:5px}.selected-files button{display:flex;align-items:center;gap:4px;border:1px solid #424247;border-radius:20px;padding:2px 7px;font-size:11px}.feedback button,.file-row button{text-decoration:underline}.feedback{margin-top:5px}.workspace h4{font-weight:600;margin:14px 0 6px}.file-row,.task-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;overflow-wrap:anywhere}.workspace input{accent-color:#888}.task-row{justify-content:flex-start}.composer-foot button:focus-visible{outline:2px solid #eee;outline-offset:2px}.tools :deep(.kb-text){max-width:110px}@media(max-width:700px){.composer-foot{padding-inline:10px}.tools :deep(.kb-text){max-width:68px}.prompt-box{padding:6px}}@media(pointer:coarse){textarea{font-size:16px}.tool,.send{min-width:44px;min-height:44px}.tools{gap:1px}.tools :deep(.kb-text){display:none}.count{font-size:10px}}
+.scope-groups{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.scope-group{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-height:32px;padding:4px 11px;border:0;border-radius:var(--field-radius);background:var(--field-btn-bg);color:var(--field-btn-ink);font:inherit;font-size:12px;overflow-wrap:anywhere;text-align:left;transition:background-color var(--field-ease),color var(--field-ease)}
+.scope-group:hover,.scope-group:focus-visible{background:var(--field-btn-bg-hover);color:#fff}
+.scope-group .material-symbols-outlined{font-size:14px}
+.composer-foot{flex:none;padding:4px max(16px,calc((100% - 768px)/2)) max(10px,env(safe-area-inset-bottom));background:var(--wb-base,#131316);min-width:0}
+.prompt-box{padding:6px;background:var(--field-bg);border-radius:22px;box-shadow:0 0 0 1px var(--field-ring) inset;transition:box-shadow var(--field-ease)}
+.prompt-box:hover{box-shadow:0 0 0 1px var(--field-ring-hover) inset}
+.prompt-box:focus-within{box-shadow:0 0 0 1px var(--field-ring-focus) inset}
+.prompt-row{display:flex;align-items:flex-end;gap:8px}
+textarea{display:block;flex:1;min-width:0;resize:none;background:transparent;border:0;outline:0;color:var(--field-text);caret-color:#fff;font:inherit;font-size:13.5px;line-height:20px;min-height:32px;max-height:132px;padding:6px 2px;overflow-y:auto}
+textarea::placeholder{color:var(--field-placeholder)}
+.control-line,.tools,.send-tools,.selected-files{display:flex;align-items:center;gap:4px}
+.control-line{justify-content:space-between;min-height:26px;margin-top:6px;padding:0 4px}
+.tools{min-width:0;flex-wrap:wrap;gap:2px}
+.send-tools{gap:6px;flex:none}
+.tool,.send{flex:none;display:grid;place-items:center;border-radius:50%;transition:background-color var(--field-ease),color var(--field-ease),opacity var(--field-ease)}
+.tool{width:28px;height:28px;color:var(--field-icon)}
+.tool:hover,.tool.on,.tool:focus-visible{color:#fff;background:var(--field-btn-bg)}
+.tool.attach,.send{width:var(--field-btn);height:var(--field-btn)}
+.tool.attach{color:var(--field-btn-ink);background:var(--field-btn-bg)}
+.tool.attach:hover,.tool.attach:focus-visible{color:#fff;background:var(--field-btn-bg-hover)}
+.send{background:#fff;color:#2f3131}
+.send:hover:not(:disabled){background:#e2e2e2}
+.send:disabled{background:var(--field-btn-bg);color:#6f7274}
+.tool:disabled{opacity:.45}
+.material-symbols-outlined{font-size:17px}
+.tool.attach .material-symbols-outlined,.send .material-symbols-outlined{font-size:18px}
+.mcp-entry.el-button{width:28px;height:28px;min-width:0;min-height:0;padding:0;margin:0;color:var(--field-icon);background:transparent;border:0;border-radius:50%}
+.mcp-entry.el-button:hover,.mcp-entry.el-button:focus-visible{color:#fff;background:var(--field-btn-bg)}
+.count,.disclosure,.feedback{font:11px/1.5 var(--wb-mono,monospace);color:var(--field-icon)}
+.count{padding:0 4px;color:var(--field-placeholder)}
+.disclosure{display:flex;gap:6px;flex-wrap:wrap;margin:4px 8px 0}
+.selected-files{flex-wrap:wrap;padding:2px 2px 6px}
+.selected-files button{display:flex;align-items:center;gap:4px;border-radius:13px;padding:3px 9px;font-size:11px;color:var(--field-btn-ink);background:var(--field-btn-bg);transition:background-color var(--field-ease),color var(--field-ease)}
+.selected-files button:hover{color:#fff;background:var(--field-btn-bg-hover)}
+.selected-files .material-symbols-outlined{font-size:14px}
+.feedback button,.file-row button{text-decoration:underline}
+.feedback{margin:5px 8px 0}
+.workspace h4{font-weight:600;margin:14px 0 6px}
+.file-row,.task-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;overflow-wrap:anywhere}
+.workspace input{accent-color:#888}
+.task-row{justify-content:flex-start}
+.composer-foot button:focus-visible{outline:2px solid #eee;outline-offset:2px}
+.tools :deep(.kb-text){max-width:110px}
+@media(max-width:700px){.composer-foot{padding-inline:10px}.tools :deep(.kb-text){max-width:68px}}
+@media(pointer:coarse){textarea{font-size:16px;line-height:24px;min-height:44px;padding:10px 2px}.prompt-box{border-radius:28px}.tool,.tool.attach,.send,.mcp-entry.el-button{width:44px;height:44px}.tools{gap:1px}.tools :deep(.kb-text){display:none}.count{font-size:10px}}
+@media(prefers-reduced-motion:reduce){.prompt-box,.tool,.send,.selected-files button{transition:none}}
 </style>

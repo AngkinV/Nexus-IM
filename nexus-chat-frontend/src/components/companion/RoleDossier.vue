@@ -42,7 +42,7 @@
         <textarea
           id="dossier-card-background"
           v-model="cardBackground"
-          class="dossier-textarea"
+          class="dossier-textarea nx-field"
           rows="3"
           maxlength="600"
           :placeholder="$t('companion.card.backgroundPlaceholder')"
@@ -51,7 +51,7 @@
         <textarea
           id="dossier-card-greeting"
           v-model="cardGreeting"
-          class="dossier-textarea"
+          class="dossier-textarea nx-field"
           rows="2"
           maxlength="300"
           :placeholder="$t('companion.card.greetingPlaceholder')"
@@ -88,14 +88,14 @@
         </div>
 
         <div class="memory-new">
-          <select v-model="newMemoryType" class="dossier-select">
+          <select v-model="newMemoryType" class="dossier-select nx-field nx-field-sm">
             <option value="short_term">{{ $t('companion.shortTerm') }}</option>
             <option value="mid">{{ $t('companion.midTerm') }}</option>
             <option value="long_term">{{ $t('companion.longTerm') }}</option>
           </select>
           <input
             v-model="newMemoryContent"
-            class="dossier-input"
+            class="dossier-input nx-field nx-field-sm"
             type="text"
             :placeholder="$t('companion.memoryPlaceholder')"
             @keyup.enter="addMemory"
@@ -471,42 +471,27 @@ async function removeMemory(memory) {
   margin-bottom: 10px;
 }
 
+/* Shape and states come from the shared `nx-field`; only the layout is set here. */
 .dossier-select,
 .dossier-input {
-  height: 28px;
-  border-radius: 4px;
-  background: #131316;
-  border: 1px solid rgba(68, 71, 72, 0.3);
-  color: #e4e1e6;
-  font-family: inherit;
-  font-size: 12px;
-  padding: 0 8px;
-  outline: none;
   min-width: 0;
 }
 
 .dossier-select {
-  flex: 0 0 68px;
+  flex: 0 0 76px;
+  padding-right: 26px;
+  background-position: right 10px center;
 }
 
 .dossier-input {
   flex: 1;
 }
 
-.dossier-input::placeholder {
-  color: #6f7274;
-}
-
-.dossier-select:focus,
-.dossier-input:focus {
-  border-color: #8e9192;
-}
-
 .dossier-btn {
   flex-shrink: 0;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
   border: 1px solid rgba(68, 71, 72, 0.4);
   background: #1b1b1e;
   color: #ffffff;
@@ -533,26 +518,9 @@ async function removeMemory(memory) {
 
 .dossier-textarea {
   display: block;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: #131316;
-  border: 1px solid rgba(68, 71, 72, 0.3);
-  color: #e4e1e6;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.55;
-  resize: vertical;
-  outline: none;
-}
-
-.dossier-textarea::placeholder {
-  color: #6f7274;
-}
-
-.dossier-textarea:focus {
-  border-color: #8e9192;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 12.5px;
 }
 
 .card-foot {

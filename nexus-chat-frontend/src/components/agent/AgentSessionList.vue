@@ -20,11 +20,11 @@
         <kbd class="ml-auto font-code text-[11px] text-on-surface-variant" aria-hidden="true">{{ modifier }}N</kbd>
       </button>
       <div class="relative flex items-center">
-        <span class="material-symbols-outlined pointer-events-none absolute left-2 text-[16px] text-on-surface-variant" aria-hidden="true">search</span>
+        <span class="material-symbols-outlined pointer-events-none absolute left-3 text-[16px] text-on-surface-variant" aria-hidden="true">search</span>
         <input ref="searchInput" v-model="searchQuery" type="search" autocomplete="off" aria-keyshortcuts="Meta+K Control+K"
-          class="h-9 w-full rounded-md border border-outline-variant/30 bg-surface-container-low pl-8 pr-14 text-sm text-primary"
+          class="nx-field pl-9 pr-14"
           :placeholder="$t('agent.history.search')" :aria-label="$t('agent.history.search')" />
-        <kbd v-if="!searchQuery" class="pointer-events-none absolute right-2 font-code text-[11px] text-on-surface-variant" aria-hidden="true">{{ modifier }}K</kbd>
+        <kbd v-if="!searchQuery" class="pointer-events-none absolute right-3 font-code text-[11px] text-on-surface-variant" aria-hidden="true">{{ modifier }}K</kbd>
         <button v-else type="button" class="icon-button absolute right-1" :aria-label="$t('palette.clear')" :title="$t('palette.clear')"
           @click="searchQuery = ''; focusSearch()">
           <span class="material-symbols-outlined" aria-hidden="true">close</span>

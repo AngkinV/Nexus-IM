@@ -10,67 +10,61 @@
       </button>
     </div>
 
+    <!-- One capsule: attach on the left, the text, then the quiet extras and send. -->
     <div class="composer">
-      <!-- Toolbar -->
-      <div class="composer-toolbar">
-        <div class="toolbar-left">
-          <el-popover
-            placement="top-start"
-            trigger="click"
-            :width="320"
-            :show-arrow="false"
-            popper-class="emoji-popper"
-          >
-            <template #reference>
-              <button class="tool-btn" :title="$t('chat.emoji')" :aria-label="$t('chat.emoji')" @click="pickerTheme = currentTheme()">
-                <span class="material-symbols-outlined">sentiment_satisfied</span>
-              </button>
-            </template>
-            <EmojiPicker
-              :native="true"
-              :theme="pickerTheme"
-              :disable-skin-tones="true"
-              @select="onEmoji"
-            />
-          </el-popover>
-          <button class="tool-btn" @click="triggerUpload" :title="$t('chat.attachFile')" :aria-label="$t('chat.attachFile')">
-            <span class="material-symbols-outlined">attach_file</span>
-          </button>
+      <button class="tool-btn tool-add" type="button" @click="triggerUpload" :title="$t('chat.attachFile')" :aria-label="$t('chat.attachFile')">
+        <span class="material-symbols-outlined">add</span>
+      </button>
 
-          <button class="tool-btn" @click="triggerUpload" :title="$t('chat.image')" :aria-label="$t('chat.image')">
-            <span class="material-symbols-outlined">image</span>
-          </button>
-          <button class="tool-btn" :title="$t('chat.voiceMessage')" :aria-label="$t('chat.voiceMessage')" @click="showComingSoon">
-            <span class="material-symbols-outlined">mic</span>
-          </button>
-        </div>
+      <div class="input-field">
+        <el-input
+          v-model="content"
+          type="textarea"
+          :autosize="{ minRows: 1, maxRows: 5 }"
+          :placeholder="$t('chat.composerPlaceholder')"
+          resize="none"
+          class="custom-textarea"
+          @keydown.enter.prevent="handleEnter"
+        />
       </div>
 
-      <!-- Input + send -->
-      <div class="composer-row">
-        <div class="input-field">
-          <el-input
-            v-model="content"
-            type="textarea"
-            :autosize="{ minRows: 2, maxRows: 4 }"
-            :placeholder="$t('chat.composerPlaceholder')"
-            resize="none"
-            class="custom-textarea"
-            @keydown.enter.prevent="handleEnter"
-          />
-        </div>
-
-        <button
-          class="send-btn"
-          type="button"
-          @click="sendMessage"
-          :title="$t('chat.sendMessage')"
-          :aria-label="$t('chat.sendMessage')"
+      <div class="composer-tools">
+        <el-popover
+          placement="top-end"
+          trigger="click"
+          :width="320"
+          :show-arrow="false"
+          popper-class="emoji-popper"
         >
-          <span class="send-label">{{ $t('chat.send') }}</span>
-          <span class="material-symbols-outlined">send</span>
+          <template #reference>
+            <button class="tool-btn" type="button" :title="$t('chat.emoji')" :aria-label="$t('chat.emoji')" @click="pickerTheme = currentTheme()">
+              <span class="material-symbols-outlined">sentiment_satisfied</span>
+            </button>
+          </template>
+          <EmojiPicker
+            :native="true"
+            :theme="pickerTheme"
+            :disable-skin-tones="true"
+            @select="onEmoji"
+          />
+        </el-popover>
+        <button class="tool-btn" type="button" @click="triggerUpload" :title="$t('chat.image')" :aria-label="$t('chat.image')">
+          <span class="material-symbols-outlined">image</span>
+        </button>
+        <button class="tool-btn" type="button" :title="$t('chat.voiceMessage')" :aria-label="$t('chat.voiceMessage')" @click="showComingSoon">
+          <span class="material-symbols-outlined">mic</span>
         </button>
       </div>
+
+      <button
+        class="send-btn"
+        type="button"
+        @click="sendMessage"
+        :title="$t('chat.sendMessage')"
+        :aria-label="$t('chat.sendMessage')"
+      >
+        <span class="material-symbols-outlined">arrow_upward</span>
+      </button>
     </div>
 
     <FileUpload
@@ -219,70 +213,79 @@ const handleUploadError = (error) => {
   color: #ffffff;
 }
 
-/* ── Composer shell ─────────────────────────────────────── */
-/* Composer card — mirrors the exported screen:
-   rounded-xl bg-surface-container-low border-outline-variant/30 p-space-sm gap-space-xs */
+/* ── Composer ───────────────────────────────────────────── */
 .composer {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  background: #1b1b1e;
-  border: 1px solid rgba(68, 71, 72, 0.3);
-  border-radius: 12px;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px;
+  background: var(--field-bg);
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  transition: box-shadow var(--field-ease);
+}
+
+.composer:hover {
+  box-shadow: 0 0 0 1px var(--field-ring-hover) inset;
 }
 
 .composer:focus-within {
-  border-color: rgba(68, 71, 72, 0.6);
-  background: #1f1f22;
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
 }
 
-.composer-toolbar {
+.composer-tools {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 4px;
+  flex-shrink: 0;
 }
 
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.tool-btn {
-  width: 28px;
-  height: 28px;
+.tool-btn,
+.send-btn {
+  flex-shrink: 0;
+  width: var(--field-btn);
+  height: var(--field-btn);
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  background: transparent;
-  border-radius: 4px;
-  color: #c4c7c8;
+  border-radius: 50%;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition: background-color var(--field-ease), color var(--field-ease), transform 0.1s ease;
 }
 
-.tool-btn .material-symbols-outlined {
+.tool-btn {
+  background: transparent;
+  color: var(--field-icon);
+}
+
+.tool-btn .material-symbols-outlined,
+.send-btn .material-symbols-outlined {
   font-size: 18px;
 }
 
 .tool-btn:hover {
-  background: #2a2a2d;
+  background: var(--field-btn-bg);
   color: #ffffff;
 }
 
-.tool-btn:active {
-  transform: scale(0.95);
+.tool-add {
+  background: var(--field-btn-bg);
+  color: var(--field-btn-ink);
 }
 
-.composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 0 4px;
+.tool-add:hover {
+  background: var(--field-btn-bg-hover);
+}
+
+.tool-btn:active,
+.send-btn:active {
+  transform: scale(0.94);
+}
+
+.tool-btn:focus-visible,
+.send-btn:focus-visible {
+  outline: 2px solid #e4e1e6;
+  outline-offset: 2px;
 }
 
 .input-field {
@@ -290,75 +293,64 @@ const handleUploadError = (error) => {
   min-width: 0;
 }
 
+/* The capsule owns the outline, so the textarea inside it is bare. */
 .custom-textarea :deep(.el-textarea__inner) {
-  min-height: 44px !important;
-  max-height: 112px;
-  padding: 0;
+  min-height: 32px !important;
+  max-height: 132px;
+  padding: 6px 2px;
   border: none;
   border-radius: 0;
   box-shadow: none;
   background: transparent;
-  color: #ffffff;
+  color: var(--field-text);
   font-family: inherit;
-  font-size: 12px;
-  line-height: 1.625;
-  letter-spacing: -0.005em;
+  font-size: 13.5px;
+  line-height: 20px;
   resize: none;
 }
 
+.custom-textarea :deep(.el-textarea__inner):hover,
 .custom-textarea :deep(.el-textarea__inner):focus {
   box-shadow: none;
 }
 
 .custom-textarea :deep(.el-textarea__inner)::placeholder {
-  color: rgba(196, 199, 200, 0.4);
+  color: var(--field-placeholder);
 }
 
 .send-btn {
-  flex-shrink: 0;
-  height: 36px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: none;
-  border-radius: 8px;
   background: #ffffff;
   color: #2f3131;
-  font-size: 12px;
-  line-height: 18px;
-  letter-spacing: 0.01em;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.send-btn .material-symbols-outlined {
-  font-size: 16px;
 }
 
 .send-btn:hover {
   background: #e2e2e2;
 }
 
-.send-btn:active {
-  transform: scale(0.95);
+@media (pointer: coarse) {
+  .composer {
+    border-radius: 28px;
+  }
+
+  .tool-btn,
+  .send-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .custom-textarea :deep(.el-textarea__inner) {
+    min-height: 44px !important;
+    padding: 10px 2px;
+    font-size: 16px;
+    line-height: 24px;
+  }
 }
 
-@media (max-width: 768px) {
-  .composer {
-    padding: 6px;
-  }
-
-  .send-label {
-    display: none;
-  }
-
+@media (prefers-reduced-motion: reduce) {
+  .composer,
+  .tool-btn,
   .send-btn {
-    width: 32px;
-    padding: 0;
-    justify-content: center;
+    transition: none;
   }
 }
 </style>
