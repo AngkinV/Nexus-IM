@@ -190,6 +190,13 @@ test('board selection binds the drawer to the originating run, not the newest ru
   const v = await mount([{ ...message, id: 'msg-one', runId: 'run-one', artifacts: [{ id: 'old', name: 'one.md' }] }, message]); v.nodes('section')
   const board = v.widgets.AgentExecutionBoard
   assert.equal(board?.props?.run?.id, 'msg-two')
+  // It is docked above the conversation: not inside the feed, which is the only part that scrolls.
+  const inside = (node, found = []) => { if (node && typeof node === 'object') { found.push(node); if (node.component) inside(node.component.subTree, found); else if (Array.isArray(node.children)) node.children.flat(Infinity).forEach(child => inside(child, found)) } return found }
+  const feed = v.nodes('div').find(n => n.props?.class === 'feed'), dock = v.nodes('div').find(n => n.props?.class === 'board-dock')
+  assert.ok(feed && dock)
+  assert.ok(inside(dock).includes(board) && !inside(feed).includes(board))
+  const shell = v.nodes('section').find(n => /agent-chat-view/.test(n.props?.class || '')).children.flat(Infinity)
+  assert.ok(shell.indexOf(dock) > -1 && shell.indexOf(dock) < shell.indexOf(feed))
   board.props.onPreview(stores.agent.messages[0].artifacts[0]); await v.paint(); v.nodes('section')
   assert.equal(v.widgets.AgentArtifactDrawer.props.run.runId, 'run-one')
   assert.equal(v.widgets.AgentArtifactDrawer.props.artifact.name, 'one.md')
