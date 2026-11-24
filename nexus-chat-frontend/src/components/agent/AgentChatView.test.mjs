@@ -96,14 +96,21 @@ async function mount(messages = [], sessionId = 'session-one', describeModelErro
     }),
     agentProviders: reactive({ providers: [selected, { id: 9, purpose: 'embedding', defaultModel: 'vector-only' }],
       chatProviders: [selected], defaultProvider: selected, async fetchAll() {} }),
-    knowledge: reactive({ activeKbId: 'kb-42' }), user: { currentUser: { nickname: 'Quinn' } }, chat: { clearActiveChat() { calls.push(['back']) } }
+    knowledge: reactive({ activeKbId: 'kb-42' }), user: { currentUser: { id: 3, nickname: 'Quinn' } },
+    // The workspace can open a group conversation it already lists; only the
+    // groups the chat store holds are openable, so the stub starts empty.
+    chat: reactive({ groupChats: [], clearActiveChat() { calls.push(['back']) }, setActiveChat(chat) { calls.push(['open', chat.id]) },
+      async fetchChats() { calls.push(['chats']); this.groupChats = [{ id: 77, type: 'GROUP', name: 'Design review' }] } })
   }
   const root = h(View), app = renderer.createApp({ render: () => root })
   app.provide('isMobile', ref(false)).provide('activeView', ref('ai')).provide('toggleList', () => calls.push(['list']))
+  app.provide('setActiveView', view => calls.push(['view', view]))
   app.use(createI18n({ legacy: false, locale: 'en', messages: { en }, missingWarn: false, fallbackWarn: false }))
   for (const name of ['ElDropdown', 'ElDropdownMenu', 'ElDropdownItem', 'ElDialog']) {
     app.component(name, { name, inheritAttrs: false, setup: (_, { slots, attrs }) => () => name !== 'ElDialog' || attrs.modelValue ? h('div', [slots.default?.(), slots.dropdown?.(), slots.footer?.()]) : null })
   }
+  // The scope panel is a collapse; render its content so the controls inside it stay testable.
+  for (const name of ['el-collapse', 'el-collapse-item']) app.component(name, { inheritAttrs: false, setup: (_, { slots }) => () => h('div', slots.default?.()) })
   app.mount(new Host('main')); apps.push(app); await paint()
   function walk(node, result = []) {
     if (!node || typeof node !== 'object') return result
@@ -287,4 +294,23 @@ test('local stop cannot advertise confirmed cancellation in the header or answer
   const v = await mount([current])
   assert.match(v.text(), /Stop unconfirmed/)
   assert.doesNotMatch(v.text(), /Cancelled/)
+})
+
+test('a readable group in the scope panel opens that group conversation instead of only being selectable', async () => {
+  const v = await mount()
+  stores.agentWorkspace.scopeResources = { contacts: [], groups: [{ type: 'group', id: 77, chatId: 77, label: 'Design review' }] }
+  await v.paint()
+  // The entry does not wait for the chat snapshot; opening it fetches the chat list once.
+  await v.click(/open group chat/i)
+  assert.deepEqual(v.calls.filter(c => ['chats', 'open', 'view'].includes(c[0])), [['chats'], ['open', 77], ['view', 'chats']])
+})
+
+test('a group the chat list does not contain reports why instead of navigating anywhere', async () => {
+  const v = await mount()
+  stores.chat.fetchChats = async () => { v.calls.push(['chats']) }
+  stores.agentWorkspace.scopeResources = { contacts: [], groups: [{ type: 'group', id: 88, chatId: 88, label: 'Gone' }] }
+  await v.paint()
+  await v.click(/open group chat/i)
+  assert.deepEqual(v.calls.filter(c => ['chats', 'open', 'view'].includes(c[0])), [['chats']])
+  assert.match(v.text(), /not available yet/i)
 })

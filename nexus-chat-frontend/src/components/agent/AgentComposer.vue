@@ -9,6 +9,11 @@
         <el-select :model-value="targetKeys" multiple :aria-label="g('agentScope.title')" :disabled="busy || workspace.scopeLoading" @update:model-value="chooseTargets">
           <el-option v-for="item in resources" :key="resourceKey(item)" :value="resourceKey(item)" :label="`${g('agentScope.' + item.type)} · ${item.label} (#${item.id})`" />
         </el-select>
+        <div v-if="scopeGroups.length" class="scope-groups">
+          <button v-for="entry in scopeGroups" :key="entry.key" type="button" class="scope-group" :title="`${t('openGroupChat')} · ${entry.label}`" @click="enterGroupChat(entry)">
+            <span aria-hidden="true" class="material-symbols-outlined">forum</span>{{ t('openGroupChat') }} · {{ entry.label }}
+          </button>
+        </div>
         <el-input :model-value="workspace.scopeSelection.timeRange.fromInclusive || ''" :aria-label="g('agentScope.fromLabel')" :placeholder="g('agentScope.fromLabel')" @update:model-value="v => changeRange('fromInclusive', v)" />
         <el-input :model-value="workspace.scopeSelection.timeRange.toExclusive || ''" :aria-label="g('agentScope.toLabel')" :placeholder="g('agentScope.toLabel')" @update:model-value="v => changeRange('toExclusive', v)" />
         <el-input :model-value="workspace.scopeSelection.timeRange.timeZone" :aria-label="g('agentScope.zone')" :placeholder="g('agentScope.zone')" @update:model-value="v => changeRange('timeZone', v)" />
@@ -64,11 +69,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import { ElButton, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgentStore } from '@/stores/agent'
+import { useChatStore } from '@/stores/chat'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useUserStore } from '@/stores/user'
 import { useAgentWorkspaceStore } from '@/stores/agentWorkspace'
 import KnowledgeBaseSelector from './KnowledgeBaseSelector.vue'
 import AgentMcpManager from './AgentMcpManager.vue'
@@ -77,10 +84,14 @@ const props = defineProps({ options: { type: Object, required: true }, mcpRunAut
 const emit = defineEmits(['manage-kb'])
 const { t: g } = useI18n({ useScope: 'global' })
 const { t } = useI18n({ useScope: 'local', messages: {
-  en: { prompt:'Message', attach:'Attach context files', removeContext:'Remove from this prompt', web:'Web search', webHint:'Web search sends your question, not attachment contents, to the search service.', collaboration:'Collaboration', collaborationHint:'Collaboration runs three analyses and a synthesis using the selected model.', workspace:'Session files and tasks', mcp:'MCP services', uploading:'Uploading…', maxFiles:'Choose up to four files for this message.', fileSize:'Each attachment must be 5 MB or less.', files:'Context files', noFiles:'No files in this session.', tasks:'Session tasks', noTasks:'No tasks created from artifacts.', retry:'Retry', deleteFile:'Remove this file from the session?', sendFailed:'Could not send the message.' },
-  zh: { prompt:'消息', attach:'添加上下文附件', removeContext:'从本轮移除', web:'联网检索', webHint:'联网检索只向搜索服务发送问题，不发送附件内容。', collaboration:'多智能体协同', collaborationHint:'协同模式将使用所选模型分别执行三次分析，再汇总回答。', workspace:'会话文件与任务', mcp:'MCP 服务', uploading:'正在上传…', maxFiles:'每轮最多选择四个文件。', fileSize:'单个附件不能超过 5 MB。', files:'上下文文件', noFiles:'会话中暂无文件。', tasks:'会话任务', noTasks:'尚未从产物创建任务。', retry:'重试', deleteFile:'从本会话移除这个文件？', sendFailed:'消息未发送。' }
+  en: { prompt:'Message', attach:'Attach context files', removeContext:'Remove from this prompt', web:'Web search', webHint:'Web search sends your question, not attachment contents, to the search service.', collaboration:'Collaboration', collaborationHint:'Collaboration runs three analyses and a synthesis using the selected model.', workspace:'Session files and tasks', mcp:'MCP services', uploading:'Uploading…', maxFiles:'Choose up to four files for this message.', fileSize:'Each attachment must be 5 MB or less.', files:'Context files', noFiles:'No files in this session.', tasks:'Session tasks', noTasks:'No tasks created from artifacts.', retry:'Retry', deleteFile:'Remove this file from the session?', sendFailed:'Could not send the message.', openGroupChat:'Open group chat', groupUnavailable:'That group conversation is not available yet. Reload the chat list and try again.' },
+  zh: { prompt:'消息', attach:'添加上下文附件', removeContext:'从本轮移除', web:'联网检索', webHint:'联网检索只向搜索服务发送问题，不发送附件内容。', collaboration:'多智能体协同', collaborationHint:'协同模式将使用所选模型分别执行三次分析，再汇总回答。', workspace:'会话文件与任务', mcp:'MCP 服务', uploading:'正在上传…', maxFiles:'每轮最多选择四个文件。', fileSize:'单个附件不能超过 5 MB。', files:'上下文文件', noFiles:'会话中暂无文件。', tasks:'会话任务', noTasks:'尚未从产物创建任务。', retry:'重试', deleteFile:'从本会话移除这个文件？', sendFailed:'消息未发送。', openGroupChat:'进入群聊', groupUnavailable:'这个群聊还没加载出来，请刷新会话列表后重试。' }
 } })
 const agent = useAgentStore(), knowledge = useKnowledgeStore(), workspace = useAgentWorkspaceStore()
+const chatStore = useChatStore(), user = useUserStore()
+// The workspace already offers a group as a readable scope target; opening that
+// group's conversation is the same click, not a second place to look for it.
+const setActiveView = inject('setActiveView', () => {})
 const receiptMessage = computed(() => agent.messages.findLast(m => m.role === 'assistant' && m.runId))
 const receipt = computed(() => receiptMessage.value?.scopeState === 'observed' ? receiptMessage.value.actualScope : null)
 const receiptActive = computed(() => agent.streaming && receiptMessage.value?.status === 'streaming')
@@ -93,6 +104,24 @@ const busy = computed(() => agent.switching || submitting.value || agent.streami
 const selected = computed(() => workspace.attachments.filter(f => selection.value.includes(f.id)))
 const resources = computed(() => [...workspace.scopeResources.contacts, ...workspace.scopeResources.groups])
 const resourceKey = item => `${item.type}:${item.id}`
+// A scope row is an authorization candidate, not a conversation, so the entry
+// resolves the real chat from the chat store and only then opens it.
+const scopeGroups = computed(() => workspace.scopeResources.groups
+  .map(item => ({ key: resourceKey(item), label: item.label, chatId: item.chatId ?? item.id })))
+const groupChatOf = chatId => chatStore.groupChats.find(c => String(c.id) === String(chatId))
+async function enterGroupChat(entry) {
+  errorText.value = ''
+  let group = groupChatOf(entry.chatId)
+  if (!group) {
+    // The chat snapshot may not have arrived yet; ask once instead of hiding the entry.
+    const userId = user.currentUser?.id
+    try { if (userId) await chatStore.fetchChats(userId) } catch (e) { errorText.value = messageOf(e) }
+    group = groupChatOf(entry.chatId)
+  }
+  if (!group) { errorText.value = t('groupUnavailable'); return }
+  chatStore.setActiveChat(group)
+  setActiveView('chats')
+}
 const targetKeys = computed(() => workspace.scopeSelection.targets.map(resourceKey))
 function chooseTargets(keys) {
   // A half-typed time boundary must not make choosing a target fail silently.
@@ -169,6 +198,10 @@ async function changeTask(task) { try { await workspace.updateTask(agent.session
 
 <style scoped>
 .scope-controls{--el-color-primary:#888;--el-color-primary-light-3:#aaa;--el-color-primary-light-5:#bbb;--el-color-primary-light-7:#ccc;--el-color-primary-light-9:#eee;--el-color-primary-dark-2:#666;min-width:0;max-width:100%;margin-bottom:8px;color:inherit}.scope-controls :deep(.el-collapse-item__content){display:grid;gap:8px;color:inherit;overflow-wrap:anywhere}.scope-controls :deep(.el-select),.scope-controls :deep(.el-input){width:100%;min-width:0}.scope-controls :deep(.el-button){min-height:44px;margin:0;max-width:100%;white-space:normal}.scope-controls :deep(.el-collapse-item__header){min-height:44px}.scope-controls :deep(.el-input__wrapper),.scope-controls :deep(.el-select__wrapper){min-height:44px}.scope-controls :deep(:focus-visible){outline:2px solid #999;outline-offset:2px}
+.scope-groups{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.scope-group{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-height:32px;padding:4px 11px;border:0;border-radius:var(--field-radius);background:var(--field-btn-bg);color:var(--field-btn-ink);font:inherit;font-size:12px;overflow-wrap:anywhere;text-align:left;transition:background-color var(--field-ease),color var(--field-ease)}
+.scope-group:hover,.scope-group:focus-visible{background:var(--field-btn-bg-hover);color:#fff}
+.scope-group .material-symbols-outlined{font-size:14px}
 .composer-foot{flex:none;padding:4px max(16px,calc((100% - 768px)/2)) max(10px,env(safe-area-inset-bottom));background:var(--wb-base,#131316);min-width:0}
 .prompt-box{padding:6px;background:var(--field-bg);border-radius:22px;box-shadow:0 0 0 1px var(--field-ring) inset;transition:box-shadow var(--field-ease)}
 .prompt-box:hover{box-shadow:0 0 0 1px var(--field-ring-hover) inset}
