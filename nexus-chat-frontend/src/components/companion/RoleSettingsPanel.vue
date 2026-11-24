@@ -33,12 +33,12 @@
 
         <div class="role-field">
           <label>{{ $t('companion.modelUrl') }}</label>
-          <input v-model="roleModelUrl" class="role-input" type="text" placeholder="/models/SpringSnow.vrm" />
+          <input v-model="roleModelUrl" class="role-input nx-field nx-field-sm" type="text" placeholder="/models/SpringSnow.vrm" />
         </div>
 
         <div class="role-field">
           <label>{{ $t('companion.modelType') }}</label>
-          <select v-model="roleModelType" class="role-select">
+          <select v-model="roleModelType" class="role-select nx-field nx-field-sm">
             <option value="vrm">VRM</option>
             <option value="gltf">GLB / GLTF</option>
             <option value="fbx">FBX</option>
@@ -72,7 +72,7 @@
             <input
               v-if="renamingModelUrl === model.fileUrl"
               v-model="renamingValue"
-              class="role-input role-rename"
+              class="role-input role-rename nx-field nx-field-sm"
               type="text"
               @click.stop
               @keyup.enter="confirmRenameModel(model)"
@@ -110,7 +110,7 @@
             <input
               v-if="renamingMotionKey === motion.key"
               v-model="renamingValue"
-              class="role-input role-rename"
+              class="role-input role-rename nx-field nx-field-sm"
               type="text"
               @click.stop
               @keyup.enter="confirmRenameMotion(motion)"
@@ -533,29 +533,12 @@ async function removeMotion(motion) {
   font-size: 12.5px;
 }
 
+/* Shape and states come from the shared `nx-field`; only the layout is set here. */
 .role-input,
 .role-select {
   flex: 1;
   min-width: 0;
   height: 32px;
-  padding: 0 10px;
-  border-radius: 4px;
-  background: #131316;
-  border: 1px solid rgba(68, 71, 72, 0.3);
-  color: #e4e1e6;
-  font-family: inherit;
-  font-size: 12.5px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.role-input:focus,
-.role-select:focus {
-  border-color: #8e9192;
-}
-
-.role-input::placeholder {
-  color: #6f7274;
 }
 
 .role-actions {

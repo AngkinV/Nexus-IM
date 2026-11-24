@@ -367,15 +367,12 @@ const addContactById = async () => {
   flex: 1;
 }
 
-.search-input :deep(.el-input__wrapper) {
-  border-radius: 8px;
-  padding-left: 12px;
-  background: #16161a;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
-}
-
-.search-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
+/* The button beside the capsule is the same height and just as round. */
+.search-section :deep(.el-button) {
+  height: 44px;
+  margin: 0;
+  padding: 0 20px;
+  border-radius: 999px;
 }
 
 .search-hint {

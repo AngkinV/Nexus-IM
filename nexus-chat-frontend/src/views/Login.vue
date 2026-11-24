@@ -507,24 +507,18 @@ p {
 .send-code-btn {
   flex-shrink: 0;
   min-width: 100px;
-  border-radius: 12px;
+  height: 44px;
+  border-radius: 999px;
   font-size: 13px;
 }
 
-.custom-input :deep(.el-input__wrapper) {
-  border-radius: 12px;
-  padding: 8px 16px;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.45) inset;
-}
-
-.custom-input :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px #8e9192 inset;
-}
+/* The fields take the shared capsule from prism.css (44px at this size); the
+   two buttons beside and below them are rounded to match. */
 
 .login-btn {
   width: 100%;
   height: 44px;
-  border-radius: 12px;
+  border-radius: 999px;
   font-size: 16px;
   font-weight: 600;
   background: #ffffff;
@@ -612,10 +606,6 @@ p {
 
   .input-group {
     margin-bottom: 20px;
-  }
-
-  .custom-input :deep(.el-input__wrapper) {
-    padding: 10px 14px;
   }
 
   .custom-input :deep(.el-input__inner) {

@@ -187,19 +187,19 @@
       <!-- Search -->
       <div class="relative w-full flex items-center">
         <span
-          class="material-symbols-outlined absolute left-2.5 text-[16px] text-on-surface-variant/60 pointer-events-none"
+          class="material-symbols-outlined absolute left-3 text-[16px] text-on-surface-variant/60 pointer-events-none"
         >search</span>
         <input
           ref="searchInput"
           v-model="searchQuery"
-          class="w-full bg-surface-container-low text-primary placeholder-on-surface-variant/40 text-body-md font-body-md pl-8 pr-12 py-1.5 rounded border border-transparent focus:border-outline-variant/40 focus:outline-none focus:bg-surface-container transition-colors"
+          class="nx-field pl-9 pr-12"
           :placeholder="searchPlaceholder"
           type="text"
           @keydown.meta.k.prevent="openPalette"
           @keydown.ctrl.k.prevent="openPalette"
         />
         <button
-          class="absolute right-2 px-1.5 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant hover:text-primary font-code text-label-sm transition-colors"
+          class="absolute right-2 px-2 py-0.5 rounded-full bg-surface-container-high hover:bg-surface-container-highest text-on-surface-variant hover:text-primary font-code text-label-sm transition-colors"
           type="button"
           :title="activeView === 'contacts' ? $t('common.search') : $t('leftPanel.openPalette')"
           @click="activeView === 'contacts' ? focusSearch() : openPalette()"

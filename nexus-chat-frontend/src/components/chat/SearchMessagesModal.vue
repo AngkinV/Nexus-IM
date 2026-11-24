@@ -184,16 +184,6 @@ const handleClose = () => {
   margin-bottom: 12px;
 }
 
-.search-box :deep(.el-input__wrapper) {
-  border-radius: 8px;
-  background: #16161a;
-  box-shadow: 0 0 0 1px rgba(68, 71, 72, 0.3) inset;
-}
-
-.search-box :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px rgba(142, 145, 146, 0.6) inset;
-}
-
 .results-container {
   flex: 1;
   min-height: 200px;

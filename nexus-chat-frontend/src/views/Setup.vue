@@ -227,43 +227,54 @@ h1 {
   display: none;
 }
 
+/* The label follows the input in the markup, so the column is reversed to
+   show it above the field. */
 .input-group {
-  position: relative;
-  margin-bottom: 40px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  margin-bottom: 32px;
   text-align: left;
 }
 
 input[type="text"] {
+  box-sizing: border-box;
   width: 100%;
-  padding: 12px 0;
-  font-size: 18px;
+  height: 48px;
+  padding: 0 20px;
   border: none;
-  border-bottom: 1px solid rgba(68, 71, 72, 0.45);
+  border-radius: var(--field-radius);
   outline: none;
-  background: transparent;
-  transition: border-color 0.2s;
+  background: var(--field-bg);
+  box-shadow: 0 0 0 1px var(--field-ring) inset;
+  color: var(--field-text);
+  caret-color: #ffffff;
+  font-size: 15px;
+  transition: box-shadow var(--field-ease);
 }
 
-input[type="text"]:focus,
-input[type="text"].has-value {
-  border-color: #ffffff;
+input[type="text"]::placeholder {
+  color: var(--field-placeholder);
+}
+
+input[type="text"]:hover {
+  box-shadow: 0 0 0 1px var(--field-ring-hover) inset;
+}
+
+input[type="text"]:focus {
+  box-shadow: 0 0 0 1px var(--field-ring-focus) inset;
 }
 
 label {
-  position: absolute;
-  left: 0;
-  top: 12px;
-  color: #6f7274;
-  font-size: 18px;
-  pointer-events: none;
-  transition: 0.2s ease all;
+  padding-left: 20px;
+  color: #8e9192;
+  font-size: 12.5px;
+  transition: color var(--field-ease);
 }
 
 input[type="text"]:focus ~ label,
 input[type="text"].has-value ~ label {
-  top: -20px;
-  font-size: 14px;
-  color: #ffffff;
+  color: #e4e1e6;
 }
 
 .submit-btn {
@@ -272,8 +283,8 @@ input[type="text"].has-value ~ label {
   background-color: #ffffff;
   color: #2f3131;
   border: none;
-  border-radius: 8px;
-  font-size: 18px;
+  border-radius: 999px;
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.1s, opacity 0.2s;

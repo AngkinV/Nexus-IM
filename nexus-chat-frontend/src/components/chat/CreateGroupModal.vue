@@ -407,16 +407,6 @@ const createGroup = async () => {
   transition: opacity 0.2s;
 }
 
-.group-name-input :deep(.el-input__wrapper) {
-  border-radius: 12px;
-  padding: 10px 15px;
-}
-
-.group-desc-input :deep(.el-textarea__inner) {
-  border-radius: 12px;
-  padding: 12px 15px;
-}
-
 .group-settings {
   background: #1f1f22;
   border-radius: 12px;
@@ -447,11 +437,6 @@ const createGroup = async () => {
   display: flex;
   flex-direction: column;
   gap: 15px;
-}
-
-.member-search :deep(.el-input__wrapper) {
-  border-radius: 20px;
-  background: #222225;
 }
 
 .selected-members {
@@ -624,16 +609,7 @@ const createGroup = async () => {
     font-size: 10px;
   }
 
-  .group-name-input :deep(.el-input__wrapper) {
-    padding: 8px 12px;
-  }
-
   .group-name-input :deep(.el-input__inner) {
-    font-size: 16px;
-  }
-
-  .group-desc-input :deep(.el-textarea__inner) {
-    padding: 10px 12px;
     font-size: 16px;
   }
 

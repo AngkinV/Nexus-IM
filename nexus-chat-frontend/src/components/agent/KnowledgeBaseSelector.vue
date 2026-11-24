@@ -90,15 +90,16 @@ function onSelect(command) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  color: #c4c7c8;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 13px;
+  color: #8e9192;
   font-size: 0.75rem;
   line-height: 1rem;
   font-weight: 500;
   letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background-color var(--field-ease), color var(--field-ease);
   min-width: 0;
 }
 
@@ -108,7 +109,7 @@ function onSelect(command) {
 }
 
 .kb-switcher:hover {
-  background: #1f1f22;
+  background: var(--field-btn-bg);
 }
 
 .kb-switcher .material-symbols-outlined {
