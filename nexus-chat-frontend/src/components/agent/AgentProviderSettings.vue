@@ -83,12 +83,12 @@
       </el-table-column>
       <el-table-column :label="$t('agent.providers.colActions')" width="220" align="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" :disabled="!canTest(row)" :loading="testingId === row.id" :title="$t('agent.providers.testHint')" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
+          <el-button link type="primary" size="small" :disabled="!canTest(row)" :loading="store.isTesting(row.id)" :title="$t('agent.providers.testHint')" @click="testOne(row)">{{ $t('agent.providers.test') }}</el-button>
           <el-button link size="small" @click="openEdit(row)">{{ $t('common.edit') }}</el-button>
-          <el-button link size="small" :disabled="row.isDefault" @click="setDefault(row)">
+          <el-button link size="small" :disabled="row.isDefault || store.isTesting(row.id)" @click="setDefault(row)">
             {{ $t('agent.providers.setDefault') }}
           </el-button>
-          <el-button link type="danger" size="small" @click="removeOne(row)">{{ $t('common.delete') }}</el-button>
+          <el-button link type="danger" size="small" :disabled="store.isTesting(row.id)" @click="removeOne(row)">{{ $t('common.delete') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -125,7 +125,7 @@
       </el-form-item>
 
       <el-form-item :label="$t('agent.providers.fieldFormat')">
-        <el-radio-group v-model="form.apiFormat" :aria-label="$t('agent.providers.fieldFormat')">
+        <el-radio-group v-model="form.apiFormat" class="provider-api-format" :aria-label="$t('agent.providers.fieldFormat')">
           <el-radio-button v-for="f in formatChoices" :key="f" :value="f">{{ formatLabel(f) }}</el-radio-button>
         </el-radio-group>
         <div v-if="formatChoices.length === 1" class="form-hint">{{ $t('agent.providers.formatFixed') }}</div>
@@ -161,12 +161,12 @@
       <el-button @click="formDialog = false">{{ $t('common.cancel') }}</el-button>
       <el-button
         v-if="form.id"
-        :loading="testingId === form.id" :disabled="!canTest(store.getById(form.id))"
+        :loading="store.isTesting(form.id)" :disabled="!canTest(store.getById(form.id))"
         :title="$t('agent.providers.testHint')" @click="testOne(store.getById(form.id))"
       >
         {{ $t('agent.providers.test') }}
       </el-button>
-      <el-button type="primary" :loading="saving" :disabled="incompatible || testingId != null" @click="save">{{ $t('common.save') }}</el-button>
+      <el-button type="primary" :loading="saving" :disabled="incompatible || store.isTesting(form.id)" @click="save">{{ $t('common.save') }}</el-button>
     </template>
   </el-dialog>
 </template>
@@ -206,7 +206,6 @@ const agentStore = useAgentStore()
 const activeTab = ref('chat') // 'chat' | 'embedding'
 const formDialog = ref(false)
 const saving = ref(false)
-const testingId = ref(null)
 const form = ref(emptyForm())
 
 const query = ref('')
@@ -331,7 +330,7 @@ function applyPreset(key) {
 }
 
 async function save() {
-  if (saving.value || incompatible.value || testingId.value != null) return
+  if (saving.value || incompatible.value || store.isTesting(form.value.id)) return
   if (baseUrlRequired.value && !form.value.baseUrl?.trim()) {
     ElMessage.warning(t('agent.providers.baseUrlRequired'))
     return
@@ -399,32 +398,16 @@ async function setDefault(row) {
 }
 
 function canTest(row) {
-  return !!row?.id && !!row.defaultModel?.trim() && !saving.value && testingId.value == null &&
+  return !!row?.id && !!row.defaultModel?.trim() && !saving.value && !store.isTesting(row.id) &&
     !(formDialog.value && dirty.value) &&
     store.getModelsForProvider(row.id).find(m => m.id === row.defaultModel.trim())?.[row.purpose || 'chat'] !== false
 }
 
-async function testOne(row) {
+function testOne(row) {
   if (!canTest(row)) return
-  try {
-    testingId.value = row.id
-    const result = await store.test(row.id)
-    if (result?.ok) {
-      ElMessage.success(t('agent.providers.testOk', { latency: result.latencyMs ?? '?' }))
-      if (result?.embeddingDimension) {
-        ElMessage.info(`embedding dim = ${result.embeddingDimension}`)
-      }
-    } else {
-      const error = result?.error
-      ElMessage.warning([t('agent.providers.testFail'), error?.code, error?.summary || result?.message,
-        error?.retryAfterSeconds != null && t('companion.session.retryAfter', { seconds: error.retryAfterSeconds })
-      ].filter(Boolean).join(' · '))
-    }
-  } catch (err) {
-    ElMessage.error(err.message || t('agent.providers.testFail'))
-  } finally {
-    testingId.value = null
-  }
+  // The store keeps the request alive; App's root delivers the result even
+  // after this dialog or the whole workbench has unmounted.
+  void store.test(row.id)
 }
 
 </script>
@@ -486,6 +469,45 @@ async function testOne(row) {
 .missing {
   color: #f2b8b5;
   font-size: 12px;
+}
+/* Element's selected radio-button defaults to white text on primary. Primary
+   is white in this theme: explicitly use the design's on-primary ink. Keep
+   the override local to API formats, including hover/disabled/focus states. */
+.provider-api-format {
+  --el-radio-button-checked-text-color: #2f3131;
+  --el-radio-button-checked-bg-color: var(--tg-primary);
+  --el-radio-button-checked-border-color: var(--tg-primary);
+  max-width: 100%;
+}
+.provider-api-format :deep(.el-radio-button__inner) {
+  background: var(--tg-surface);
+  color: var(--tg-text-primary);
+  border-color: var(--el-border-color);
+}
+.provider-api-format :deep(.el-radio-button:not(.is-disabled):not(.is-active) .el-radio-button__inner:hover) {
+  background: var(--tg-surface-hover);
+  color: var(--tg-text-primary);
+}
+.provider-api-format :deep(.el-radio-button.is-active:not(.is-disabled) .el-radio-button__inner) {
+  background: var(--tg-primary);
+  color: #2f3131;
+  border-color: var(--tg-primary);
+  box-shadow: -1px 0 0 0 var(--tg-primary);
+}
+.provider-api-format :deep(.el-radio-button.is-disabled .el-radio-button__inner) {
+  background: var(--tg-surface);
+  color: var(--tg-text-tertiary);
+  border-color: var(--el-border-color);
+  box-shadow: none;
+}
+.provider-api-format :deep(.el-radio-button.is-disabled.is-active .el-radio-button__inner) {
+  background: var(--tg-surface-hover);
+  color: var(--tg-text-secondary);
+}
+.provider-api-format :deep(.el-radio-button.is-focus .el-radio-button__inner),
+.provider-api-format :deep(.el-radio-button__original-radio:focus-visible + .el-radio-button__inner) {
+  outline: 2px solid var(--tg-text-tertiary);
+  outline-offset: 2px;
 }
 .form-hint {
   font-size: 11px;

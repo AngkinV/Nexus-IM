@@ -4,7 +4,7 @@
   "description": "Nexus-style chat application built with Electron and Vue3",
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently \"vite --mode electron\" \"wait-on tcp:127.0.0.1:5173 && electron .\"",
+    "dev": "concurrently \"vite --mode electron\" \"wait-on tcp:127.0.0.1:5173 && node electron/dev-launcher.cjs\"",
     "dev:web": "vite",
     "build": "vite build",
     "preview": "vite preview",

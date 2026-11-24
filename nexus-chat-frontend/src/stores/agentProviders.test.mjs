@@ -4,11 +4,12 @@ import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
 import { createServer } from 'vite'
 import { createPinia, setActivePinia } from 'pinia'
+import { effectScope, nextTick, watch } from 'vue'
 
 let server, describeModelError, retryAtOf, modelCatalogNote, api, user, store, useUserStore, useAgentProvidersStore, rows, calls
-let channels
+let channels, installProviderTestFeedback, providerTestNotification
 const originalStorage = globalThis.localStorage
-const wrap = data => ({ data: { data } })
+const wrap = data => ({ data: { code: 'OK', data } })
 const model = { id: 'catalog-model', chat: null, embedding: false }
 const catalog = (fields = {}) => wrap({ providerId: 4, purpose: 'chat', revision: 'r1', status: 'ready', models: [model], fetchedAt: '2026-06-01T12:00:00Z', truncated: false, ...fields })
 
@@ -23,6 +24,7 @@ before(async () => {
   ;({ useUserStore } = await server.ssrLoadModule('/src/stores/user.js'))
   ;({ useAgentProvidersStore, describeModelError, retryAtOf, modelCatalogNote } = await server.ssrLoadModule('/src/stores/agentProviders.js'))
   channels = await server.ssrLoadModule('/src/stores/agentProviders.js')
+  ;({ installProviderTestFeedback, providerTestNotification } = await server.ssrLoadModule('/src/utils/providerTestFeedback.js'))
 })
 after(async () => { await server?.close(); globalThis.localStorage = originalStorage })
 beforeEach(async () => {
@@ -252,4 +254,212 @@ test('dozens of channels stay findable: search spans name, vendor, model and add
   assert.equal(groups[2].items[0].issue, null)
   assert.deepEqual(channels.groupChannels(saved, 'laptop').map(g => [g.key, g.items.length]), [['local', 1]], 'empty groups are left out')
   assert.deepEqual(channels.groupChannels([], ''), [])
+})
+
+// ---- account-owned background connection tests --------------------------------
+const translate = (key, params = {}) => `${key} ${JSON.stringify(params)}`
+function feedback(t) {
+  const notices = [], starts = []
+  const receive = list => options => {
+    const entry = { options, closed: false }
+    list.push(entry)
+    return { close() { entry.closed = true; options.onClose?.() } }
+  }
+  const stop = installProviderTestFeedback(store, translate, { notify: receive(notices), message: receive(starts) })
+  t.after(stop)
+  return { notices, starts, stop }
+}
+
+// Timeouts on these two tests also guard against accidentally awaiting list refresh.
+test('same-channel test clicks share one paid request and one completion', { timeout: 1500 }, async () => {
+  const slow = Promise.withResolvers()
+  let probes = 0
+  api.testProvider = () => { probes++; return slow.promise }
+  const first = store.test(4), second = store.test('4')
+  // Pinia wraps each action's returned Promise for subscriptions; measure the
+  // paid requests/results, not the identity of those public wrapper objects.
+  assert.equal(store.isTesting(4), true)
+  await Promise.resolve()
+  assert.equal(probes, 1)
+  slow.resolve(wrap({ ok: true, latencyMs: 31 }))
+  const result = await first
+  assert.equal(result.ok, true)
+  assert.deepEqual(await second, result)
+  assert.equal(probes, 1)
+  assert.equal(store.isTesting(4), false)
+  assert.deepEqual(store.takeTestEvents().map(e => e.phase), ['started', 'finished'])
+  assert.deepEqual(store.takeTestEvents(), [])
+})
+
+test('the final result arrives before an unrelated slow provider-list refresh', { timeout: 1500 }, async () => {
+  const refresh = Promise.withResolvers()
+  let listing = false
+  api.listProviders = () => { listing = true; return refresh.promise }
+  api.testProvider = async () => wrap({ ok: true, latencyMs: 10 })
+  const result = await store.test(4)
+  assert.equal(result.ok, true)
+  assert.equal(listing, true)
+  assert.equal(store.isTesting(4), false)
+  assert.equal(store.takeTestEvents().at(-1).result.ok, true)
+  refresh.resolve(wrap(rows))
+  await nextTick()
+})
+
+test('list-refresh failure preserves providers and does not replace a probe result', async () => {
+  api.listProviders = async () => { throw new Error('independent listing failure') }
+  api.testProvider = async () => wrap({ ok: true })
+  assert.equal((await store.test(4)).ok, true)
+  await nextTick()
+  assert.deepEqual(store.providers.map(p => p.id), [4, 5])
+  assert.equal(store.takeTestEvents().at(-1).result.ok, true)
+  assert.ok(store.lastError)
+})
+
+test('closing a dialog scope cannot cancel a global result; provider snapshot identifies it', async t => {
+  const view = effectScope(), f = feedback(t), slow = Promise.withResolvers()
+  store.providers[0].displayName = 'Original channel'
+  api.testProvider = () => slow.promise
+  let updates = 0
+  const request = view.run(() => {
+    watch(() => store.isTesting(4), () => updates++)
+    return store.test(4)
+  })
+  await nextTick()
+  assert.equal(f.starts.length, 1)
+  assert.match(f.starts[0].options.message, /Original channel/)
+  view.stop() // Vue tears down the dialog/workbench's scope on navigation.
+  const before = updates
+  store.providers[0].displayName = 'Another label'
+  slow.resolve(wrap({ ok: true, latencyMs: 75 }))
+  await request; await nextTick()
+  assert.equal(updates, before)
+  assert.equal(f.notices.length, 1)
+  assert.equal(f.notices[0].options.type, 'success')
+  assert.match(f.notices[0].options.title, /Original channel/)
+  assert.equal(f.notices[0].options.duration, 0, 'visible until explicitly dismissed')
+  assert.equal(f.starts[0].closed, true)
+})
+
+test('backend failure, timeout, HTTP and transport errors give one red-cross notification and allow retry', async t => {
+  const f = feedback(t)
+  const cases = [
+    { response: wrap({ ok: false, error: { code: 'AUTH', summary: 'sensitive upstream detail' } }), code: 'AUTH' },
+    { error: Object.assign(new Error('sensitive connection detail'), { code: 'ECONNABORTED' }), code: 'TIMEOUT' },
+    { error: Object.assign(new Error('forbidden'), { response: { status: 403 } }), code: 'PERMISSION' },
+    { error: new Error('sensitive network URL'), code: 'NETWORK' }
+  ]
+  for (const [index, item] of cases.entries()) {
+    api.testProvider = () => item.error ? Promise.reject(item.error) : Promise.resolve(item.response)
+    const result = await store.test(4); await nextTick()
+    assert.equal(result.ok, false)
+    assert.equal(store.isTesting(4), false)
+    assert.equal(f.notices.length, index + 1)
+    const options = f.notices.at(-1).options
+    assert.equal(options.type, 'error')
+    assert.match(options.customClass, /--error$/)
+    assert.match(options.message, new RegExp(`modelError.${item.code}`))
+    assert.doesNotMatch(JSON.stringify(options), /sensitive|upstream detail/)
+  }
+  api.testProvider = async () => wrap({ ok: true })
+  await store.test(4); await nextTick()
+  assert.equal(f.notices.at(-1).options.type, 'success')
+})
+
+test('malformed booleans/envelopes cannot be advertised as successful connections', async () => {
+  for (const response of [null, wrap(null), wrap({ ok: 'true' }), wrap({ ok: 1 }),
+    { data: { code: 'DENIED', data: { ok: true } } }, { data: { data: { ok: true } } }]) {
+    api.testProvider = async () => response
+    const result = await store.test(4)
+    assert.deepEqual(result, { ok: false, error: { code: 'INVALID_RESPONSE' } })
+    assert.equal(store.isTesting(4), false)
+    assert.equal(store.takeTestEvents().at(-1).result.ok, false)
+  }
+})
+
+test('logout closes global feedback and discards late results, including an A → B → A login', async t => {
+  const f = feedback(t)
+  api.testProvider = async () => wrap({ ok: false, error: { code: 'AUTH' } })
+  await store.test(4); await nextTick()
+  assert.equal(f.notices.length, 1)
+  const slow = Promise.withResolvers()
+  api.testProvider = () => slow.promise
+  const old = store.test(4); await nextTick()
+  user.currentUser = null
+  assert.deepEqual(store.testingProviders, {})
+  assert.equal(f.notices[0].closed, true)
+  user.currentUser = { id: 8 }; await store.fetchAll()
+  user.currentUser = { id: 7 }; await store.fetchAll()
+  slow.resolve(wrap({ ok: true }))
+  assert.equal(await old, null)
+  await nextTick()
+  assert.equal(f.notices.length, 1, 'no stale success or false failure')
+  assert.deepEqual(store.testEvents, [])
+})
+
+test('a new token for the same account clears old probes without interfering with a new one', async t => {
+  const f = feedback(t), old = Promise.withResolvers(), fresh = Promise.withResolvers()
+  api.testProvider = () => old.promise
+  const oldRequest = store.test(4); await nextTick()
+  user.token = 'new-test-session'
+  assert.equal(store.isTesting(4), false)
+  await store.fetchAll()
+  api.testProvider = () => fresh.promise
+  const newRequest = store.test(4); await nextTick()
+  old.resolve(wrap({ ok: true }))
+  assert.equal(await oldRequest, null)
+  assert.equal(store.isTesting(4), true)
+  fresh.resolve(wrap({ ok: false, error: { code: 'NETWORK' } }))
+  await newRequest; await nextTick()
+  assert.equal(store.isTesting(4), false)
+  assert.equal(f.notices.length, 1)
+  assert.equal(f.notices[0].options.type, 'error')
+})
+
+test('captured auth is handed to the transport and local-storage-only rotation still cleans up safely', async t => {
+  let token = 'captured-test-session', passed
+  t.mock.method(globalThis.localStorage, 'getItem', key => key === 'token' ? token : null)
+  const slow = Promise.withResolvers()
+  api.testProvider = (_, config) => { passed = config.token; return slow.promise }
+  const request = store.test(4); await Promise.resolve()
+  assert.equal(passed, token)
+  token = 'replaced-test-session'
+  slow.resolve(wrap({ ok: true }))
+  assert.equal(await request, null)
+  assert.equal(store.isTesting(4), false)
+  assert.equal(store.takeTestEvents().filter(e => e.phase === 'finished').length, 0)
+})
+
+test('the application-root disposer stops messages rather than leaving watchers or notifications behind', async t => {
+  const f = feedback(t)
+  api.testProvider = async () => wrap({ ok: true })
+  await store.test(4); await nextTick()
+  f.stop()
+  assert.equal(f.notices[0].closed, true)
+  await store.test(4); await nextTick()
+  assert.equal(f.notices.length, 1)
+})
+
+test('feedback uses a check or cross, typed details and known translations only, in both locales', () => {
+  const success = providerTestNotification({ name: 'Relay', result: { ok: true, latencyMs: 18, embeddingDimension: 768 } }, translate)
+  const failure = providerTestNotification({ name: 'Relay', result: { ok: false,
+    error: { code: 'RATE_LIMIT', summary: 'sensitive secret text', retryAfterSeconds: 4, httpStatus: 429 } } }, translate)
+  assert.notEqual(success.icon, failure.icon)
+  assert.match(success.icon.name, /Check/)
+  assert.match(failure.icon.name, /Close/)
+  assert.equal(success.showClose, true)
+  assert.equal(failure.showClose, true)
+  assert.match(success.message, /testOk.*18/)
+  assert.match(success.message, /testEmbeddingDimension.*768/)
+  assert.match(failure.message, /retryAfter.*4/)
+  assert.match(failure.message, /HTTP 429/)
+  assert.doesNotMatch(failure.message, /secret|sensitive/)
+  const unknown = providerTestNotification({ name: 'Relay', result: { ok: false,
+    error: { code: 'sensitive-unknown-code', summary: 'sensitive unknown text' } } }, translate)
+  assert.doesNotMatch(unknown.message, /sensitive/)
+  assert.match(unknown.message, /testRequestFailed/)
+  assert.doesNotMatch(providerTestNotification({ name: 'Relay', result: { ok: true, latencyMs: NaN } }, translate).message, /NaN|testOk/)
+  for (const locale of ['en', 'zh']) {
+    const values = JSON.parse(readFileSync(new URL(`../locales/${locale}.json`, import.meta.url))).agent.providers
+    for (const key of ['testStarted', 'testSucceeded', 'testSuccessTitle', 'testFailureTitle', 'testRequestFailed', 'testEmbeddingDimension']) assert.ok(values[key])
+  }
 })
