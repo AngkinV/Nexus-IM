@@ -1144,7 +1144,13 @@
           "model": "未选择模型",
           "key": "缺少 API Key"
         }
-      }
+      },
+      "testStarted": "「{name}」正在测试连接，可以关闭此窗口。",
+      "testSucceeded": "连接成功",
+      "testSuccessTitle": "{name}：连接成功",
+      "testFailureTitle": "{name}：连接失败",
+      "testRequestFailed": "无法完成连接测试，请检查地址、网络及模型设置后重试。",
+      "testEmbeddingDimension": "向量维度：{dimension}"
     },
     "knowledge": {
       "title": "知识库管理",

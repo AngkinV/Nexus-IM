@@ -89,6 +89,7 @@ function compareVersions(currentVersion, latestVersion) {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
+    title: 'Nexus',
     width: 1440,
     height: 920,
     minWidth: 1100,
@@ -105,6 +106,9 @@ function createMainWindow() {
       sandbox: false
     }
   })
+
+  // Keep the taskbar/window identity stable during initial load and navigation.
+  mainWindow.on('page-title-updated', event => event.preventDefault())
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()

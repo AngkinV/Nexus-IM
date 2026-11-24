@@ -15,13 +15,17 @@ import en from 'element-plus/es/locale/lang/en'
 import { useUserStore } from '@/stores/user'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
+import { useAgentProvidersStore } from '@/stores/agentProviders'
+import { installProviderTestFeedback } from '@/utils/providerTestFeedback'
 import { unlockAudio, disposeAudio } from '@/utils/uiSound'
 import ConnectionBanner from '@/components/common/ConnectionBanner.vue'
 
 const userStore = useUserStore()
 const chatStore = useChatStore()
 const settings = useSettingsStore()
-const { locale } = useI18n()
+const { locale, t } = useI18n()
+const providers = useAgentProvidersStore()
+const stopProviderFeedback = installProviderTestFeedback(providers, t)
 
 // Dock / taskbar badge. It lives at the app root, not on the settings screen:
 // unread counts change while the user is anywhere in the app, and signing out
@@ -62,6 +66,7 @@ onMounted(() => {
   }
 })
 onBeforeUnmount(() => {
+  stopProviderFeedback()
   window.removeEventListener('pointerdown', onAudioGesture)
   window.removeEventListener('keydown', onAudioGesture)
   disposeAudio()
@@ -105,5 +110,19 @@ html, body {
 
 .el-notification {
   z-index: 10001 !important;
+}
+
+/* Provider dialogs use 10010/10020. Probe feedback must stay above both,
+   including their modal scrim, without recolouring unrelated UI. */
+.el-message.provider-test-progress,
+.el-notification.provider-test-notification {
+  z-index: 10040 !important;
+  max-width: calc(100vw - 32px);
+}
+.el-notification.provider-test-notification--success .el-notification__icon {
+  color: #22c55e;
+}
+.el-notification.provider-test-notification--error .el-notification__icon {
+  color: #ef4444;
 }
 </style>
