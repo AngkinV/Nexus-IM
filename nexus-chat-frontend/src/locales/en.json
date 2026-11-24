@@ -1144,7 +1144,13 @@
           "model": "No model selected",
           "key": "API key missing"
         }
-      }
+      },
+      "testStarted": "Testing \"{name}\". You can close this window.",
+      "testSucceeded": "Connection successful",
+      "testSuccessTitle": "{name}: connection successful",
+      "testFailureTitle": "{name}: connection failed",
+      "testRequestFailed": "Could not complete the connection test. Check the endpoint, network and model settings, then retry.",
+      "testEmbeddingDimension": "Embedding dimension: {dimension}"
     },
     "knowledge": {
       "title": "Knowledge bases",

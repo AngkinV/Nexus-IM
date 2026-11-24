@@ -127,7 +127,15 @@ export const agentAPI = {
     upsertProvider: (payload) => apiClient.post('/agent/providers', payload),
     deleteProvider: (id) => apiClient.delete(`/agent/providers/${id}`),
     setDefaultProvider: (id) => apiClient.post(`/agent/providers/${id}/default`),
-    testProvider: (id) => apiClient.post(`/agent/providers/${id}/test`)
+    // Python's probe budget is 120s; allow BFF overhead, but never spin forever.
+    // Capture Authorization before Axios's async interceptor so logout/relogin
+    // cannot redirect a paid probe to a different account's credential.
+    testProvider: (id, { token = localStorage.getItem('token') } = {}) => {
+        if (!token) throw Object.assign(new Error('Provider sign-in required'), { code: 'AUTH' })
+        return apiClient.post(`/agent/providers/${encodeURIComponent(id)}/test`, null, {
+            headers: { Authorization: `Bearer ${token}` }, timeout: 135_000
+        })
+    }
 }
 
 /**

@@ -187,6 +187,14 @@ export const useAgentProvidersStore = defineStore('agentProviders', () => {
     const lastError = ref(null)
     const catalogs = ref({})
     const inflight = new Map()
+    // Probe ownership belongs to the account, never to a dialog's lifecycle.
+    // Only metadata is reactive; promises stay private and same-channel clicks
+    // share one request (a probe can call a paid model).
+    const testingProviders = ref({})
+    const testEvents = ref([])
+    const testEpoch = ref(0)
+    const probes = new Map()
+    let testSequence = 0
     let session = 0, listRequest = 0
 
     const chatProviders = computed(() => providers.value.filter(p => !p.purpose || p.purpose === PROVIDER_PURPOSE.CHAT))
@@ -199,12 +207,16 @@ export const useAgentProvidersStore = defineStore('agentProviders', () => {
         inflight.delete(String(id))
     }
 
-    watch(accountId, () => {
+    watch([accountId, () => user.token], () => {
         ++session
         ++listRequest
         providers.value = []
         catalogs.value = {}
         inflight.clear()
+        probes.clear()
+        testingProviders.value = {}
+        testEvents.value = []
+        ++testEpoch.value
         loading.value = false
         lastError.value = null
     }, { flush: 'sync' })
@@ -212,11 +224,13 @@ export const useAgentProvidersStore = defineStore('agentProviders', () => {
     // updatedAt also partitions catalogs on older provider list responses.
     const catalogKey = p => JSON.stringify([accountId.value, String(p.id), p.purpose || 'chat', p.revision ?? p.updatedAt ?? null])
 
-    async function fetchAll() {
+    async function fetchAll({ background = false } = {}) {
         if (accountId.value == null) return
         const request = ++listRequest
-        loading.value = true
-        lastError.value = null
+        if (!background) {
+            loading.value = true
+            lastError.value = null
+        }
         try {
             const response = await agentAPI.listProviders()
             if (request !== listRequest) return
@@ -229,9 +243,13 @@ export const useAgentProvidersStore = defineStore('agentProviders', () => {
         } catch (err) {
             if (request !== listRequest) return
             lastError.value = err
-            providers.value = []
-            catalogs.value = {}
-            inflight.clear()
+            // A status refresh must not erase usable settings, nor hide the
+            // already-delivered probe result when listing fails independently.
+            if (!background) {
+                providers.value = []
+                catalogs.value = {}
+                inflight.clear()
+            }
         } finally {
             if (request === listRequest) loading.value = false
         }
@@ -315,16 +333,73 @@ export const useAgentProvidersStore = defineStore('agentProviders', () => {
         await fetchAll()
     }
 
-    async function test(id) {
+    const isTesting = id => id != null && !!testingProviders.value[String(id)]
+
+    function takeTestEvents() {
+        const events = testEvents.value
+        testEvents.value = []
+        return events
+    }
+
+    function test(id) {
+        const provider = getById(id)
+        if (!provider || accountId.value == null) return Promise.resolve(null)
+        const slot = String(provider.id)
+        const pending = probes.get(slot)
+        if (pending) return pending.promise
+
         const owner = session
-        const response = await agentAPI.testProvider(id)
-        if (session !== owner) return null
-        await fetchAll() // refresh the probe status, never use its results as a catalog
-        return owner === session ? response.data?.data : null
+        const authToken = localStorage.getItem('token')
+        const task = { taskId: ++testSequence, providerId: provider.id,
+            name: provider.displayName || provider.provider || String(provider.id) }
+        const current = () => owner === session && authToken === localStorage.getItem('token') && probes.get(slot) === task
+        probes.set(slot, task)
+        testingProviders.value[slot] = task.taskId
+        testEvents.value.push({ ...task, phase: 'started' })
+
+        const finish = result => {
+            if (!current()) return null
+            delete testingProviders.value[slot]
+            testEvents.value.push({ ...task, phase: 'finished', result })
+            return result
+        }
+        // Promise.resolve also captures a synchronous transport exception.
+        task.promise = Promise.resolve().then(() => {
+            if (!current()) return null
+            return agentAPI.testProvider(provider.id, { token: authToken })
+        }).then(response => {
+            if (!current()) return null
+            const data = response?.data?.data
+            return finish(response?.data?.code === 'OK' && data && typeof data.ok === 'boolean' ? data : {
+                ok: false, error: { code: 'INVALID_RESPONSE' }
+            })
+        }).catch(err => {
+            if (!current()) return null
+            const reported = err?.response?.data?.data?.error
+            const httpStatus = err?.response?.status
+            const code = reported?.code || (err?.code === 'AUTH' ? 'AUTH'
+                : ['ECONNABORTED', 'ETIMEDOUT'].includes(err?.code) ? 'TIMEOUT'
+                : httpStatus === 401 ? 'AUTH' : httpStatus === 403 ? 'PERMISSION'
+                : httpStatus === 429 ? 'RATE_LIMIT' : httpStatus ? 'UPSTREAM' : 'NETWORK')
+            // Never echo raw transport/upstream messages: they can contain a
+            // URL, Authorization header, or API key. UI maps known codes only.
+            return finish({ ok: false, error: { code, httpStatus,
+                retryAfterSeconds: reported?.retryAfterSeconds } })
+        }).finally(() => {
+            if (probes.get(slot) !== task) return
+            probes.delete(slot)
+            delete testingProviders.value[slot]
+            if (owner !== session || authToken !== localStorage.getItem('token')) return
+            // Do not await an unrelated list request before showing a result.
+            // fetchAll catches its own failure and preserves these settings.
+            void fetchAll({ background: true })
+        })
+        return task.promise
     }
 
     return {
         accountId, providers, loading, lastError, chatProviders, embeddingProviders, defaultProvider, defaultEmbeddingProvider,
+        testingProviders, testEvents, testEpoch, isTesting, takeTestEvents,
         fetchAll, upsert, remove, setDefault, test, getById, getCatalog, fetchModels,
         getModelsForProvider: id => getCatalog(id)?.models || []
     }
