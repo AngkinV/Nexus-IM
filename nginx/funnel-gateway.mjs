@@ -2,7 +2,8 @@ import http from 'node:http'
 import { pathToFileURL } from 'node:url'
 
 export const PUBLIC_ORIGIN = 'https://nexus-chat-2026-fwohlcnoevd.qoder.zone'
-const POLICY_VERSION = 'nexus-funnel-v1'
+const POLICY_VERSION = 'nexus-funnel-v2'
+const BACKEND_ORIGINS = new Set([PUBLIC_ORIGIN, 'http://localhost:*', 'http://127.0.0.1:*', 'app://*'])
 const API_GROUPS = new Set(['auth', 'users', 'contacts', 'groups', 'chats', 'messages', 'files', 'posts', 'sync', 'companion', 'agent', 'tavern'])
 const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
 const HOP_HEADERS = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
@@ -64,8 +65,9 @@ export function assertBackendReady({ upstreamPort = 8080, timeoutMs = 5000 } = {
       response.on('end', () => {
         try {
           const value = JSON.parse(body)
-          if (value.ready === true && value.policyVersion === POLICY_VERSION && Array.isArray(value.origins)
-              && value.origins.length === 1 && value.origins[0] === PUBLIC_ORIGIN) resolve()
+          if (value.ready === true && value.policyVersion === POLICY_VERSION && value.publicOrigin === PUBLIC_ORIGIN
+              && Array.isArray(value.origins) && value.origins.includes(PUBLIC_ORIGIN)
+              && value.origins.every(origin => BACKEND_ORIGINS.has(origin))) resolve()
           else fail()
         } catch { fail() }
       })

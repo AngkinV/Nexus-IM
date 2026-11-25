@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto'
 import { allowedRequest, assertBackendReady, createGateway, PUBLIC_ORIGIN } from './funnel-gateway.mjs'
 
 let backend, gateway, base
-let readiness = { ready: true, policyVersion: 'nexus-funnel-v1', origins: [PUBLIC_ORIGIN] }
+let readiness = { ready: true, policyVersion: 'nexus-funnel-v2', publicOrigin: PUBLIC_ORIGIN,
+  origins: [PUBLIC_ORIGIN, 'http://localhost:*', 'http://127.0.0.1:*', 'app://*'] }
 const received = []
 const backendSockets = new Set()
 
@@ -144,7 +145,7 @@ test('spoofed forwarding prefix, identity and connection-nominated headers are r
 
 test('unexpected Origins are refused for HTTP and WebSocket without reaching the backend', async () => {
   const count = received.length
-  for (const origin of ['https://evil.example', PUBLIC_ORIGIN + '.evil.example', 'null']) {
+  for (const origin of ['https://evil.example', PUBLIC_ORIGIN + '.evil.example', 'null', 'http://localhost:5173', 'app://nexus-chat']) {
     assert.equal((await rawRequest(base, '/api/users/7', { headers: { Origin: origin } })).status, 403)
     assert.equal((await rawRequest(base, '/ws-native', { headers: upgradeHeaders(origin) })).status, 403)
   }

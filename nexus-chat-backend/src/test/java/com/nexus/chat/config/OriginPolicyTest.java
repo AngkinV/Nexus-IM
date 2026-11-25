@@ -56,6 +56,8 @@ import static org.mockito.Mockito.mock;
  */
 class OriginPolicyTest {
     private static final String QODER = "https://nexus-chat-2026-fwohlcnoevd.qoder.zone";
+    private static final List<String> LOCAL_CLIENTS = List.of("http://localhost:5173", "http://localhost:3000", "http://localhost:5174",
+            "http://127.0.0.1:5173", "app://nexus-chat");
     private static final List<String> BUILT_IN = List.of("http://localhost:5173", "http://localhost:3000", "http://localhost:5174",
             "http://127.0.0.1:5173", "https://chat.angkin.cn", "https://www.angkin.cn",
             "https://nexus-chat-fwohlcnoevd.qoder.zone", "app://nexus-chat");
@@ -212,24 +214,30 @@ class OriginPolicyTest {
             assertEquals(true, value.path("ready").asBoolean());
             assertEquals(FunnelReadinessController.POLICY_VERSION, value.path("policyVersion").asText());
             assertEquals(QODER, value.path("origins").get(0).asText());
-            assertEquals(1, value.path("origins").size());
+            assertEquals(QODER, value.path("publicOrigin").asText());
+            assertEquals(4, value.path("origins").size());
         }
 
         @Test
-        void theProfileLeavesThePublishedQoderSiteAsTheOnlyOrigin() {
-            assertEquals(List.of(QODER), origins.patterns());
+        void theProfileKeepsOnePublicOriginAlongsideLoopbackAndElectronClients() {
+            assertEquals(List.of(QODER, "http://localhost:*", "http://127.0.0.1:*", "app://*"), origins.patterns());
         }
 
         @Test
-        void onlyThePublishedQoderSiteReachesHttpAndBothWebSocketEndpoints() throws Exception {
+        void publishedQoderAndLocalClientsReachHttpAndBothWebSocketEndpoints() throws Exception {
             assertHttp(true, port, QODER);
             assertWebSocket(true, port, QODER);
+            for (String origin : LOCAL_CLIENTS) {
+                assertHttp(true, port, origin);
+                assertWebSocket(true, port, origin);
+            }
         }
 
         @Test
-        void theDefaultModeOriginsAndUnknownOnesAreRefusedEverywhere() throws Exception {
+        void otherPublicOriginsAndUnknownOnesAreRefusedEverywhere() throws Exception {
             for (List<String> group : List.of(BUILT_IN, UNKNOWN)) {
                 for (String origin : group) {
+                    if (LOCAL_CLIENTS.contains(origin)) continue;
                     assertHttp(false, port, origin);
                     assertWebSocket(false, port, origin);
                 }
@@ -246,10 +254,13 @@ class OriginPolicyTest {
         int port;
 
         @Test
-        void theWebSocketEndpointsRefuseEverythingButThePublishedQoderSiteOnTheirOwn() throws Exception {
+        void webSocketEndpointsAllowLocalClientsButRejectOtherPublicOriginsOnTheirOwn() throws Exception {
             assertWebSocket(true, port, QODER);
+            for (String origin : LOCAL_CLIENTS) assertWebSocket(true, port, origin);
             for (List<String> group : List.of(BUILT_IN, UNKNOWN)) {
-                for (String origin : group) assertWebSocket(false, port, origin);
+                for (String origin : group) {
+                    if (!LOCAL_CLIENTS.contains(origin)) assertWebSocket(false, port, origin);
+                }
             }
         }
     }

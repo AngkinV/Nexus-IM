@@ -1,6 +1,6 @@
 # Nexus 结构与提交流程清单
 
-更新：2026-11-20，基准 `feature-branch` = `3d5248e`（PR #12 合并点）。
+更新：2026-11-25。工作基线统一为 **先 fetch 后的 `origin/feature-branch`**，不把旧的固定 SHA 当作当前状态。已核对里程碑：PR #27 合并提交 `8663647`（受控 Funnel 代码），公开激活尚未完成。
 本清单与 `DEVELOPMENT.md` 冲突时以本清单为准。
 
 > 分支结构、凭据布局、提交流程是**唯一事实来源**，其他文档引用本文，不复制。
@@ -10,32 +10,39 @@
 
 | 分支 | 角色 | 状态 |
 |---|---|---|
-| `feature-branch` | **主线**（GitHub 默认分支） | 所有 PR 合并到这里 |
-| `main` | **稳定兜底分支** | feature-branch 稳定后才同步过来；是兜底，不是开发目标，不直接往它提交/合并 |
-| `m0/foundation` | 历史里程碑分支 | 已合并，可清理 |
-| `feat/companion-roles` | 功能分支（PR #8） | 已合并，本地+远端仍在，可清理 |
-| `feat/ui-reshape` | 功能分支（PR #6、#7） | 已删除（本地+远端） |
-| `partial-giraffe` | worktree 分支 | 内有 8 处未提交修改，属并行会话，**不要动** |
-| `bad-condor` | worktree 分支 | 干净，并行会话工作区 |
-| `slimy-silkworm` | worktree 分支 | 内有 4 处未提交修改，属并行会话，**不要动** |
-| `central-wombat` | worktree 分支 | 当前会话工作区，文档维护 |
+| `feature-branch` | **主线**（GitHub 默认分支） | 所有 PR 合并到这里，当前 HEAD 用下方命令实时核对 |
+| `main` | **稳定兜底分支** | 仅在 feature-branch 验证稳定后同步，不直接开发；本轮没有推进 |
+| `feat/funnel-gateway` | 本轮连接、安全与网关改动 | PR #27 已合入；本机兼容修正继续通过独立 PR 落地，公网仍待用户重启与验收 |
+| 其他分支 | 独立工作或历史分支 | 未提交内容与线程状态不在本轮检查范围，不得因提交号已在主线就删除工作树 |
 
-**双分支策略**：日常开发全在 `feature-branch` 及其短分支上进行；只有当 `feature-branch` 上攒够一批功能、验证稳定后，才把它同步到 `main`。`main` 永远保持「可回退的稳定快照」，不直接从 `main` 开分支或提交。
+**双分支策略**：短分支从 `origin/feature-branch` 开出，不从本地 feature-branch 或 main 开出。PR 合并、CI 与源码同步不表示运行中的 Java/Python 自动更新；服务由用户启停。
 
-worktree（同一仓库的多份检出）：
+2026-11-25 16:59 通过 `git worktree list` 核对的工作树（用途表，不承诺随时间仍保持同一 HEAD 或干净状态）：
 
 | 路径 | 分支 | 说明 |
 |---|---|---|
-| `/Users/anglv/Nexus` | `feature-branch` | 主工作区 |
-| `/Users/anglv/alma/worktrees/nexus/bad-condor` | `bad-condor` | 并行会话工作区（当前干净） |
-| `/Users/anglv/alma/worktrees/nexus/central-wombat` | `central-wombat` | 当前会话工作区 |
-| `/Users/anglv/alma/worktrees/nexus/partial-giraffe` | `partial-giraffe` | 并行会话工作区（8 处未提交） |
-| `/Users/anglv/alma/worktrees/nexus/slimy-silkworm` | `slimy-silkworm` | 并行会话工作区（4 处未提交） |
+| `/Users/anglv/Nexus` | `feature-branch` | 主仓库；用户原有发布端点、主题、Qoder 元数据保留 |
+| `/Users/anglv/Nexus/.alma/worktrees/funnel-gateway` | `feat/funnel-gateway` | 本轮工作树；已有主题改动不属于本轮部署提交 |
+| `/Users/anglv/alma/worktrees/nexus/fast-wolf` | `feat/chat-scope-popover` | 独立工作树，未核对未提交改动与运行线程 |
+| `/Users/anglv/alma/worktrees/nexus/alleged-eel` | `fix-supplier-protocol-and-test-feedback` | 保留 |
+| `/Users/anglv/alma/worktrees/nexus/gastric-whippet` | `redesign-input-ui-components` | 保留 |
+| `/Users/anglv/alma/worktrees/nexus/glorious-amphibian` | detached | 保留 |
+| `/Users/anglv/alma/worktrees/nexus/molecular-pigeon` | `feat/pixel-workroom-motion` | 保留 |
+| `/Users/anglv/alma/worktrees/nexus/reliable-pony` | `deploy-backend-bt-panel-public-ip` | 保留 |
+| `/Users/anglv/alma/worktrees/nexus/urban-halibut` | `feat/tavern-invite-port` | 保留 |
 
-**并行会话警告**：多个会话会同时往各自 worktree 写代码。当前各工作区未提交修改：
-`/Users/anglv/Nexus` 4 处（`AgentSessionList.vue`、`en.json`、`zh.json`、`agent.js`）、
-`partial-giraffe` 8 处、`slimy-silkworm` 4 处。提交前先 `git status` + `ls -lT <文件>`
-看时间戳，确认改动已收尾、且属于本轮要提交的内容；不要动别人的 worktree 及其未提交修改。
+每次开工、提交与合并后运行：
+
+```bash
+git fetch origin --prune
+git branch --show-current
+git log --oneline -3
+git status --short
+git worktree list
+git rev-list --left-right --count HEAD...origin/feature-branch
+```
+
+**并行会话警告**：只暂存本轮明确归属的路径。2026-11-25 已核对主仓库的 `.env.production`、`nexus-theme.css` 与 `.Nexus Chat.qoder.site` 为用户原有改动；PR #27 源码同步时三者逐字节保留，旧发布端点待后端真实 ready 后再切换。其他工作树不能凭旧文档断言干净或已经收尾。
 
 ## 2. 目录结构
 
@@ -43,8 +50,8 @@ worktree（同一仓库的多份检出）：
 |---|---|---|
 | `nexus-chat-frontend/` | Vue 3 + Vite + Tailwind + Electron | `src/components/` 按 agent / chat / companion / contact / layout / standby 等模块分目录 |
 | `nexus-chat-backend/` | Spring Boot 3.2 / Java 17 | 配置见第 3 节 |
-| `nexus-agent-backend/` | Python FastAPI | `.venv` 为 py3.9；`.env` 存本地 LLM 密钥 |
-| `nginx/` | nginx | 反向代理配置 |
+| `nexus-agent-backend/` | Python FastAPI | 使用 Python 3.11 的 `.venv311`；`.env` 存本地配置与密钥 |
+| `nginx/` | nginx / Node | 原反向代理配置与 `funnel-gateway.mjs` 受控回环网关 |
 | `docs/` | 文档 | DEVELOPMENT.md（部分过时）、ROADMAP.md、本清单 |
 | `nexus-chat-app/` | Flutter（已暂停） | 整目录 gitignore，只留本机 |
 | `docker-compose.yml` | 容器编排 | 凭据全部走环境变量，无硬编码 |
@@ -59,7 +66,7 @@ worktree（同一仓库的多份检出）：
 | `nexus-agent-backend/.env` | LLM API keys 等 | gitignore | `uchg` |
 | 被跟踪的 `application.properties` / `.env.example` | 只有占位符或 `${ENV:默认值}` | 进仓库 | — |
 
-- 改本地凭据：`chflags nouchg <文件>` → 编辑 → `chflags uchg <文件>` 锁回。
+- **本地凭据仅由用户修改。** 改本地凭据：`chflags nouchg <文件>` → 编辑 → `chflags uchg <文件>` 锁回。
   直接编辑会报 Operation not permitted，这是保护不是故障。
 - 提交前自查：`git grep -nE "授权码片段|真实密码片段" -- .` 应无匹配。
 - **历史遗留**：旧 SMTP 授权码、旧 MySQL 密码、旧 JWT 密钥仍可在公开历史中翻到
@@ -70,11 +77,11 @@ worktree（同一仓库的多份检出）：
 
 0. **预检**：`git status --porcelain`、`git fetch origin --prune`；
    核对改动归属与时间戳（见第 1 节警告）。
-1. **开分支**：`git switch -c feat/简短名`（从 `feature-branch` 开出）。
-2. **本地三检查**（与 CI 同口径）：
+1. **开分支**：`git switch -c feat/简短名 origin/feature-branch`（必须先 fetch，不从可能含其他线程提交的本地主线开出）。
+2. **本地三检查**（与 CI 同口径，串行；Java 服务在跑时只在独立工作树编译测试，不改主仓库 target/classes）：
    ```bash
    cd nexus-chat-frontend && npm run build
-   cd nexus-agent-backend && env -u NO_PROXY -u no_proxy .venv/bin/python -m pytest -q
+   cd nexus-agent-backend && PYTHONDONTWRITEBYTECODE=1 ENGINE=langgraph env -u NO_PROXY -u no_proxy .venv311/bin/python -m pytest -q -p no:cacheprovider
    cd nexus-chat-backend && mvn -B -ntp test -Dtest='!NexusChatApplicationTests' -Dsurefire.failIfNoSpecifiedTests=false
    ```
 3. **暂存**：`git add <具体目录或文件>`，**禁止 `git add -A` / `git add .`**；
@@ -85,7 +92,7 @@ worktree（同一仓库的多份检出）：
 7. **等 CI**：前端 (Vue) / 后端 (Java) / Agent (Python) 三项全绿才合并；
    红叉就在同分支修复追加提交，再推送会自动更新 PR。
 8. **合并**：确认 `mergeable=true`；用 merge commit 方式（仓库历史风格）。
-9. **同步**：`git fetch origin feature-branch:feature-branch && git switch feature-branch`。
+9. **同步**：先 fetch，在目标工作树用 `git merge --ff-only origin/feature-branch`；用户未提交改动必须先核对、保护，不能 reset/覆盖。私有配置与运行数据不改，Java/Python 不代启停。
 10. **清理（可选）**：`git branch -d feat/简短名 && git push origin --delete feat/简短名`。
     只用 `-d`（git 会校验已合并），**禁止 `-D` 强删**。
 11. **同步 `main`（稳定后才做）**：`feature-branch` 上攒够一批功能且验证稳定后，
@@ -122,8 +129,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 
 ## 6. 当前待办
 
-- 并行 worktree 未提交修改（截至 2026-11-20）：`/Users/anglv/Nexus` 4 处、
-  `partial-giraffe` 8 处、`slimy-silkworm` 4 处；均属并行会话，去留待定，**不要动**。
-- 可清理分支：`feat/companion-roles`、`m0/foundation`（本地+远端）。
-- 旧凭据轮换：QQ 邮箱旧授权码、服务器旧 MySQL/JWT（见第 3 节）。
-- 本清单文件尚未提交，随下一轮提交入库。
+- 受控 Funnel：代码与回归见 `docs/FUNNEL-DEPLOYMENT.md`；尚未开启公网入口，用户需核对密钥并重启 Java 后继续真实验收。
+- 原 Qoder 站点、发布端点和元数据保留；只有后端真实安全边界通过后才切换发布端点并重新发布。
+- 其他工作树是否已收尾、本机旧备份是否可清理：本轮未核对，不沿用 11-20 的数量和路径作决定。
+- 历史凭据是否完成轮换：本轮未核对。不能因文件已忽略就认为公开历史中的旧值已失效。

@@ -21,7 +21,8 @@ import java.util.Set;
 @Profile("funnel")
 @RequiredArgsConstructor
 public class FunnelReadinessController {
-    public static final String POLICY_VERSION = "nexus-funnel-v1";
+    public static final String POLICY_VERSION = "nexus-funnel-v2";
+    private static final Set<String> LOCAL_ORIGINS = Set.of("http://localhost:*", "http://127.0.0.1:*", "app://*");
     private static final Set<String> LOOPBACK = Set.of("127.0.0.1", "::1", "0:0:0:0:0:0:0:1");
 
     private final AllowedOrigins allowedOrigins;
@@ -35,12 +36,13 @@ public class FunnelReadinessController {
                     .body(Map.of("ready", false));
         }
         List<String> origins = allowedOrigins.patterns();
-        String exclusive = environment.getProperty("cors.exclusive-origins", "").trim();
+        String publicOrigin = environment.getProperty("funnel.public-origin", "").trim();
         boolean ready = secretGuard.validated() && "127.0.0.1".equals(environment.getProperty("server.address"))
-                && !exclusive.isBlank() && !exclusive.contains("*")
-                && exclusive.startsWith("https://") && origins.equals(List.of(exclusive));
+                && publicOrigin.startsWith("https://") && !publicOrigin.contains("*")
+                && origins.contains(publicOrigin)
+                && origins.stream().allMatch(origin -> publicOrigin.equals(origin) || LOCAL_ORIGINS.contains(origin));
         return ResponseEntity.status(ready ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .body(Map.of("ready", ready, "policyVersion", POLICY_VERSION, "origins", origins));
+                .body(Map.of("ready", ready, "policyVersion", POLICY_VERSION, "publicOrigin", publicOrigin, "origins", origins));
     }
 }
