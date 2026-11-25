@@ -307,7 +307,7 @@ class MCPProvider:
             # user for input mid-call). A user-managed server is never given that channel, and
             # the request rules refuse a handshake that offers it, so withdraw the offer.
             adapter.client._elicitation_callback = None
-            adapter.client._session_kwargs.pop("elicitation_callback", None)
+            getattr(adapter.client, "_session_kwargs", {}).pop("elicitation_callback", None)
             async with contextlib.AsyncExitStack() as stack:
                 await stack.enter_async_context(adapter)
                 # MCPAdapter clones Client; use the one its context actually opened.
