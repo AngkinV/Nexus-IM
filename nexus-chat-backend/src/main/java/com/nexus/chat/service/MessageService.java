@@ -52,6 +52,7 @@ public class MessageService {
     private final MessageReactionRepository messageReactionRepository;
     private final MessageDeliveryStatusRepository messageDeliveryStatusRepository;
     private final MessageEditHistoryRepository messageEditHistoryRepository;
+    private final FileAccessService fileAccessService;
 
     /**
      * Send a message with sequence number and client message ID for deduplication.
@@ -70,6 +71,8 @@ public class MessageService {
         if (!chatMemberRepository.existsByChatIdAndUserId(chatId, senderId)) {
             throw new BusinessException("error.chat.not.member");
         }
+
+        fileUrl = fileAccessService.authorizeAttachment(fileUrl, senderId);
 
         if (replyToMessageId != null) {
             Message replied = messageRepository.findById(replyToMessageId)

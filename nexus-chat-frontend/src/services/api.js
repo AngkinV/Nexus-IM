@@ -482,7 +482,9 @@ export const fileAPI = {
 
     getDownloadUrl: (fileId) => `${API_BASE_URL}/files/download/${fileId}`,
 
-    getPreviewUrl: (fileId) => `${API_BASE_URL}/files/preview/${fileId}`
+    getPreviewUrl: (fileId) => `${API_BASE_URL}/files/preview/${fileId}`,
+
+    getAccess: (reference) => apiClient.get('/files/access', { params: { reference } })
 }
 
 export default apiClient

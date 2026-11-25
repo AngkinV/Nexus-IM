@@ -1,10 +1,14 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
+import { resolvePublicBackendUrls } from './src/services/publicBackendUrls.mjs'
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isElectron = mode === 'electron' || env.ELECTRON === 'true'
+  if (command === 'build' && !isElectron) {
+    resolvePublicBackendUrls(env.VITE_API_BASE_URL, env.VITE_WS_URL)
+  }
   const resolveProxyTarget = (value, fallback) => {
     if (!value || value.startsWith('/')) {
       return fallback

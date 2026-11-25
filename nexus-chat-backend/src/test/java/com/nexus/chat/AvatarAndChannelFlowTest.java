@@ -120,12 +120,15 @@ class AvatarAndChannelFlowTest {
         assertEquals(url, body(as(owner, get("/api/users/{id}/profile", owner.getId()))).path("avatarUrl").asText());
     }
 
-    @Test void filesWrittenUnderTheConfiguredDirectoryAreServedWhateverTheWorkingDirectory() throws Exception {
-        Path groupAvatar = uploads.resolve("2026/11/22/group.jpeg");
-        Files.createDirectories(groupAvatar.getParent());
-        Files.write(groupAvatar, PNG);
-
-        mvc.perform(get("/uploads/2026/11/22/group.jpeg")).andExpect(status().isOk()).andExpect(content().bytes(PNG));
+    @Test void registeredPublicAvatarUsesConfiguredStorageDirectory() throws Exception {
+        Path avatar = uploads.resolve("2026/11/22/group.jpeg");
+        Files.createDirectories(avatar.getParent());
+        Files.write(avatar, PNG);
+        String url = "/uploads/2026/11/22/group.jpeg";
+        mvc.perform(get(url)).andExpect(status().isNotFound());
+        owner.setAvatarUrl(url);
+        users.save(owner);
+        mvc.perform(get(url)).andExpect(status().isOk()).andExpect(content().bytes(PNG));
         mvc.perform(get("/uploads/2026/11/22/gone.jpeg")).andExpect(status().isNotFound());
     }
 

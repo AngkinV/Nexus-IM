@@ -24,6 +24,7 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final VerificationCodeService verificationCodeService;
     private final SecurityService securityService;
+    private final FileAccessService fileAccessService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request, String ip, String userAgent) {
@@ -59,7 +60,7 @@ public class AuthService {
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setNickname(request.getNickname());
         user.setPhone(request.getPhone());
-        user.setAvatarUrl(request.getAvatarUrl());
+        user.setAvatarUrl(fileAccessService.authorizeAvatar(request.getAvatarUrl(), null));
         user.setIsOnline(true);
 
         User savedUser = userRepository.save(user);

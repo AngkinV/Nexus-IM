@@ -1,5 +1,9 @@
 package com.nexus.chat.config;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -96,23 +100,36 @@ class AgentMcpServletTest {
 
     @Test
     void aCallAnswersWithStructuredContentAndTheSameJsonAsText(CapturedOutput output) throws Exception {
-        Map<String, Object> params = Map.of("name", "get_recent_messages", "arguments", Map.of("chat_id", 5));
-        JsonNode result = rpc("tools/call", params, Map.of("X-Actor-User-Id", "7", "X-Trace-Id", "trace-42",
-                "traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")).path("result");
+        Logger audit = (Logger) LoggerFactory.getLogger(AgentToolRegistry.class);
+        ListAppender<ILoggingEvent> events = new ListAppender<>();
+        events.start();
+        audit.addAppender(events);
+        try {
+            assertTrue(audit.isInfoEnabled(), "Tool audit INFO events must be enabled");
+            Map<String, Object> params = Map.of("name", "get_recent_messages", "arguments", Map.of("chat_id", 5));
+            JsonNode result = rpc("tools/call", params, Map.of("X-Actor-User-Id", "7", "X-Trace-Id", "trace-42",
+                    "traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")).path("result");
 
-        assertFalse(result.path("isError").asBoolean());
-        JsonNode payload = result.path("structuredContent");
-        assertEquals(5, payload.path("chatId").intValue());
-        assertEquals(2, payload.path("messages").size());
-        assertEquals("hello alice", payload.at("/messages/0/content").asText());
-        assertEquals("bob", payload.at("/messages/0/senderName").asText());
-        assertEquals(payload, JSON.readTree(result.at("/content/0/text").asText()));
+            assertFalse(result.path("isError").asBoolean());
+            JsonNode payload = result.path("structuredContent");
+            assertEquals(5, payload.path("chatId").intValue());
+            assertEquals(2, payload.path("messages").size());
+            assertEquals("hello alice", payload.at("/messages/0/content").asText());
+            assertEquals("bob", payload.at("/messages/0/senderName").asText());
+            assertEquals(payload, JSON.readTree(result.at("/content/0/text").asText()));
 
-        String line = output.getAll().lines().filter(l -> l.contains("agent tool call:")).findFirst().orElseThrow();
-        assertTrue(line.contains("tool=get_recent_messages actor=7 traceId=trace-42 "
-                + "traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01 tookMs="), line);
-        assertTrue(line.endsWith("result=OK"), line);
-        assertFalse(line.contains("hello alice"), "chat content does not belong in the log line");
+            // Spring test contexts may rebind ConsoleAppender to an earlier capture
+            // stream. Verify the real audit event rather than global stdout timing.
+            String line = events.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains("agent tool call:")).findFirst().orElseThrow();
+            assertTrue(line.contains("tool=get_recent_messages actor=7 traceId=trace-42 "
+                    + "traceparent=00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01 tookMs="), line);
+            assertTrue(line.endsWith("result=OK"), line);
+            assertFalse(line.contains("hello alice"), "chat content does not belong in the log line");
+        } finally {
+            audit.detachAppender(events);
+            events.stop();
+        }
     }
 
     @Test

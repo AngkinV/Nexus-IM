@@ -4,7 +4,20 @@ export const presence = value => value === true || value === false || value === 
 export function resolveAvatarUrl(value, base = '') {
     if (typeof value !== 'string' || !value.trim()) return ''
     const url = value.trim()
-    if (/^https?:\/\//i.test(url) || /^blob:/i.test(url) || /^data:image\/(?:png|jpeg|jpg|gif|webp|avif|bmp|svg\+xml)(?:;|,)/i.test(url)) return url
+    if (/^https?:\/\//i.test(url)) {
+        let absolute
+        try { absolute = new URL(url) } catch { return '' }
+        if (absolute.username || absolute.password) return ''
+        const host = absolute.hostname.toLowerCase().replace(/\.$/, '')
+        const legacyBackend = host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host)
+            || host === '[::1]' || host.startsWith('[::ffff:') || host === '47.118.29.122'
+        // Old avatar records must not target a visitor's localhost or the retired backend.
+        if (base && legacyBackend && absolute.pathname.startsWith('/uploads/')) {
+            try { return new URL(absolute.pathname, base).href } catch { return '' }
+        }
+        return url
+    }
+    if (/^blob:/i.test(url) || /^data:image\/(?:png|jpeg|jpg|gif|webp|avif|bmp|svg\+xml)(?:;|,)/i.test(url)) return url
     if (/^[a-z][a-z\d+.-]*:/i.test(url) || url.startsWith('//') || /[\u0000-\u001f]/.test(url)) return ''
     return `${base.replace(/\/$/, '')}/${url.replace(/^\/+/, '')}`
 }

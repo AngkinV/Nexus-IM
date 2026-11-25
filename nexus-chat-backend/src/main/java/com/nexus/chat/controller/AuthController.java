@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @Slf4j
 @RestController
@@ -74,6 +75,8 @@ public class AuthController {
             AuthResponse response = authService.register(request, clientIp(httpRequest), userAgent(httpRequest));
             log.info("用户注册成功: userId={}, username={}", response.getUserId(), response.getUsername());
             return ResponseEntity.ok(response);
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (RuntimeException e) {
             log.warn("用户注册失败: username={}, reason={}", request.getUsername(), e.getMessage());
             return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));

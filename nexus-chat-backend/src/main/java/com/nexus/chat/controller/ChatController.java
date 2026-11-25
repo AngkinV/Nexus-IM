@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -45,6 +46,8 @@ public class ChatController {
             ChatDTO chat = chatService.createGroupChat(userId, request);
             log.info("群聊创建成功: chatId={}, name={}", chat.getId(), chat.getName());
             return ResponseEntity.ok(chat);
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (RuntimeException e) {
             log.warn("创建群聊失败: userId={}, reason={}", userId, e.getMessage());
             return ResponseEntity.badRequest().build();

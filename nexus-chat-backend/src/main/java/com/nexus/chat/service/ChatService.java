@@ -35,6 +35,7 @@ public class ChatService {
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final FileAccessService fileAccessService;
 
     @Transactional
     public ChatDTO createDirectChat(Long userId, Long contactId) {
@@ -110,7 +111,7 @@ public class ChatService {
         chat.setType(Chat.ChatType.group);
         chat.setName(request.getName().trim());
         chat.setDescription(request.getDescription());
-        chat.setAvatarUrl(request.getAvatar());
+        chat.setAvatarUrl(fileAccessService.authorizeAvatar(request.getAvatar(), userId));
         chat.setIsPrivate(request.getIsPrivate() != null ? request.getIsPrivate() : false);
         chat.setCreatedBy(userId);
 

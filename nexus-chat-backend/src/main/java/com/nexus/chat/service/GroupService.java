@@ -32,6 +32,7 @@ public class GroupService {
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final FileAccessService fileAccessService;
 
     /**
      * Create a new group
@@ -43,7 +44,7 @@ public class GroupService {
         chat.setType(Chat.ChatType.group);
         chat.setName(request.getName());
         chat.setDescription(request.getDescription());
-        chat.setAvatarUrl(request.getAvatar());
+        chat.setAvatarUrl(fileAccessService.authorizeAvatar(request.getAvatar(), creatorId));
         chat.setIsPrivate(request.getIsPrivate() != null ? request.getIsPrivate() : false);
         chat.setCreatedBy(creatorId);
         chat.setMemberCount(1); // Creator is the first member
@@ -127,7 +128,7 @@ public class GroupService {
             chat.setDescription(request.getDescription());
         }
         if (request.getAvatar() != null) {
-            chat.setAvatarUrl(request.getAvatar());
+            chat.setAvatarUrl(fileAccessService.authorizeAvatar(request.getAvatar(), userId));
         }
         if (request.getIsPrivate() != null) {
             chat.setIsPrivate(request.getIsPrivate());
