@@ -66,6 +66,20 @@ class ModelEndpointGuardTest {
     }
 
     @Test
+    void tailnetAndOtherNonPublicRangesAreRefusedInStrictModeAndTheirNeighboursAreNot() {
+        for (String url : new String[]{"http://100.64.0.1/v1", "http://100.100.1.2:11434/v1", "http://100.127.255.254/v1",
+                "http://0.1.2.3/v1", "http://[fd7a:115c:a1e0::1]/v1", "http://[::ffff:127.0.0.1]/v1", "http://[::ffff:10.0.0.5]/v1"}) {
+            assertThrows(IllegalArgumentException.class, () -> strict.validate(url), url);
+        }
+        for (String url : new String[]{"http://100.64.0.1/v1", "http://[fd7a:115c:a1e0::1]/v1"}) {
+            assertDoesNotThrow(() -> permissive.validate(url), url);
+        }
+        for (String url : new String[]{"https://100.63.255.255/v1", "https://100.128.0.1/v1", "https://1.1.1.1/v1"}) {
+            assertDoesNotThrow(() -> strict.validate(url), url);
+        }
+    }
+
+    @Test
     void privateRangesAllowedOnlyInPermissiveMode() {
         for (String url : new String[]{"http://10.0.0.5/v1", "http://172.16.3.4/v1", "http://192.168.1.10/v1"}) {
             assertDoesNotThrow(() -> permissive.validate(url));
