@@ -3,6 +3,7 @@ package com.nexus.chat.dto;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 @Data
 @NoArgsConstructor
@@ -15,4 +16,6 @@ public class RegisterRequest {
     private String phone;
     private String avatarUrl;
     private String verificationCode;
+    @ToString.Exclude // never logged
+    private String inviteCode;
 }

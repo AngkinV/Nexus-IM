@@ -144,6 +144,7 @@
     "codeRequired": "请输入验证码",
     "codeInvalid": "验证码无效或已过期",
     "enterCode": "请输入6位验证码",
+    "inviteCode": "邀请码",
     "pleaseLogin": "请先登录",
     "setupTitle": "完善个人资料",
     "setupSubtitle": "填写昵称并上传一张头像，就可以开始了。",
