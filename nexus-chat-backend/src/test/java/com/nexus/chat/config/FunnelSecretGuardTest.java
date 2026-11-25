@@ -45,6 +45,16 @@ class FunnelSecretGuardTest {
     }
 
     @Test
+    void allInvalidKeysAreReportedTogetherWhileValidKeysAreOmitted() {
+        MockEnvironment environment = configured();
+        for (String key : KEYS.subList(1, KEYS.size())) environment.withProperty(key, "");
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> new FunnelSecretGuard(environment));
+        for (String key : KEYS.subList(1, KEYS.size())) assertTrue(error.getMessage().contains(key));
+        assertFalse(error.getMessage().contains("jwt.secret"));
+        assertFalse(error.getMessage().contains("fixture-only-not-for-use-outside-tests"));
+    }
+
+    @Test
     void theTrackedDefaultCannotBecomeThePublicJwtSigningKey() throws Exception {
         Properties properties = new Properties();
         try (InputStream input = getClass().getResourceAsStream("/application.properties")) {

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<configuration scan="true" scanPeriod="30 seconds">
+<!-- Spring profile extensions are not supported by Logback's scan reload. -->
+<configuration scan="false">
 
     <!-- 定义日志颜色 -->
     <conversionRule conversionWord="clr" converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
@@ -15,7 +16,7 @@
 
     <!-- 文件输出格式（无颜色） -->
     <property name="FILE_LOG_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %5p ${PID:- } --- [%15.15t] %-40.40logger{39} : %m%n"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %5p ${PID:- } --- [%15.15t] %-40.40logger{39} : %m%n%wex"/>
 
     <!-- 控制台 Appender -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
@@ -103,6 +104,23 @@
         <root level="WARN">
             <appender-ref ref="CONSOLE"/>
             <appender-ref ref="ASYNC_FILE"/>
+        </root>
+    </springProfile>
+
+    <!-- Explicit profiles other than default/dev/prod (including local,funnel)
+         must still expose startup failures without enabling SQL/debug traces. -->
+    <springProfile name="!default &amp; !dev &amp; !prod">
+        <logger name="com.nexus.chat" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ASYNC_FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </logger>
+        <logger name="org.springframework" level="INFO"/>
+        <logger name="org.hibernate" level="WARN"/>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ASYNC_FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
         </root>
     </springProfile>
 
