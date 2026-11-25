@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
-import { allowedRequest, assertBackendReady, bodyLimit, clientAddress, createGateway, createLimiter, DEFAULT_LIMITS, limitClass, PUBLIC_ORIGIN } from './funnel-gateway.mjs'
+import { allowedRequest, assertBackendReady, bodyLimit, clientAddress, createGateway, createLimiter, DEFAULT_LIMITS, limitClass, listenOptions, PUBLIC_ORIGIN } from './funnel-gateway.mjs'
 
 let backend, gateway, base
 let readiness = { ready: true, policyVersion: 'nexus-funnel-v2', publicOrigin: PUBLIC_ORIGIN,
@@ -344,4 +344,15 @@ test('only upload routes may carry large bodies', async () => {
 test('the default limits leave ordinary use alone', () => {
   assert.ok(DEFAULT_LIMITS.general.client >= 600 && DEFAULT_LIMITS.auth.client <= 20 && DEFAULT_LIMITS.windowMs === 60_000)
   for (const kind of ['auth', 'upgrade', 'general']) assert.ok(DEFAULT_LIMITS[kind].global > DEFAULT_LIMITS[kind].client)
+})
+
+test('the gateway listens on loopback with no visitor header unless told otherwise', () => {
+  assert.deepEqual(listenOptions(), { host: '127.0.0.1', clientAddressHeader: null })
+  assert.deepEqual(listenOptions({ GATEWAY_LISTEN_HOST: '', GATEWAY_CLIENT_ADDRESS_HEADER: '' }), { host: '127.0.0.1', clientAddressHeader: null })
+  assert.deepEqual(listenOptions({ GATEWAY_LISTEN_HOST: '0.0.0.0', GATEWAY_CLIENT_ADDRESS_HEADER: 'X-Forwarded-For' }),
+    { host: '0.0.0.0', clientAddressHeader: 'x-forwarded-for' })
+  for (const bad of [{ GATEWAY_LISTEN_HOST: 'localhost' }, { GATEWAY_LISTEN_HOST: '0.0.0.0:80' }, { GATEWAY_CLIENT_ADDRESS_HEADER: 'x forwarded' },
+    { GATEWAY_CLIENT_ADDRESS_HEADER: 'x-forwarded-for\r\nx: y' }]) {
+    assert.throws(() => listenOptions(bad), TypeError)
+  }
 })

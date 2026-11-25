@@ -283,12 +283,23 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
   return server
 }
 
+// Where to listen and which header carries the visitor address. Loopback and no header unless
+// the environment says otherwise; inside a container the gateway has to listen on all of the
+// container's interfaces to be published at all.
+export function listenOptions(env = {}) {
+  const host = env.GATEWAY_LISTEN_HOST || '127.0.0.1'
+  const header = (env.GATEWAY_CLIENT_ADDRESS_HEADER || '').toLowerCase()
+  if (!net.isIP(host) || (header && !/^[a-z0-9-]{1,64}$/.test(header))) throw new TypeError('Invalid gateway listen options')
+  return { host, clientAddressHeader: header || null }
+}
+
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   try {
+    const { host, clientAddressHeader } = listenOptions(process.env)
     await assertBackendReady()
-    const server = createGateway()
+    const server = createGateway({ clientAddressHeader })
     server.on('error', error => { console.error(`Gateway could not listen: ${error.code}`); process.exitCode = 1 })
-    server.listen(18080, '127.0.0.1', () => console.log('Nexus backend gateway listening at http://127.0.0.1:18080'))
+    server.listen(18080, host, () => console.log(`Nexus backend gateway listening at http://${host}:18080`))
     process.once('SIGINT', () => server.stop())
     process.once('SIGTERM', () => server.stop())
   } catch {
