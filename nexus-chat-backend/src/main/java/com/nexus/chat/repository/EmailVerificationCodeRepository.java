@@ -32,4 +32,8 @@ public interface EmailVerificationCodeRepository extends JpaRepository<EmailVeri
 
     Optional<EmailVerificationCode> findTopByEmailAndTypeOrderByCreatedAtDesc(
             String email, CodeType type);
+
+    long countByEmailAndCreatedAtAfter(String email, LocalDateTime since);
+
+    long countByCreatedAtAfter(LocalDateTime since);
 }

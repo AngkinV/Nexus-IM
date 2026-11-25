@@ -27,6 +27,7 @@ public class AuthService {
     private final SecurityService securityService;
     private final FileAccessService fileAccessService;
     private final RegistrationPolicy registrationPolicy;
+    private final LoginThrottle loginThrottle;
 
     public RegistrationPolicyResponse registrationPolicy() {
         return new RegistrationPolicyResponse(registrationPolicy.isInviteRequired(), registrationPolicy.isEmailCodeRequired());
@@ -106,14 +107,26 @@ public class AuthService {
         String usernameOrEmail = request.getUsernameOrEmail();
 
         // Try to find user by username or email
-        User user = userRepository.findByUsernameOrEmail(usernameOrEmail, usernameOrEmail)
-                .orElseThrow(() -> new BusinessException("error.auth.invalid.credentials"));
+        User user = userRepository.findByUsernameOrEmail(usernameOrEmail, usernameOrEmail).orElse(null);
+
+        // One counter per account however it is named; names without an account are counted
+        // as typed, so both cases answer alike.
+        String throttleKey = user != null ? "user:" + user.getId()
+                : "name:" + String.valueOf(usernameOrEmail).trim().toLowerCase(java.util.Locale.ROOT);
+        loginThrottle.requireAllowed(throttleKey);
+
+        if (user == null) {
+            loginThrottle.failed(throttleKey);
+            throw new BusinessException("error.auth.invalid.credentials");
+        }
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             // Record the failed attempt against the known user before rejecting.
             securityService.recordFailedLogin(user.getId(), ip, userAgent, "invalid_password");
+            loginThrottle.failed(throttleKey);
             throw new BusinessException("error.auth.invalid.credentials");
         }
+        loginThrottle.succeeded(throttleKey);
 
         // Update online status
         user.setIsOnline(true);

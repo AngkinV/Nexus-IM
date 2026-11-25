@@ -30,6 +30,13 @@ public class VerificationCodeService {
     @Value("${verification.code.resend-interval-seconds:60}")
     private int resendIntervalSeconds;
 
+    /** Codes sent per address and in total over 24 hours; 0 means no cap. */
+    @Value("${verification.code.daily-limit-per-email:0}")
+    private int dailyLimitPerEmail;
+
+    @Value("${verification.code.daily-limit-global:0}")
+    private int dailyLimitGlobal;
+
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Transactional
@@ -51,6 +58,12 @@ public class VerificationCodeService {
                         LocalDateTime.now(), canResendAfter).getSeconds();
                 throw new BusinessException("请等待 " + secondsLeft + " 秒后再重新发送");
             }
+        }
+
+        LocalDateTime dayAgo = LocalDateTime.now().minusDays(1);
+        if ((dailyLimitPerEmail > 0 && codeRepository.countByEmailAndCreatedAtAfter(email, dayAgo) >= dailyLimitPerEmail)
+                || (dailyLimitGlobal > 0 && codeRepository.countByCreatedAtAfter(dayAgo) >= dailyLimitGlobal)) {
+            throw new BusinessException("验证码发送次数已达上限，请稍后再试");
         }
 
         // Generate new code

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
-import { allowedRequest, assertBackendReady, createGateway, PUBLIC_ORIGIN } from './funnel-gateway.mjs'
+import { allowedRequest, assertBackendReady, bodyLimit, clientAddress, createGateway, createLimiter, DEFAULT_LIMITS, limitClass, PUBLIC_ORIGIN } from './funnel-gateway.mjs'
 
 let backend, gateway, base
 let readiness = { ready: true, policyVersion: 'nexus-funnel-v2', publicOrigin: PUBLIC_ORIGIN,
@@ -225,4 +225,123 @@ test('declared and chunked oversized request bodies are refused with a small tes
     assert.equal(received.length, count)
     assert.equal((await rawRequest(target, '/api/users/7', { method: 'POST', headers: { 'Transfer-Encoding': 'chunked' }, body: 'x'.repeat(65) })).status, 413)
   } finally { limited.stop() }
+})
+
+async function withGateway(options, run) {
+  const limited = createGateway({ upstreamPort: backend.address().port, ...options })
+  await new Promise(resolve => limited.listen(0, '127.0.0.1', resolve))
+  try { await run(`http://127.0.0.1:${limited.address().port}`) } finally { limited.stop() }
+}
+
+const TIGHT = { windowMs: 60_000, auth: { client: 2, global: 5 }, upgrade: { client: 1, global: 50 }, general: { client: 3, global: 50 } }
+
+test('the limiter counts per key and window and never grows past its key bound', () => {
+  let time = 0
+  const take = createLimiter({ windowMs: 1000, maxKeys: 2, now: () => time })
+  assert.deepEqual([take('a', 2), take('a', 2), take('a', 2)], [true, true, false])
+  assert.equal(take('b', 1), true)
+  assert.equal(take('c', 1), false, 'table full of live windows refuses unknown keys')
+  time = 999
+  assert.equal(take('a', 2), false)
+  time = 1000
+  assert.equal(take('c', 1), true, 'expired windows are evicted to make room')
+  assert.deepEqual([take('a', 2), take('a', 2), take('a', 2)], [true, true, false])
+})
+
+test('requests are classified and sized by what they are', () => {
+  assert.equal(limitClass('POST', '/api/auth/login'), 'auth')
+  assert.equal(limitClass('POST', '/api/%61uth/register?x=1'), 'auth')
+  assert.equal(limitClass('GET', '/api/auth/registration-policy'), 'general')
+  assert.equal(limitClass('POST', '/api/messages'), 'general')
+  assert.equal(limitClass('GET', '/ws/1/2/websocket', true), 'upgrade')
+  for (const path of ['/api/files/upload', '/api/files/upload/chunk', '/api/companion/assets/model', '/api/companion/user-assets/background',
+    '/api/users/7/avatar', '/api/agent/sessions/as_1/attachments', '/api/agent/knowledge/3/documents']) {
+    assert.equal(bodyLimit('POST', path, 1000, 10), 1000, path)
+  }
+  for (const [method, path] of [['POST', '/api/messages'], ['PUT', '/api/files/upload'], ['POST', '/api/files/upload/chunk/extra'],
+    ['POST', '/api/users/7/avatar/x'], ['POST', '/api/auth/login']]) {
+    assert.equal(bodyLimit(method, path, 1000, 10), 10, `${method} ${path}`)
+  }
+  assert.equal(bodyLimit('POST', '/api/messages', 5, 10), 5)
+})
+
+test('the visitor address is the last entry the local proxy wrote, or nothing', () => {
+  const request = value => ({ headers: value === undefined ? {} : { 'x-forwarded-for': value } })
+  assert.equal(clientAddress(request('203.0.113.9'), 'x-forwarded-for'), '203.0.113.9')
+  assert.equal(clientAddress(request('198.51.100.1, 203.0.113.9'), 'x-forwarded-for'), '203.0.113.9')
+  assert.equal(clientAddress(request('2001:db8::7'), 'x-forwarded-for'), '2001:db8::7')
+  for (const bad of [undefined, '', 'unknown', '203.0.113.9, spoof', '203.0.113.9:443']) {
+    assert.equal(clientAddress(request(bad), 'x-forwarded-for'), null, String(bad))
+  }
+  assert.equal(clientAddress(request('203.0.113.9'), null), null)
+})
+
+test('sign-in attempts are limited per visitor without reaching the backend, and other visitors are unaffected', async () => {
+  await withGateway({ limits: TIGHT, clientAddressHeader: 'x-forwarded-for' }, async target => {
+    const login = address => fetch(target + '/api/auth/login', { method: 'POST', headers: { 'X-Forwarded-For': address }, body: '{}' })
+    assert.deepEqual([(await login('203.0.113.1')).status, (await login('203.0.113.1')).status], [200, 200])
+    const count = received.length
+    const refused = await login('198.51.100.200, 203.0.113.1')
+    assert.equal(refused.status, 429)
+    assert.equal(refused.headers.get('retry-after'), '60')
+    assert.deepEqual(await refused.json(), { error: 'Too many requests' })
+    assert.equal(received.length, count, 'a refused request costs the backend nothing, not even a readiness probe')
+    assert.equal((await login('203.0.113.2')).status, 200)
+    assert.equal((await fetch(target + '/api/users/7', { headers: { 'X-Forwarded-For': '203.0.113.1' } })).status, 200)
+    assert.equal((await fetch(target + '/health')).status, 200)
+  })
+})
+
+test('the shared limit holds when visitors cannot be told apart or keep changing address', async () => {
+  await withGateway({ limits: TIGHT }, async target => {
+    const statuses = []
+    for (let i = 0; i < 7; i++) {
+      statuses.push((await fetch(target + '/api/auth/login', { method: 'POST', headers: { 'X-Forwarded-For': `203.0.113.${i}` }, body: '{}' })).status)
+    }
+    assert.deepEqual(statuses, [200, 200, 200, 200, 200, 429, 429])
+  })
+})
+
+test('limits reopen when the window passes', async () => {
+  let time = 0
+  await withGateway({ limits: TIGHT, clientAddressHeader: 'x-forwarded-for', now: () => time }, async target => {
+    const get = () => fetch(target + '/api/users/7', { headers: { 'X-Forwarded-For': '203.0.113.5' } }).then(response => response.status)
+    assert.deepEqual([await get(), await get(), await get(), await get()], [200, 200, 200, 429])
+    time = 59_999
+    assert.equal(await get(), 429)
+    time = 60_000
+    assert.equal(await get(), 200)
+  })
+})
+
+test('WebSocket upgrades are limited before the backend is contacted', async () => {
+  await withGateway({ limits: TIGHT, clientAddressHeader: 'x-forwarded-for' }, async target => {
+    const upgrade = () => new Promise((resolve, reject) => {
+      const request = http.request({ hostname: '127.0.0.1', port: new URL(target).port, path: '/ws-native',
+        headers: { ...upgradeHeaders(), 'X-Forwarded-For': '203.0.113.8' } })
+      request.on('upgrade', (response, socket) => { socket.destroy(); resolve(response.statusCode) })
+      request.on('response', response => { response.resume(); resolve(response.statusCode) })
+      request.on('error', reject)
+      request.end()
+    })
+    assert.equal(await upgrade(), 101)
+    const count = received.length
+    assert.equal(await upgrade(), 429)
+    assert.equal(received.length, count)
+  })
+})
+
+test('only upload routes may carry large bodies', async () => {
+  await withGateway({ maxBodyBytes: 4096, maxJsonBytes: 64 }, async target => {
+    const post = path => fetch(target + path, { method: 'POST', body: 'x'.repeat(65) }).then(response => response.status)
+    assert.equal(await post('/api/files/upload'), 200)
+    assert.equal(await post('/api/messages'), 413)
+    assert.equal((await rawRequest(target, '/api/messages', { method: 'POST', headers: { 'Transfer-Encoding': 'chunked' }, body: 'x'.repeat(65) })).status, 413)
+    assert.equal((await fetch(target + '/api/files/upload', { method: 'POST', body: 'x'.repeat(4097) })).status, 413)
+  })
+})
+
+test('the default limits leave ordinary use alone', () => {
+  assert.ok(DEFAULT_LIMITS.general.client >= 600 && DEFAULT_LIMITS.auth.client <= 20 && DEFAULT_LIMITS.windowMs === 60_000)
+  for (const kind of ['auth', 'upgrade', 'general']) assert.ok(DEFAULT_LIMITS[kind].global > DEFAULT_LIMITS[kind].client)
 })

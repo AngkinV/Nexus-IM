@@ -30,7 +30,7 @@ class AuthServiceRegistrationTest {
         });
         return new AuthService(users, mock(PasswordEncoder.class), mock(JwtTokenProvider.class), emailCodes,
                 mock(SecurityService.class), mock(FileAccessService.class),
-                new RegistrationPolicy(invites, inviteRequired, emailCodeRequired));
+                new RegistrationPolicy(invites, inviteRequired, emailCodeRequired), new LoginThrottle(0, 15));
     }
 
     RegisterRequest request(String emailCode, String inviteCode) {
