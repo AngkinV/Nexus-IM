@@ -1,0 +1,179 @@
+# Lima VM for the public Nexus stack (docs/PUBLIC-ISOLATION-PLAN.md, phase 2).
+#
+# The VM is the isolation boundary. Requests from strangers are handled by containers inside
+# it; it shares no directory with the Mac; and its firewall keeps those containers away from
+# the Mac, the home network and the tailnet. Only guest port 18080 is forwarded, to
+# 127.0.0.1 on the Mac.
+#
+#   limactl create --name nexus-public --tty=false deploy/public/lima.yaml
+#   limactl start nexus-public
+minimumLimaVersion: 2.0.0
+vmType: vz
+arch: aarch64
+cpus: 4
+memory: 4GiB
+disk: 30GiB
+
+images:
+  - location: "https://cloud.debian.org/images/cloud/trixie/20261123-2671/debian-13-genericcloud-arm64-20261123-2671.qcow2"
+    arch: aarch64
+    digest: "sha512:3942cc527cb142f1cd8f5382b6411e9fe5e8f06b8f33cc2800faef9dff658fbdec4f0ac395a4eae02e8e1706f9dd71224ebbee8d5c5f763773d39e75a1321d81"
+
+# Nothing of the Mac is visible inside the VM.
+mounts: []
+
+# Docker from the Debian archive is installed below; Lima's bundled containerd is not used.
+containerd:
+  system: false
+  user: false
+
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+
+# The Mac's proxy settings stay on the Mac. Lima would otherwise hand the VM a proxy address
+# on the Mac (from the shell environment and from the macOS system proxy settings), and a
+# proxy there can reach everything the firewall below is meant to block. The first setting
+# covers the shell environment; the empty values override the system settings.
+propagateProxyEnv: false
+env:
+  http_proxy: ""
+  https_proxy: ""
+  ftp_proxy: ""
+  no_proxy: ""
+
+# The gateway is the only thing reachable from the Mac, and only on its loopback. The other
+# two rules stop Lima from mirroring any other guest port (loopback-bound or not, TCP or UDP)
+# onto the Mac.
+portForwards:
+  - guestPort: 18080
+    hostIP: "127.0.0.1"
+    proto: tcp
+  - guestPortRange: [1, 65535]
+    proto: any
+    ignore: true
+  - guestIP: "0.0.0.0"
+    proto: any
+    ignore: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      # Runs as root at every boot; every step is safe to repeat.
+      set -eu -o pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      # Nothing here may go through a proxy on the Mac, whatever the environment says.
+      unset http_proxy https_proxy ftp_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY NO_PROXY
+      sed -i -E '/^(https?|ftp|all|no)_proxy=/Id' /etc/environment
+
+      # Docker Hub is not reachable from every network; these mirror it. Empty = Docker Hub.
+      REGISTRY_MIRRORS='"https://docker.1ms.run", "https://docker.m.daocloud.io"'
+      # Containers resolve names here instead of through the Mac, so names that only the
+      # Mac knows (its hosts file, host.lima.internal) do not exist for them.
+      CONTAINER_DNS='"223.5.5.5", "119.29.29.29"'
+
+      # The firewall below names Lima's gateway address; refuse to continue if it ever differs.
+      [ "$(ip -4 route show default | awk '{print $3; exit}')" = "192.168.5.2" ] || { echo "unexpected gateway address" >&2; exit 1; }
+
+      # --- 1. Firewall, before Docker exists -------------------------------------------
+      cat > /etc/nexus-guard.nft <<'NFT'
+      #!/usr/sbin/nft -f
+      # Containers may reach each other and the public internet, and nothing else: not the
+      # Mac (192.168.5.2 is the Mac's loopback as seen from this VM), not the home network,
+      # not the tailnet (100.64.0.0/10), not this VM itself. Docker's own rules live in
+      # other tables and still apply; a drop here is final.
+      table inet nexus_guard
+      delete table inet nexus_guard
+      table inet nexus_guard {
+          set not_public {
+              type ipv4_addr
+              flags interval
+              elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16,
+                           172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 }
+          }
+          chain from_containers_forward {
+              ct state established,related accept
+              oifname "docker0" accept
+              oifname "br-*" accept
+              ip daddr @not_public counter drop
+              meta nfproto ipv6 counter drop
+          }
+          chain from_containers_input {
+              ct state established,related accept
+              counter drop
+          }
+          # The VM itself has no business on the Mac or the networks behind it either. This
+          # does not stop someone who is already root in the VM, but it does stop anything
+          # here from using a service on the Mac by accident (a proxy, a database).
+          chain output {
+              type filter hook output priority -10; policy accept;
+              oifname "lo" accept
+              ct state established,related accept
+              oifname "docker0" accept
+              oifname "br-*" accept
+              # Lima's name resolver and DHCP server answer on the gateway address.
+              ip daddr 192.168.5.2 meta l4proto { tcp, udp } th dport 53 accept
+              ip daddr 192.168.5.2 udp dport 67 accept
+              ip daddr @not_public counter drop
+          }
+          chain forward {
+              type filter hook forward priority -10; policy accept;
+              iifname "docker0" jump from_containers_forward
+              iifname "br-*" jump from_containers_forward
+          }
+          chain input {
+              type filter hook input priority -10; policy accept;
+              iifname "docker0" jump from_containers_input
+              iifname "br-*" jump from_containers_input
+          }
+      }
+      NFT
+
+      cat > /etc/systemd/system/nexus-guard.service <<'UNIT'
+      [Unit]
+      Description=Nexus public stack firewall (keeps containers off the host and private networks)
+      Before=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/nexus-guard.nft
+      ExecReload=/usr/sbin/nft -f /etc/nexus-guard.nft
+
+      [Install]
+      WantedBy=multi-user.target
+      UNIT
+
+      # Docker does not start without the firewall.
+      mkdir -p /etc/systemd/system/docker.service.d
+      printf '[Unit]\nRequires=nexus-guard.service\nAfter=nexus-guard.service\n' \
+        > /etc/systemd/system/docker.service.d/nexus-guard.conf
+
+      mkdir -p /etc/docker
+      cat > /etc/docker/daemon.json <<JSON
+      {
+        "registry-mirrors": [${REGISTRY_MIRRORS}],
+        "dns": [${CONTAINER_DNS}],
+        "no-new-privileges": true,
+        "ipv6": false,
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "3" }
+      }
+      JSON
+
+      if ! command -v nft >/dev/null 2>&1; then
+        apt-get update -q
+        apt-get install -y -q --no-install-recommends nftables
+      fi
+      systemctl daemon-reload
+      systemctl enable --now nexus-guard.service
+      nft list table inet nexus_guard >/dev/null
+
+      # --- 2. Docker and automatic security updates --------------------------------------
+      if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+        apt-get update -q
+        apt-get install -y -q --no-install-recommends \
+          docker.io docker-cli docker-compose docker-buildx unattended-upgrades ca-certificates
+      fi
+      systemctl enable --now docker.service
