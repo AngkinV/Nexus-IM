@@ -123,6 +123,9 @@ class FunnelSecretPrepTest {
         assertTrue(keychain.items.isEmpty());
         String text = printed.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("待迁移 3"));
+        // Rows under the configured key are the normal local state now; check must not read as a to-do.
+        assertTrue(text.contains("不要为此执行 prepare"));
+        assertFalse(text.contains("需由用户执行 prepare"));
         assertTrue(text.contains("agent.internal.token, agent.internal.signing-secret, companion.api-key.secret"));
         assertFalse(text.contains("jwt.secret"));
         assertNoSecretPrinted();
