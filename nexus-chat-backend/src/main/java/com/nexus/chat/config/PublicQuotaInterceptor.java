@@ -65,6 +65,7 @@ public class PublicQuotaInterceptor implements HandlerInterceptor {
     private final int modelCallsPerDay;
     private final int concurrentModelCalls;
     private final long assumedUploadBytes;
+    private final boolean knowledgeBaseWritable;
     private final List<Path> storageRoots;
     private final LongSupplier clock;
     private long storageMeasuredAt = Long.MIN_VALUE;
@@ -77,13 +78,16 @@ public class PublicQuotaInterceptor implements HandlerInterceptor {
                                   @Value("${nexus.quota.model-calls-per-user-per-day:200}") int modelCallsPerDay,
                                   @Value("${nexus.quota.concurrent-model-calls-per-user:2}") int concurrentModelCalls,
                                   @Value("${nexus.quota.assumed-upload-bytes:68157440}") long assumedUploadBytes,
+                                  @Value("${nexus.quota.knowledge-base-writable:true}") boolean knowledgeBaseWritable,
                                   @Value("${nexus.quota.storage-roots:uploads,storage}") List<String> storageRoots) {
         this(enabled, uploadBytesPerDay, storageBytes, modelCallsPerDay, concurrentModelCalls, assumedUploadBytes,
-                storageRoots.stream().map(Path::of).toList(), System::currentTimeMillis);
+                knowledgeBaseWritable, storageRoots.stream().map(Path::of).toList(), System::currentTimeMillis);
     }
 
     PublicQuotaInterceptor(boolean enabled, long uploadBytesPerDay, long storageBytes, int modelCallsPerDay,
-                           int concurrentModelCalls, long assumedUploadBytes, List<Path> storageRoots, LongSupplier clock) {
+                           int concurrentModelCalls, long assumedUploadBytes, boolean knowledgeBaseWritable,
+                           List<Path> storageRoots, LongSupplier clock) {
+        this.knowledgeBaseWritable = knowledgeBaseWritable;
         this.enabled = enabled;
         this.uploadBytesPerDay = uploadBytesPerDay;
         this.storageBytes = storageBytes;
@@ -105,6 +109,10 @@ public class PublicQuotaInterceptor implements HandlerInterceptor {
         // The shared model and motion catalog is served to every account, so no account may change it.
         if (path.startsWith("/api/companion/assets/")) {
             return refuse(response, HttpStatus.FORBIDDEN, "公共资源目录为只读");
+        }
+        // Ingesting a document runs third-party parsers and a vector store over a stranger's file.
+        if (!knowledgeBaseWritable && (path.equals("/api/agent/knowledge") || path.startsWith("/api/agent/knowledge/"))) {
+            return refuse(response, HttpStatus.FORBIDDEN, "此环境未开放知识库");
         }
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !(auth.getPrincipal() instanceof Long userId)) return true; // the handler answers 401

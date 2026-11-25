@@ -23,7 +23,7 @@ class PublicQuotaInterceptorTest {
     @TempDir Path storage;
 
     PublicQuotaInterceptor quota(boolean enabled) {
-        return new PublicQuotaInterceptor(enabled, 1000, 5000, 3, 2, 400, List.of(storage, storage.resolve("missing")), clock::get);
+        return new PublicQuotaInterceptor(enabled, 1000, 5000, 3, 2, 400, true, List.of(storage, storage.resolve("missing")), clock::get);
     }
 
     @AfterEach void signOut() { SecurityContextHolder.clearContext(); }
@@ -110,8 +110,21 @@ class PublicQuotaInterceptorTest {
         assertEquals(403, status(quota, upload("/api/companion/assets/motion", 10)));
     }
 
+    @Test void knowledgeBasesCanBeClosedToWritesWhileStayingReadable() throws Exception {
+        PublicQuotaInterceptor closed = new PublicQuotaInterceptor(true, 1000, 5000, 3, 2, 400, false, List.of(storage), clock::get);
+        signIn(7);
+        assertEquals(403, status(closed, request("POST", "/api/agent/knowledge")));
+        assertEquals(403, status(closed, upload("/api/agent/knowledge/3/documents", 10)));
+        assertEquals(403, status(closed, request("DELETE", "/api/agent/knowledge/3")));
+        assertEquals(200, status(closed, request("GET", "/api/agent/knowledge")));
+        assertEquals(200, status(closed, request("POST", "/api/agent/knowledgeable")));
+        assertEquals(200, status(quota(true), request("POST", "/api/agent/knowledge")));
+        PublicQuotaInterceptor off = new PublicQuotaInterceptor(false, 1000, 5000, 3, 2, 400, false, List.of(storage), clock::get);
+        assertEquals(200, status(off, upload("/api/agent/knowledge/3/documents", 10)));
+    }
+
     @Test void modelRequestsAreLimitedToTwoAtATimeAndFinishedOnesFreeTheirSlot() throws Exception {
-        PublicQuotaInterceptor quota = new PublicQuotaInterceptor(true, 1000, 5000, 100, 2, 400, List.of(storage), clock::get);
+        PublicQuotaInterceptor quota = new PublicQuotaInterceptor(true, 1000, 5000, 100, 2, 400, true, List.of(storage), clock::get);
         signIn(7);
         MockHttpServletRequest first = request("POST", "/api/agent/sessions/as_1/chat/stream");
         MockHttpServletRequest second = request("POST", "/api/companion/messages/stream");
