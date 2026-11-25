@@ -1,5 +1,7 @@
 package com.nexus.chat.config;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -20,6 +22,15 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Value("${companion.assets.motions-dir:../nexus-chat-frontend/public/motions}")
     private String motionsDir;
+
+    @Autowired
+    private PublicQuotaInterceptor publicQuota;
+
+    /** Does nothing unless nexus.quota.enabled is set. */
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(publicQuota);
+    }
 
 
     /**
