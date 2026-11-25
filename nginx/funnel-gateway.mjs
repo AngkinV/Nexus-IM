@@ -136,8 +136,15 @@ export function assertBackendReady({ upstreamPort = 8080, timeoutMs = 5000 } = {
 }
 
 export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYTES, maxJsonBytes = MAX_JSON_BYTES,
-  limits = DEFAULT_LIMITS, clientAddressHeader = null, now = Date.now } = {}) {
+  limits = DEFAULT_LIMITS, clientAddressHeader = null, now = Date.now, log = null } = {}) {
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1) throw new TypeError('Invalid body limit')
+  // One line per request for the operator: what was asked and how it ended. Never the query
+  // string, headers or body, which is where tokens and message text travel.
+  const record = (request, status, upgrade = false) => {
+    if (!log) return
+    log(JSON.stringify({ t: new Date(now()).toISOString(), m: request.method, p: (pathOf(request.url) || '?').slice(0, 200),
+      s: status, k: limitClass(request.method, request.url, upgrade), c: clientAddress(request, clientAddressHeader) }))
+  }
   const take = createLimiter({ windowMs: limits.windowMs, now })
   const retryAfter = String(Math.ceil(limits.windowMs / 1000))
   // The visitor's own counter first, so one visitor over its limit does not use up the shared one.
@@ -149,6 +156,7 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
   const agent = new http.Agent({ keepAlive: true, maxSockets: 64 })
   const sockets = new Set()
   const server = http.createServer({ maxHeaderSize: 16 * 1024 }, async (request, response) => {
+    response.on('finish', () => record(request, response.statusCode))
     if (!allowedRequest(request.method, request.url)) {
       endResponse(response, 404, 'Route not exposed')
       request.resume()
@@ -223,19 +231,23 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
   })
   server.on('upgrade', async (request, socket, head) => {
     if (!allowedRequest(request.method, request.url, true) || request.headers.upgrade?.toLowerCase() !== 'websocket') {
+      record(request, 404, true)
       socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
       return
     }
     if (request.headers.origin && request.headers.origin !== PUBLIC_ORIGIN) {
+      record(request, 403, true)
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
       return
     }
     if (!withinLimits(request, true)) {
+      record(request, 429, true)
       socket.end(`HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: ${retryAfter}\r\nContent-Length: 0\r\n\r\n`)
       return
     }
     socket.on('error', () => {})
     try { await assertBackendReady({ upstreamPort }) } catch {
+      record(request, 503, true)
       if (!socket.destroyed) socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
       return
     }
@@ -247,6 +259,7 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
     upstream.setTimeout(15_000, () => upstream.destroy(new Error('Upgrade timeout')))
     upstream.on('upgrade', (upstreamResponse, upstreamSocket, upstreamHead) => {
       if (socket.destroyed) { upstreamSocket.destroy(); return }
+      record(request, 101, true)
       const responseHeaders = filteredHeaders(upstreamResponse.headers)
       responseHeaders.connection = 'Upgrade'
       responseHeaders.upgrade = 'websocket'
@@ -264,6 +277,7 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
     })
     upstream.on('response', response => {
       response.resume()
+      record(request, response.statusCode, true)
       socket.end(`HTTP/1.1 ${response.statusCode} Backend Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
     })
     upstream.on('error', () => socket.destroy())
@@ -283,12 +297,23 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
   return server
 }
 
+// Where to listen and which header carries the visitor address. Loopback and no header unless
+// the environment says otherwise; inside a container the gateway has to listen on all of the
+// container's interfaces to be published at all.
+export function listenOptions(env = {}) {
+  const host = env.GATEWAY_LISTEN_HOST || '127.0.0.1'
+  const header = (env.GATEWAY_CLIENT_ADDRESS_HEADER || '').toLowerCase()
+  if (!net.isIP(host) || (header && !/^[a-z0-9-]{1,64}$/.test(header))) throw new TypeError('Invalid gateway listen options')
+  return { host, clientAddressHeader: header || null, accessLog: env.GATEWAY_ACCESS_LOG === '1' }
+}
+
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   try {
+    const { host, clientAddressHeader, accessLog } = listenOptions(process.env)
     await assertBackendReady()
-    const server = createGateway()
+    const server = createGateway({ clientAddressHeader, log: accessLog ? line => console.log(line) : null })
     server.on('error', error => { console.error(`Gateway could not listen: ${error.code}`); process.exitCode = 1 })
-    server.listen(18080, '127.0.0.1', () => console.log('Nexus backend gateway listening at http://127.0.0.1:18080'))
+    server.listen(18080, host, () => console.log(`Nexus backend gateway listening at http://${host}:18080`))
     process.once('SIGINT', () => server.stop())
     process.once('SIGTERM', () => server.stop())
   } catch {

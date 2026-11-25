@@ -115,14 +115,20 @@ class NetworkPolicy:
     allowed_origins: frozenset[str] = frozenset()
     internal_endpoint: str | None = field(default=None, repr=False)
     allow_http: bool = False
+    # Operator opt-in for deployments where each user brings their own servers: any origin is
+    # accepted in place of the allowlist. Every other check still applies: the endpoint must
+    # resolve to public addresses only, and it is that checked address which is connected to.
+    any_public_origin: bool = False
     parts: tuple[str, str, int, str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if type(self.external) is not bool or type(self.allow_http) is not bool:
+        if (type(self.external) is not bool or type(self.allow_http) is not bool
+                or type(self.any_public_origin) is not bool):
             raise SecurityViolation("UNSAFE_ENDPOINT")
         parts = _endpoint(self.endpoint)
         if self.external:
-            if type(self.allowed_origins) is not frozenset or _origin(parts) not in self.allowed_origins:
+            if type(self.allowed_origins) is not frozenset or (
+                    not self.any_public_origin and _origin(parts) not in self.allowed_origins):
                 raise SecurityViolation("UNSAFE_ENDPOINT")
             if parts[0] != "https" and not self.allow_http:
                 raise SecurityViolation("UNSAFE_ENDPOINT")

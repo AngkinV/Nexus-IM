@@ -1,0 +1,166 @@
+# The public Nexus stack. Runs inside the nexus-public VM (lima.yaml); started by nexus-public.sh,
+# which supplies the secrets from the macOS Keychain as environment variables. Nothing here
+# mounts a host directory, and only the gateway port is published, on the VM's loopback.
+name: nexus-public
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 256
+
+services:
+  # Owns the network namespace that gateway, backend and agent share, so they talk over
+  # loopback exactly as they do on a developer machine, and the backend stays bound to 127.0.0.1.
+  net:
+    <<: *hardening
+    image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+    command: ["tail", "-f", "/dev/null"]
+    init: true
+    user: "65534:65534"
+    mem_limit: 16m
+    networks: [edge, data]
+    ports: ["127.0.0.1:18080:18080"]
+
+  gateway:
+    <<: *hardening
+    image: nexus-public/gateway:${NEXUS_RELEASE:?}
+    network_mode: "service:net"
+    depends_on:
+      backend: {condition: service_healthy}
+    environment:
+      GATEWAY_LISTEN_HOST: 0.0.0.0
+      GATEWAY_CLIENT_ADDRESS_HEADER: x-forwarded-for
+      GATEWAY_ACCESS_LOG: "1"
+    mem_limit: 192m
+    cpus: 1
+
+  backend:
+    <<: *hardening
+    image: nexus-public/backend:${NEXUS_RELEASE:?}
+    network_mode: "service:net"
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_started}
+    environment:
+      SPRING_PROFILES_ACTIVE: funnel,public
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/nexus_chat?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+      DB_USERNAME: nexus
+      DB_PASSWORD: ${NEXUS_DB_PASSWORD:?}
+      REDIS_HOST: redis
+      SPRING_DATA_REDIS_PASSWORD: ${NEXUS_REDIS_PASSWORD:?}
+      JWT_SECRET: ${NEXUS_JWT_SECRET:?}
+      AGENT_INTERNAL_TOKEN: ${NEXUS_INTERNAL_TOKEN:?}
+      AGENT_INTERNAL_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:?}
+      COMPANION_API_KEY_SECRET: ${NEXUS_COMPANION_SECRET:?}
+      NEXUS_MCP_CREDENTIAL_KEY: ${NEXUS_MCP_CREDENTIAL_KEY:?}
+      AGENT_PYTHON_BASE_URL: http://127.0.0.1:8100
+      COMPANION_ASSETS_ROOT: /app/assets
+      # No mail account lives in this stack; registration is by invite code.
+      SPRING_MAIL_USERNAME: ""
+      SPRING_MAIL_PASSWORD: ""
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=55 -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp
+      TZ: Asia/Shanghai
+    volumes:
+      - uploads:/app/uploads
+      - storage:/app/storage
+      - logs:/app/logs
+      # On disk, not tmpfs: uploads are spooled here, and tmpfs would count against the
+      # memory limit, letting a few large uploads get the backend killed.
+      - backend-tmp:/tmp
+    mem_limit: 1g
+    cpus: 2
+    healthcheck:
+      # Healthy only when the backend itself reports the public safety policy as active.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /internal/funnel/readiness HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  agent:
+    <<: *hardening
+    image: nexus-public/agent:${NEXUS_RELEASE:?}
+    network_mode: "service:net"
+    depends_on:
+      redis: {condition: service_started}
+    environment:
+      ENGINE: langgraph
+      JAVA_INTERNAL_BASE_URL: http://127.0.0.1:8080/internal/agent
+      JAVA_INTERNAL_TOKEN: ${NEXUS_INTERNAL_TOKEN:?}
+      INTERNAL_SIGNING_SECRET: ${NEXUS_SIGNING_SECRET:?}
+      REDIS_URL: redis://:${NEXUS_REDIS_PASSWORD:?}@redis:6379/2
+      # Model endpoints users enter may only resolve to public addresses (checked at connect time).
+      MODEL_ENDPOINT_ALLOW_PRIVATE_NETWORK: "false"
+      # Users may add their own MCP servers: any origin, HTTPS only, public addresses only.
+      MCP_ALLOW_ANY_PUBLIC_ORIGIN: "true"
+      CHROMA_PERSIST_DIR: /app/data/chroma
+      CHECKPOINT_PATH: /app/data/checkpoints.sqlite
+      HOME: /tmp
+      TZ: Asia/Shanghai
+    volumes:
+      - agent-data:/app/data
+    tmpfs: [/tmp]
+    mem_limit: 1g
+    cpus: 2
+
+  mysql:
+    <<: *hardening
+    image: mysql:8.4@sha256:8c233bad33d520a7aae1c1e619c3a9775f4a1ba2d463d692fada04ec7f40be00
+    user: "999:999"
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --max-connections=60
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-name-resolve
+      - --mysqlx=OFF
+    environment:
+      MYSQL_DATABASE: nexus_chat
+      MYSQL_USER: nexus
+      MYSQL_PASSWORD: ${NEXUS_DB_PASSWORD:?}
+      MYSQL_ROOT_PASSWORD: ${NEXUS_DB_ROOT_PASSWORD:?}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql:/var/lib/mysql
+    tmpfs: [/tmp, /var/run/mysqld]
+    networks: [data]
+    mem_limit: 640m
+    cpus: 2
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -unexus -p\"$$MYSQL_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+
+  redis:
+    <<: *hardening
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    user: "999:1000"
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --maxmemory 128mb --maxmemory-policy allkeys-lru --appendonly yes --dir /data"]
+    environment:
+      REDIS_PASSWORD: ${NEXUS_REDIS_PASSWORD:?}
+    volumes:
+      - redis:/data
+    networks: [data]
+    mem_limit: 192m
+    cpus: 1
+
+networks:
+  # Outbound traffic leaves through here and is filtered by the VM firewall.
+  edge: {}
+  # The databases have no route out at all.
+  data:
+    internal: true
+
+volumes:
+  mysql: {}
+  redis: {}
+  uploads: {}
+  storage: {}
+  logs: {}
+  backend-tmp: {}
+  agent-data: {}
