@@ -11,7 +11,8 @@ minimumLimaVersion: 2.0.0
 vmType: vz
 arch: aarch64
 cpus: 4
-memory: 4GiB
+# The containers are limited to about 3 GiB in total and use about 1.1 GiB when idle.
+memory: 3GiB
 disk: 30GiB
 
 images:
