@@ -1,6 +1,6 @@
 # Nexus 结构与提交流程清单
 
-更新：2026-11-25。工作基线统一为 **先 fetch 后的 `origin/feature-branch`**，不把旧的固定 SHA 当作当前状态。已核对里程碑：PR #27 合并提交 `8663647`（受控 Funnel 代码），公开激活尚未完成。
+更新：2026-11-26。工作基线统一为 **先 fetch 后的 `origin/feature-branch`**，不把旧的固定 SHA 当作当前状态。已核对里程碑：PR #27–#30 已合入主线；公网实际验收仍另行跟踪。本轮聊天读取范围按钮/浮层按独立 PR 提交，当前合入状态以 Git/PR 实时查询为准。
 本清单与 `DEVELOPMENT.md` 冲突时以本清单为准。
 
 > 分支结构、凭据布局、提交流程是**唯一事实来源**，其他文档引用本文，不复制。
@@ -23,7 +23,7 @@
 |---|---|---|
 | `/Users/anglv/Nexus` | `feature-branch` | 主仓库；用户原有发布端点、主题、Qoder 元数据保留 |
 | `/Users/anglv/Nexus/.alma/worktrees/funnel-gateway` | `feat/funnel-gateway` | 本轮工作树；已有主题改动不属于本轮部署提交 |
-| `/Users/anglv/alma/worktrees/nexus/fast-wolf` | `feat/chat-scope-popover` | 独立工作树，未核对未提交改动与运行线程 |
+| `/Users/anglv/alma/worktrees/nexus/fast-wolf` | `feat/chat-scope-popover` | 本轮读取范围按钮/完整浮层，已核对功能、权限语义与串行验证；合入状态以 Git/PR 实时查询为准，保留工作树 |
 | `/Users/anglv/alma/worktrees/nexus/alleged-eel` | `fix-supplier-protocol-and-test-feedback` | 保留 |
 | `/Users/anglv/alma/worktrees/nexus/gastric-whippet` | `redesign-input-ui-components` | 保留 |
 | `/Users/anglv/alma/worktrees/nexus/glorious-amphibian` | detached | 保留 |
