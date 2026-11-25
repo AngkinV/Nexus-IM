@@ -31,6 +31,23 @@ SockJS 使用 HTTPS `/ws`，不是直接填 WSS。构建和运行时共用校验
 
 **这些值必须进入原 Qoder 站点的发布构建。更新本地文件不会自动证明已发布网页用了新地址。**
 
+## 本机启动报错补充（2026-11-25）
+
+用户 18:56 以 `local,funnel` 启动时只有 banner 和 Maven exit 1，真正异常不可见：原 `logback-spring.xml` 只匹配 `default/dev/prod`，没有匹配 `local,funnel` 的 logger/root。现已为其它显式 profile 补 Console/File/Error 输出，保留 dev/prod 行为，关闭不支持 Spring profile 扩展的 scan 重载；密钥诊断一次报告全部无效项，绝不输出值。
+
+原配置回退后，新日志回归真实失败（`local,funnel` 没有 Console appender）；恢复修复后 Console 和错误文件都能看到异常与缺项，全部 Java 719 项通过。测试仅初始化日志/配置，没有启动 Java/Python 服务。
+
+只读的 Spring 原生配置预检查（主仓库文件 + 工具进程环境）拒绝以下三项：`agent.internal.token`、`agent.internal.signing-secret`、`companion.api-key.secret`。这不冒充已终止 Maven 进程的环境；MySQL 配置端口 TCP 可达、Redis 有监听，不等于已验证数据库/Redis认证。
+
+若先恢复本机使用，可由用户启动**只绑定回环的 local 模式**：
+
+```bash
+cd /Users/anglv/Nexus/nexus-chat-backend
+mvn spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments=--server.address=127.0.0.1
+```
+
+这不开放公网，也不会通过 Funnel readiness。公开模式仍需按下节配齐强密钥：互信值应与 Python 一致，Companion 现有加密密钥需要确认或迁移，不能盲目换值。助手不更改私有配置、不启动服务、不放宽安全门禁。
+
 ## 公开前的密钥门禁
 
 `funnel` profile 仅在以下配置都显式提供非开发默认值、至少 32 字节时启动：
@@ -80,7 +97,7 @@ Java 的 `agent.internal.token` 对应 Python 环境变量 `JAVA_INTERNAL_TOKEN`
 
 - Node 网关：14/14，通过（含流式分段到达、双向 WebSocket 数据、原始编码绕过、请求大小、错误 Origin 和后端安全模式失效后的拒绝；上游为隔离夹具）。
 - 前端全部单测：685/685，通过；最新主线基点上的 Web 发布构建通过（4.76 秒），产物中回环与旧 IP 后端端点均为 0。
-- Java 全量回归：715/715，通过（按项目标准排除 `NexusChatApplicationTests`），单 JVM 串行；密钥门禁、真实 Spring profile readiness、后端本机/Electron 兼容与公网网关仍拒绝本机 Origin 均已覆盖。
+- Java 全量回归：719/719，通过（按项目标准排除 `NexusChatApplicationTests`），单 JVM 串行；密钥门禁、真实 Spring profile readiness、后端本机/Electron 兼容与公网网关仍拒绝本机 Origin 均已覆盖。
 - 过期文件回归已做撤回验证：撤掉修复后 `/api/files/access` 真实测试响应从 410 变成 200，新回归失败；已还原修复后跑全套通过。
 - 跨域夹具增加了仅测试启用的 profile，避免污染其他真实 JPA 测试；MCP 审计回归捕获真实日志事件，不依赖跨上下文的全局 stdout，原有内容、权限与隐私断言均保留。
 - Python 全量：864 passed、6 skipped（28.19 秒；测试配置有 1 条 pytest warning），无 Python 代码改动、未调用真实 embedding 功能。

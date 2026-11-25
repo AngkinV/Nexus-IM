@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -28,6 +29,7 @@ public class FunnelSecretGuard {
         } catch (IOException error) {
             throw new IllegalStateException("Funnel cannot validate its security configuration");
         }
+        List<String> invalid = new ArrayList<>();
         for (String key : REQUIRED) {
             String value = environment.getProperty(key, "");
             String lower = value.toLowerCase(Locale.ROOT);
@@ -35,10 +37,14 @@ public class FunnelSecretGuard {
             boolean builtInDefault = fallback.matches() && value.equals(fallback.group(1));
             if (value.isBlank() || value.getBytes(StandardCharsets.UTF_8).length < 32 || builtInDefault
                     || lower.startsWith("dev-") || lower.contains("-dev-") || lower.contains("change-me") || lower.contains("changeme")) {
-                // Never put the value into a log or exception. Changing an encryption
-                // key requires migrating already-encrypted credentials, not guessing.
-                throw new IllegalStateException("Funnel requires a configured non-development value of at least 32 bytes for " + key);
+                invalid.add(key);
             }
+        }
+        if (!invalid.isEmpty()) {
+            // Report all invalid names at once, never the secret material. Existing
+            // encryption keys require a migration rather than a blind replacement.
+            throw new IllegalStateException("Funnel requires a configured non-development value of at least 32 bytes for "
+                    + String.join(", ", invalid));
         }
     }
 
