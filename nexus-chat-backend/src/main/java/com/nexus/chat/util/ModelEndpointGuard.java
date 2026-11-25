@@ -67,10 +67,20 @@ public class ModelEndpointGuard {
         if (addr.isAnyLocalAddress() || addr.isLinkLocalAddress() || addr.isMulticastAddress()) {
             throw new IllegalArgumentException("endpoint address is not allowed: " + addr.getHostAddress());
         }
-        boolean privateNetwork = addr.isLoopbackAddress() || addr.isSiteLocalAddress() || isIpv6UniqueLocal(addr);
+        boolean privateNetwork = addr.isLoopbackAddress() || addr.isSiteLocalAddress() || isIpv6UniqueLocal(addr)
+                || isIpv4SharedOrThisNetwork(addr);
         if (privateNetwork && !allowPrivateNetwork) {
             throw new IllegalArgumentException("endpoint points to a private/loopback network: " + addr.getHostAddress());
         }
+    }
+
+    /**
+     * 100.64.0.0/10 is carrier-grade NAT space, which is where Tailscale puts its devices, and
+     * 0.0.0.0/8 reaches the local host on some systems. Neither is covered by isSiteLocalAddress().
+     */
+    private static boolean isIpv4SharedOrThisNetwork(InetAddress addr) {
+        byte[] bytes = addr.getAddress();
+        return bytes.length == 4 && (bytes[0] == 0 || (bytes[0] == 100 && (bytes[1] & 0xc0) == 64));
     }
 
     /** fc00::/7 — Java's isSiteLocalAddress() only covers IPv4, so check ULA manually. */
