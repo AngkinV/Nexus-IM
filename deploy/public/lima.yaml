@@ -71,7 +71,9 @@ provision:
       REGISTRY_MIRRORS='"https://docker.1ms.run", "https://docker.m.daocloud.io"'
       # Containers resolve names here instead of through the Mac, so names that only the
       # Mac knows (its hosts file, host.lima.internal) do not exist for them.
-      CONTAINER_DNS='"223.5.5.5", "119.29.29.29"'
+      # Tried in order, so the first one must answer: a dead first entry costs every lookup
+      # several seconds. (223.5.5.5 did not answer from this network on 2026-11-26; these did.)
+      CONTAINER_DNS='"223.6.6.6", "114.114.114.114", "119.29.29.29"'
 
       # The firewall below names Lima's gateway address; refuse to continue if it ever differs.
       [ "$(ip -4 route show default | awk '{print $3; exit}')" = "192.168.5.2" ] || { echo "unexpected gateway address" >&2; exit 1; }
@@ -151,6 +153,7 @@ provision:
         > /etc/systemd/system/docker.service.d/nexus-guard.conf
 
       mkdir -p /etc/docker
+      daemon_before=$(sha256sum /etc/docker/daemon.json 2>/dev/null || true)
       cat > /etc/docker/daemon.json <<JSON
       {
         "registry-mirrors": [${REGISTRY_MIRRORS}],
@@ -177,3 +180,7 @@ provision:
           docker.io docker-cli docker-compose docker-buildx unattended-upgrades ca-certificates
       fi
       systemctl enable --now docker.service
+      # Docker starts at boot before this script runs, so a changed configuration needs a restart.
+      if [ "$daemon_before" != "$(sha256sum /etc/docker/daemon.json)" ] && [ -n "$daemon_before" ]; then
+        systemctl restart docker.service
+      fi
