@@ -1,4 +1,5 @@
 import http from 'node:http'
+import net from 'node:net'
 import { pathToFileURL } from 'node:url'
 
 export const PUBLIC_ORIGIN = 'https://nexus-chat-2026-fwohlcnoevd.qoder.zone'
@@ -8,6 +9,63 @@ const API_GROUPS = new Set(['auth', 'users', 'contacts', 'groups', 'chats', 'mes
 const METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
 const HOP_HEADERS = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
 const MAX_BODY_BYTES = 101 * 1024 * 1024
+// Only these accept files. Every other request carries JSON and gets the small limit.
+const MAX_JSON_BYTES = 8 * 1024 * 1024
+const UPLOAD_PATHS = [/^\/api\/files\/upload(\/chunk)?$/, /^\/api\/companion\/assets\/(model|motion)$/,
+  /^\/api\/companion\/user-assets\/[^/]+$/, /^\/api\/users\/[^/]+\/avatar$/,
+  /^\/api\/agent\/sessions\/[^/]+\/attachments$/, /^\/api\/agent\/knowledge\/[^/]+\/documents$/]
+
+// Requests per window. `client` applies per visitor address when the gateway is told which
+// header carries it; `global` always applies, so the backend load is bounded either way.
+export const DEFAULT_LIMITS = Object.freeze({
+  windowMs: 60_000,
+  auth: { client: 10, global: 120 },
+  upgrade: { client: 30, global: 300 },
+  general: { client: 1200, global: 6000 }
+})
+
+function pathOf(target) {
+  try { return decodeURIComponent(target.split('?')[0]) } catch { return '' }
+}
+
+export function limitClass(method, target, upgrade = false) {
+  if (upgrade) return 'upgrade'
+  return method === 'POST' && pathOf(target).startsWith('/api/auth/') ? 'auth' : 'general'
+}
+
+export function bodyLimit(method, target, maxBodyBytes = MAX_BODY_BYTES, maxJsonBytes = MAX_JSON_BYTES) {
+  const upload = method === 'POST' && UPLOAD_PATHS.some(pattern => pattern.test(pathOf(target)))
+  return upload ? maxBodyBytes : Math.min(maxBodyBytes, maxJsonBytes)
+}
+
+// Fixed-window counters with a bounded number of keys. When the table is full of live
+// windows, unknown keys are refused instead of letting it grow.
+export function createLimiter({ windowMs = 60_000, maxKeys = 20_000, now = Date.now } = {}) {
+  const windows = new Map()
+  return (key, limit) => {
+    const time = now()
+    let entry = windows.get(key)
+    if (!entry || time - entry.start >= windowMs) {
+      if (!entry && windows.size >= maxKeys) {
+        for (const [stale, value] of windows) if (time - value.start >= windowMs) windows.delete(stale)
+        if (windows.size >= maxKeys) return false
+      }
+      entry = { start: time, count: 0 }
+      windows.set(key, entry)
+    }
+    if (entry.count >= limit) return false
+    entry.count++
+    return true
+  }
+}
+
+// The visitor address as the trusted local proxy reports it: the last entry of the header,
+// because anything before it can be supplied by the visitor.
+export function clientAddress(request, header) {
+  if (!header) return null
+  const value = String(request.headers[header] ?? '').split(',').pop().trim()
+  return net.isIP(value) ? value : null
+}
 
 export function allowedRequest(method, target, upgrade = false) {
   if (!METHODS.has(method) || !target?.startsWith('/') || target.startsWith('//') || target.includes('#')) return false
@@ -77,8 +135,17 @@ export function assertBackendReady({ upstreamPort = 8080, timeoutMs = 5000 } = {
   })
 }
 
-export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYTES } = {}) {
+export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYTES, maxJsonBytes = MAX_JSON_BYTES,
+  limits = DEFAULT_LIMITS, clientAddressHeader = null, now = Date.now } = {}) {
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1) throw new TypeError('Invalid body limit')
+  const take = createLimiter({ windowMs: limits.windowMs, now })
+  const retryAfter = String(Math.ceil(limits.windowMs / 1000))
+  // The visitor's own counter first, so one visitor over its limit does not use up the shared one.
+  const withinLimits = (request, upgrade) => {
+    const kind = limitClass(request.method, request.url, upgrade)
+    const client = clientAddress(request, clientAddressHeader)
+    return (!client || take(`${kind}|${client}`, limits[kind].client)) && take(kind, limits[kind].global)
+  }
   const agent = new http.Agent({ keepAlive: true, maxSockets: 64 })
   const sockets = new Set()
   const server = http.createServer({ maxHeaderSize: 16 * 1024 }, async (request, response) => {
@@ -97,7 +164,14 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
       response.end(JSON.stringify({ gateway: 'ok' }))
       return
     }
-    if (Number(request.headers['content-length']) > maxBodyBytes) {
+    if (!withinLimits(request, false)) {
+      response.setHeader('retry-after', retryAfter)
+      endResponse(response, 429, 'Too many requests')
+      request.resume()
+      return
+    }
+    const maxBytes = bodyLimit(request.method, request.url, maxBodyBytes, maxJsonBytes)
+    if (Number(request.headers['content-length']) > maxBytes) {
       endResponse(response, 413, 'Request too large')
       request.resume()
       return
@@ -130,7 +204,7 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
     request.on('data', chunk => {
       if (tooLarge) return
       bytes += chunk.length
-      if (bytes > maxBodyBytes) {
+      if (bytes > maxBytes) {
         tooLarge = true
         request.unpipe(upstream)
         upstream.destroy()
@@ -154,6 +228,10 @@ export function createGateway({ upstreamPort = 8080, maxBodyBytes = MAX_BODY_BYT
     }
     if (request.headers.origin && request.headers.origin !== PUBLIC_ORIGIN) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      return
+    }
+    if (!withinLimits(request, true)) {
+      socket.end(`HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nRetry-After: ${retryAfter}\r\nContent-Length: 0\r\n\r\n`)
       return
     }
     socket.on('error', () => {})
