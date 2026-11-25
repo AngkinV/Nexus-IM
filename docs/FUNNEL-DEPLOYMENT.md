@@ -63,6 +63,42 @@ mvn spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.arguments
 
 Java 的 `agent.internal.token` 对应 Python 环境变量 `JAVA_INTERNAL_TOKEN`；Java 的 `agent.internal.signing-secret` 对应 Python 的 `INTERNAL_SIGNING_SECRET`。对应两端的值必须一致（按 Python `app/config.py` 的 `BaseSettings` 字段核对）。**不要盲目更换 Companion 加密密钥：现有加密的模型凭据需要先确认原密钥或迁移，否则会无法解密。** 私有 `application-local.properties`、Python `.env` 和运行数据由用户保管，本任务不改、不复制、不输出其值。
 
+## 用户执行的安全准备工具
+
+工具 `com.nexus.chat.tools.FunnelSecretPrep` 不启动 Spring 服务，默认 `check` 只读，`prepare` 需两个后端已停止并输入 `MIGRATE`。助手不替用户执行迁移或启停后端。
+
+**Maven 会先编译主仓库，建议先由用户停止 Java/Python 再执行。** 用绝对 `-f` 路径避免 `cd` 粘贴失败或从 `~` 运行而报缺插件。项目继承的 Boot 插件读取 `${start-class}`，必须用 `-Dstart-class` 选择工具，不能用被继承配置覆盖的 `spring-boot.run.main-class`：
+
+```bash
+mvn -f /Users/anglv/Nexus/nexus-chat-backend/pom.xml -q spring-boot:run -Dstart-class=com.nexus.chat.tools.FunnelSecretPrep -Dspring-boot.run.arguments=check
+```
+
+检查未就绪是正常结果；确认显示现有记录全部可解密后，用户执行：
+
+```bash
+mvn -f /Users/anglv/Nexus/nexus-chat-backend/pom.xml -q spring-boot:run -Dstart-class=com.nexus.chat.tools.FunnelSecretPrep -Dspring-boot.run.arguments=prepare
+```
+
+- JWT 只用现有文件/环境，不从 Keychain 查询、覆盖或轮换；JWT不合格就拒绝。
+- 已有 Keychain 项不合格时在任何写入前拒绝，不覆盖它们。只为缺失的其余强密钥生成随机值，写入后回读；秘密不进参数、文件、Git或输出。
+- 每条现有加密记录必须可解密。旧密钥需可归档，原配置为空且有待迁移数据时拒绝，不猜默认值。
+- 只在一个数据库事务里更新 `api_key_encrypted`，逐条回读校验；失败整体回滚，新旧 Keychain 密钥留存可恢复。中断后重试沿用已保存的目标密钥，不再次轮换。
+- 迁移成功后，不带新 Companion Keychain 值启动 Java（包括local模式）会无法解密旧模型凭据，不再用原来的裸启动命令。
+
+用户在两个独立终端中分别启动：
+
+```bash
+bash /Users/anglv/Nexus/nginx/funnel-start.sh java
+```
+
+```bash
+bash /Users/anglv/Nexus/nginx/funnel-start.sh python
+```
+
+脚本仅供用户启动，自动进入各自原主仓库目录，用子进程环境注入对应 Keychain 值，不解除私有文件 `uchg`。Keychain读取失败/缺项立即退出；端口已占用时不重复启动，也不代用户停止。脚本针对本次三项都需准备的配置；如果用户此前已在外部提供有效强密钥但Keychain不含全部三项，需要保留并合并其既有安全启动环境，不盲目生成替换。
+
+测试仅使用合成密文、假 Keychain 和内存数据库。真实 Keychain读取及无写入的interactive help已核对；真实prepare写入/MySQL迁移必须用户确认后验证，不能用合成测试冒充。现有MCP凭据密钥不在本工具迁移范围。
+
 ## 激活顺序（尚未执行）
 
 1. 完成全量回归，按项目 PR 流程落地代码，保留用户已有前端主题、Qoder 站点元数据及私有文件。
@@ -84,7 +120,7 @@ Java 的 `agent.internal.token` 对应 Python 环境变量 `JAVA_INTERNAL_TOKEN`
    tailscale funnel --bg --https=443 http://127.0.0.1:18080
    ```
 
-   禁止直接以 8080 或 8100 为公网目标。现状核对仍为 `No serve config`，上面的公开命令尚未执行。
+   禁止直接以 8080 或 8100 为公网目标。21:06只读核对已存在指向18080的Funnel配置（来源未核对、助手未执行开启），但后端仍是local且网关未运行。后续复核现有配置，不重复开启或重置其它Serve配置。
 7. 在原 Qoder 站点重新发布，不更改站点网址；用未连接 Tailscale 的外部设备验收。
 
 ## 验收与回退
@@ -97,7 +133,7 @@ Java 的 `agent.internal.token` 对应 Python 环境变量 `JAVA_INTERNAL_TOKEN`
 
 - Node 网关：14/14，通过（含流式分段到达、双向 WebSocket 数据、原始编码绕过、请求大小、错误 Origin 和后端安全模式失效后的拒绝；上游为隔离夹具）。
 - 前端全部单测：685/685，通过；最新主线基点上的 Web 发布构建通过（4.76 秒），产物中回环与旧 IP 后端端点均为 0。
-- Java 全量回归：719/719，通过（按项目标准排除 `NexusChatApplicationTests`），单 JVM 串行；密钥门禁、真实 Spring profile readiness、后端本机/Electron 兼容与公网网关仍拒绝本机 Origin 均已覆盖。
+- Java 全量回归：730/730，通过（按项目标准排除 `NexusChatApplicationTests`），单 JVM 串行；密钥门禁、真实 Spring profile readiness、后端本机/Electron 兼容与公网网关仍拒绝本机 Origin 均已覆盖。
 - 过期文件回归已做撤回验证：撤掉修复后 `/api/files/access` 真实测试响应从 410 变成 200，新回归失败；已还原修复后跑全套通过。
 - 跨域夹具增加了仅测试启用的 profile，避免污染其他真实 JPA 测试；MCP 审计回归捕获真实日志事件，不依赖跨上下文的全局 stdout，原有内容、权限与隐私断言均保留。
 - Python 全量：864 passed、6 skipped（28.19 秒；测试配置有 1 条 pytest warning），无 Python 代码改动、未调用真实 embedding 功能。

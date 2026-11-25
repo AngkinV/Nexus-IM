@@ -18,11 +18,22 @@ import java.util.regex.Pattern;
 @Component
 @Profile("funnel")
 public class FunnelSecretGuard {
-    private static final List<String> REQUIRED = List.of("jwt.secret", "agent.internal.token",
+    public static final List<String> REQUIRED = List.of("jwt.secret", "agent.internal.token",
             "agent.internal.signing-secret", "companion.api-key.secret");
     private static final Pattern DEFAULT_PLACEHOLDER = Pattern.compile("^\\$\\{[^:}]+:(.*)}$");
 
     public FunnelSecretGuard(Environment environment) {
+        List<String> invalid = invalidKeys(environment);
+        if (!invalid.isEmpty()) {
+            // Report all invalid names at once, never the secret material. Existing
+            // encryption keys require a migration rather than a blind replacement.
+            throw new IllegalStateException("Funnel requires a configured non-development value of at least 32 bytes for "
+                    + String.join(", ", invalid));
+        }
+    }
+
+    /** Names only; shared with the offline preparation tool so both apply one rule. */
+    public static List<String> invalidKeys(Environment environment) {
         Properties builtIn = new Properties();
         try (InputStream input = FunnelSecretGuard.class.getResourceAsStream("/application.properties")) {
             if (input != null) builtIn.load(input);
@@ -40,12 +51,7 @@ public class FunnelSecretGuard {
                 invalid.add(key);
             }
         }
-        if (!invalid.isEmpty()) {
-            // Report all invalid names at once, never the secret material. Existing
-            // encryption keys require a migration rather than a blind replacement.
-            throw new IllegalStateException("Funnel requires a configured non-development value of at least 32 bytes for "
-                    + String.join(", ", invalid));
-        }
+        return invalid;
     }
 
     public boolean validated() {
