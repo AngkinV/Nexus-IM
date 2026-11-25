@@ -35,7 +35,10 @@ public class McpManagementGateway {
         this.json = json;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.signingSecret = signingSecret;
-        this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
+        // HTTP/1.1 on purpose. The default (HTTP/2) adds an h2c upgrade offer to cleartext
+        // requests; the agent's HTTP parser stops at it and never reads the body, so the
+        // signature over the body fails and every management call is refused.
+        this.client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(3))
                 .followRedirects(HttpClient.Redirect.NEVER).proxy(new ProxySelector() {
                     @Override public List<Proxy> select(URI uri) { return List.of(Proxy.NO_PROXY); }
                     @Override public void connectFailed(URI uri, SocketAddress address, IOException error) { }
