@@ -8,6 +8,7 @@
 #   bash deploy/public/nexus-public.sh logs <gateway|backend|agent|mysql|redis> [lines]
 #   bash deploy/public/nexus-public.sh summary [hours]    what reached the gateway (default 24h)
 #   bash deploy/public/nexus-public.sh backup             database dump into ~/NexusPublicBackups
+#   bash deploy/public/nexus-public.sh reset              delete ALL public data (asks for confirmation)
 #
 # It never touches the local development setup: different ports, its own database, its own
 # secrets (macOS Keychain service "nexus-public"), and images built from a commit, not from
@@ -163,8 +164,18 @@ backup)
     mv "$target.part" "$target"
     printf '数据库已备份到 %s（不含上传的文件）。\n' "$target"
     ;;
+reset)
+    require_vm
+    # Only ever from a terminal, typed by a person: there is no undo.
+    [[ -t 0 ]] || fail '清空公网数据必须在终端里手动确认，未执行。'
+    printf '这会删除公网环境的全部账号、聊天记录、上传的文件和邀请码，无法恢复。\n本地开发环境不受影响。需要保留的话先执行 backup。\n输入 RESET 确认: '
+    read -r typed || true
+    [[ ${typed:-} == RESET ]] || fail '没有确认，未做任何改动。'
+    vm docker compose -p nexus-public down -v
+    printf '已清空并停止。执行 up 重新启动（密钥仍用钥匙串里原有的）。\n'
+    ;;
 *)
-    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

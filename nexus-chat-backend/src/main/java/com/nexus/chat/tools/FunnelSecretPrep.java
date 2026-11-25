@@ -264,7 +264,8 @@ public final class FunnelSecretPrep {
         out.println("仍不满足公开门禁的密钥: " + (invalid.isEmpty() ? "无" : String.join(", ", invalid)));
         boolean ready = invalid.isEmpty() && pending.isEmpty();
         out.println(ready ? "结论: 密钥与已加密数据就绪（启动时须按文档从 Keychain 注入环境变量）。"
-                : "结论: 未就绪，需由用户执行 prepare。");
+                : "结论: 未达到主机直连公网的门禁。这个做法已停用，不需要处理：本地开发照常用原命令启动；"
+                + "不要为此执行 prepare，它会让原启动命令解不开模型凭据。公网环境见 docs/PUBLIC-ISOLATION-PLAN.md。");
         return ready;
     }
 
