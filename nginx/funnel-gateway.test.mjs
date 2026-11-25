@@ -347,12 +347,52 @@ test('the default limits leave ordinary use alone', () => {
 })
 
 test('the gateway listens on loopback with no visitor header unless told otherwise', () => {
-  assert.deepEqual(listenOptions(), { host: '127.0.0.1', clientAddressHeader: null })
-  assert.deepEqual(listenOptions({ GATEWAY_LISTEN_HOST: '', GATEWAY_CLIENT_ADDRESS_HEADER: '' }), { host: '127.0.0.1', clientAddressHeader: null })
+  assert.deepEqual(listenOptions(), { host: '127.0.0.1', clientAddressHeader: null, accessLog: false })
+  assert.deepEqual(listenOptions({ GATEWAY_LISTEN_HOST: '', GATEWAY_CLIENT_ADDRESS_HEADER: '', GATEWAY_ACCESS_LOG: 'yes' }), { host: '127.0.0.1', clientAddressHeader: null, accessLog: false })
   assert.deepEqual(listenOptions({ GATEWAY_LISTEN_HOST: '0.0.0.0', GATEWAY_CLIENT_ADDRESS_HEADER: 'X-Forwarded-For' }),
-    { host: '0.0.0.0', clientAddressHeader: 'x-forwarded-for' })
+    { host: '0.0.0.0', clientAddressHeader: 'x-forwarded-for', accessLog: false })
+  assert.equal(listenOptions({ GATEWAY_ACCESS_LOG: '1' }).accessLog, true)
   for (const bad of [{ GATEWAY_LISTEN_HOST: 'localhost' }, { GATEWAY_LISTEN_HOST: '0.0.0.0:80' }, { GATEWAY_CLIENT_ADDRESS_HEADER: 'x forwarded' },
     { GATEWAY_CLIENT_ADDRESS_HEADER: 'x-forwarded-for\r\nx: y' }]) {
     assert.throws(() => listenOptions(bad), TypeError)
   }
+})
+
+test('the access log says what was asked and how it ended, and nothing that carries a secret', async () => {
+  const lines = []
+  let time = Date.UTC(2026, 10, 26, 1, 2, 3)
+  await withGateway({ limits: TIGHT, clientAddressHeader: 'x-forwarded-for', log: line => lines.push(line), now: () => time }, async target => {
+    const headers = { 'X-Forwarded-For': '203.0.113.77', Authorization: 'Bearer SECRET-TOKEN', Cookie: 'sid=SECRET-COOKIE' }
+    await fetch(target + '/api/auth/login?next=SECRET-QUERY', { method: 'POST', headers, body: '{"password":"SECRET-BODY"}' })
+    await fetch(target + '/api/auth/login', { method: 'POST', headers, body: '{}' })
+    await fetch(target + '/api/auth/login', { method: 'POST', headers, body: '{}' })
+    await fetch(target + '/internal/funnel/readiness', { headers })
+    await rawRequest(target, '/api/%0d%0aforged-line', { headers })
+    await new Promise(resolve => setTimeout(resolve, 20))
+  })
+  const entries = lines.map(line => JSON.parse(line))
+  assert.deepEqual(entries.map(entry => [entry.m, entry.p, entry.s, entry.k]), [
+    ['POST', '/api/auth/login', 200, 'auth'], ['POST', '/api/auth/login', 200, 'auth'], ['POST', '/api/auth/login', 429, 'auth'],
+    ['GET', '/internal/funnel/readiness', 404, 'general'], ['GET', '/api/\r\nforged-line', 404, 'general']])
+  assert.ok(entries.every(entry => entry.c === '203.0.113.77' && entry.t === '2026-11-26T01:02:03.000Z'))
+  assert.ok(lines.every(line => !line.includes('SECRET') && !/[\r\n]/.test(line) && Object.keys(JSON.parse(line)).join() === 't,m,p,s,k,c'))
+})
+
+test('WebSocket outcomes are logged too, and nothing is logged unless asked', async () => {
+  const lines = []
+  const upgrade = (target, origin) => new Promise((resolve, reject) => {
+    const request = http.request({ hostname: '127.0.0.1', port: new URL(target).port, path: '/ws-native?token=SECRET-QUERY', headers: upgradeHeaders(origin) })
+    request.on('upgrade', (response, socket) => { socket.destroy(); resolve(response.statusCode) })
+    request.on('response', response => { response.resume(); resolve(response.statusCode) })
+    request.on('error', reject)
+    request.end()
+  })
+  await withGateway({ limits: TIGHT, log: line => lines.push(line) }, async target => {
+    assert.equal(await upgrade(target, PUBLIC_ORIGIN), 101)
+    assert.equal(await upgrade(target, 'https://elsewhere.example'), 403)
+  })
+  assert.deepEqual(lines.map(line => JSON.parse(line)).map(entry => [entry.p, entry.s, entry.k, entry.c]),
+    [['/ws-native', 101, 'upgrade', null], ['/ws-native', 403, 'upgrade', null]])
+  assert.ok(!lines.join().includes('SECRET'))
+  await withGateway({}, async target => { assert.equal((await fetch(target + '/api/users/7')).status, 200) })
 })

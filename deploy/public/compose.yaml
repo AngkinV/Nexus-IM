@@ -32,6 +32,7 @@ services:
     environment:
       GATEWAY_LISTEN_HOST: 0.0.0.0
       GATEWAY_CLIENT_ADDRESS_HEADER: x-forwarded-for
+      GATEWAY_ACCESS_LOG: "1"
     mem_limit: 192m
     cpus: 1
 
@@ -65,7 +66,9 @@ services:
       - uploads:/app/uploads
       - storage:/app/storage
       - logs:/app/logs
-    tmpfs: [/tmp]
+      # On disk, not tmpfs: uploads are spooled here, and tmpfs would count against the
+      # memory limit, letting a few large uploads get the backend killed.
+      - backend-tmp:/tmp
     mem_limit: 1g
     cpus: 2
     healthcheck:
@@ -157,4 +160,5 @@ volumes:
   uploads: {}
   storage: {}
   logs: {}
+  backend-tmp: {}
   agent-data: {}

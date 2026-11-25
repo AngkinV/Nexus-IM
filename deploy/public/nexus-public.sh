@@ -6,6 +6,7 @@
 #   bash deploy/public/nexus-public.sh up | down | status
 #   bash deploy/public/nexus-public.sh invite create [--uses N] [--days D] [--note text] | list | revoke <id>
 #   bash deploy/public/nexus-public.sh logs <gateway|backend|agent|mysql|redis> [lines]
+#   bash deploy/public/nexus-public.sh summary [hours]    what reached the gateway (default 24h)
 #   bash deploy/public/nexus-public.sh backup             database dump into ~/NexusPublicBackups
 #
 # It never touches the local development setup: different ports, its own database, its own
@@ -121,6 +122,34 @@ logs)
     [[ ${1:-} =~ ^(gateway|backend|agent|mysql|redis)$ ]] || fail "用法: bash $0 logs <gateway|backend|agent|mysql|redis> [行数]"
     [[ ${2:-200} =~ ^[0-9]+$ ]] || fail '行数必须是数字。'
     vm docker logs --tail "${2:-200}" "$(container "$1")"
+    ;;
+summary)
+    require_vm
+    [[ ${1:-24} =~ ^[0-9]+$ ]] || fail '小时数必须是数字。'
+    vm docker logs --since "${1:-24}h" "$(container gateway)" 2>/dev/null | /usr/bin/python3 -c '
+import collections, json, sys
+rows = []
+for line in sys.stdin:
+    try:
+        row = json.loads(line)
+        if isinstance(row, dict) and "s" in row: rows.append(row)
+    except ValueError:
+        pass
+count = lambda test: sum(1 for r in rows if test(r))
+print("最近 %s 小时，网关收到 %d 个请求" % (sys.argv[1], len(rows)))
+print("  正常 %d，被限流(429) %d，路径不开放(404) %d，来源不允许(403) %d，后端未就绪或出错(5xx) %d" % (
+    count(lambda r: r["s"] < 400), count(lambda r: r["s"] == 429), count(lambda r: r["s"] == 404),
+    count(lambda r: r["s"] == 403), count(lambda r: r["s"] >= 500)))
+login = [r for r in rows if r["p"] == "/api/auth/login" and r["m"] == "POST"]
+register = [r for r in rows if r["p"] == "/api/auth/register" and r["m"] == "POST"]
+print("  登录 %d 次，其中失败 %d；注册 %d 次，其中成功 %d" % (
+    len(login), sum(1 for r in login if r["s"] >= 400), len(register), sum(1 for r in register if r["s"] < 400)))
+for title, rows_of in (("请求最多的来源", rows), ("登录失败最多的来源", [r for r in login if r["s"] >= 400]), ("被限流最多的来源", [r for r in rows if r["s"] == 429])):
+    top = collections.Counter(r.get("c") or "未知" for r in rows_of).most_common(5)
+    if top: print("  %s: %s" % (title, "，".join("%s×%d" % pair for pair in top)))
+probes = collections.Counter(r["p"] for r in rows if r["s"] == 404).most_common(5)
+if probes: print("  被拒绝最多的路径: " + "，".join("%s×%d" % (json.dumps(p, ensure_ascii=True)[1:-1], n) for p, n in probes))
+' "${1:-24}"
     ;;
 backup)
     require_vm
