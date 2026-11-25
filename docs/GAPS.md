@@ -1,8 +1,8 @@
 # Nexus 项目缺口清单（供 Agent 使用）
 
-> 生成日期：2026-11-20
-> 代码基线：`feature-branch @ 3d5248e`（PR #12 合并点，含 VRM 手势、语音唇同步、会话清空）。PR #11 之后的 `ad74131`（feat/companion VRM gestures, lip-sync, conversation clear）未纳入本清单的逐条核对，涉及该提交的新增/改动缺口需另行排查。
-> 调查方式：只读静态代码审查。没有启动任何服务，没有运行构建、测试或 Docker，没有打开浏览器。
+> 原始生成日期：2026-11-20；本轮针对性复查：2026-11-25
+> 本轮核对代码基点：`feature-branch @ 8663647`（PR #27）。本轮更新 BE-01 与 Funnel 范围的 BE-03；其他条目没有重新逐条核对，不能据旧状态认定仍然缺失。
+> 调查方式：原始清单来自只读静态审查；本轮已运行串行隔离回归（Java 715、前端 685、Node 网关 14、Python 864 passed/6 skipped）与发布构建。用户真实 Java 尚未加载新代码，Funnel 未开启，公网业务未验收。
 > 凭据约定：本文只写「哪个文件哪一行的哪个配置项是写死的」，不记录任何密钥、口令、令牌的值。
 
 ## 1. 文档说明
@@ -18,7 +18,7 @@
 - 证据全部来自当前工作区的实际文件内容。行号是本次读取时的行号，后续改动会使行号漂移，复查时请以符号名（类名、函数名、接口路径）为准。
 - 前端、Java、Python 三端都按「调用方 → 服务端 → 数据落点」的顺序核对。涉及前后端契约的缺口，尽量同时给出两端证据。
 - 「已读代码确认」= 我打开过相关文件并读到支撑结论的代码；「部分确认」= 只确认了链路的一段，另一段没有读到或无法静态确认；「未核对」会直接写出。
-- 没有做任何运行时验证。凡是「实际运行会怎样」的结论，本文只写代码推导，不写「已实测」。
+- 原始清单未做运行时验证；本轮 BE-01 有 MVC/资源与权限回归。隔离测试通过不代表所有旧缺口均已解决，也不等于用户运行中的后端或公网已生效。
 
 ### 1.3 如何更新
 
@@ -101,9 +101,9 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 
 | 编号 | 模块 | 标题 | 优先级 | 类型 | 状态 |
 |---|---|---|---|---|---|
-| BE-01 | 文件 | 下载/预览接口匿名可读 | P0 | 安全 | 未解决 |
+| BE-01 | 文件 | 下载/预览接口匿名可读 | P0 | 安全 | 已解决（PR #27；公网激活待验） |
 | BE-02 | 3D 资源 | 上传/改名/删除无归属或管理员校验 | P0 | 安全 | 未解决 |
-| BE-03 | 配置 | JWT、加密密钥、内部令牌存在写死默认值 | P0 | 安全 | 未解决 |
+| BE-03 | 配置 | JWT、加密密钥、内部令牌存在写死默认值 | P0 | 安全 | 部分（Funnel 启动门禁已补，其它部署/轮换待核对） |
 | BE-04 | 消息 | 整聊已读无成员校验 | P1 | 安全 | 未解决 |
 | BE-05 | 鉴权 | 开启 2FA 后登录不校验 | P1 | 安全 | 未解决 |
 | BE-06 | 联系人 | 拉黑不生效 | P1 | 功能/隐私 | 未解决 |
@@ -160,14 +160,14 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 
 #### BE-01 文件下载/预览接口匿名可读
 
-- **现状**：`/api/files/download/{fileId}`、`/api/files/preview/{fileId}` 在安全配置里 `permitAll`，控制器方法里也没有任何身份或会话校验；知道 `fileId` 就能取文件。
-- **缺什么**：至少校验登录与「该用户是否属于文件所属会话」；公开头像/群头像类文件需要单独的公开标记与访问策略。
-- **证据**：`nexus-chat-backend/src/main/java/com/nexus/chat/config/SecurityConfig.java:49`；`nexus-chat-backend/src/main/java/com/nexus/chat/controller/FileUploadController.java:220-221`、`264-265`。
-- **建议做法**：在 `FileUploadController` 引入 `CurrentUser.require()` + 文件元数据里的 owner/chatId 校验；把 `permitAll` 收窄到真正公开的目录。公开图片与聊天附件分两类 URL，避免同一接口既匿名又私有。
-- **完成标准**：未登录请求下载/预览返回 401；非会话成员请求返回 403；公开头像仍可匿名访问且有测试覆盖。
-- **依赖/影响面**：`SecurityConfig`、`FileUploadController`、`MessageList`/`MessageInput` 的 URL 使用、nginx 代理规则。会与 BE-15 的 URL 前缀调整一起改。
-- **优先级**：P0（ROADMAP M0 未完成项）
-- **核对程度**：已读代码确认。
+- **状态**：已解决，提交 `98091c1` / PR #27（合并 `8663647`）；实际用户 Java 与公网激活仍待后续验收。
+- **现状**：下载/预览在控制器执行 `FileAccessService.requireRequestAccess`。无 JWT/有效短期能力链接时返回 401；非上传者/真实会话成员返回 403；原 `/uploads` 静态目录替换为受控 `UploadResourceController`，公开头像仍可匿名读取，私有附件不再凭路径或 fileId 直接公开。
+- **短期链接**：签发前要求真实 JWT 与文件读取权限，绑定 fileId、路径、viewer 与时效；每次使用重新核对成员权限，不把登录 JWT 放入 URL。持有已授权且未过期的短期链接可读取附件，属于有意设计的资源能力，不是匿名绕过。
+- **证据**：`FileAccessService`、`FileUploadController`、`UploadResourceController`、`MessageRepository.existsReadableFileReference`；回归 `FileAccessMvcTest` 与 `AvatarAndChannelFlowTest`。
+- **已验证**：匿名私有读/签发拒绝、跨账号拒绝、成员撤销后链接拒绝、过期/篡改链接拒绝、公开头像保留、符号链接越界拒绝、上传去重与分片归属；过期修复撤掉后真实响应 410→200，新回归失败，恢复后全套通过。
+- **完成标准**：未授权请求 401，非成员 403，公开头像仍可匿名访问且回归覆盖；真实公网业务须在用户重启 Java 与启用受控 Funnel 后另验。
+- **依赖/影响面**：前端 `messageFiles.mjs`、`MessageList.vue`、API 前缀与网关，部署步骤见 `docs/FUNNEL-DEPLOYMENT.md`。
+- **优先级**：P0；**核对程度**：源码与隔离回归确认，不冒充公网实测。
 
 #### BE-02 3D 资源上传/改名/删除无权限校验
 
@@ -181,6 +181,8 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 - **核对程度**：已读代码确认。
 
 #### BE-03 默认密钥与内部令牌写死
+
+- **2026-11-25 补充**：Funnel 公开 profile 已增加 `FunnelSecretGuard`，JWT、内部 token、签名密钥与 Companion 加密密钥必须显式配置非开发值且至少 32 字节，否则启动失败；错误只写配置项名称，不输出值。默认开发模式保留以免破坏本机，Docker 等其它 profile 与历史密钥轮换本轮未核对，不能标整条完成。实际配置/重启由用户执行，已有加密凭据不可盲目换密钥。
 
 - **现状**：`application.properties` 多处使用 `${ENV:默认值}` 形式，未设置环境变量时会静默启用开发默认值；Python 侧同样有默认内部令牌与签名密钥。生产 compose 对 Agent 内部密钥做了「无默认值、缺失即失败」的处理，但 JWT 与 Companion 加密密钥仍有默认值。
 - **缺什么**：生产 profile 去掉所有可用的默认密钥；CI 增加密钥扫描；已进入过公开仓库的密钥轮换无法从代码确认是否完成。
@@ -771,9 +773,9 @@ README 的分节（`README.md`）覆盖了更细的目录结构、数据模型�
 | 删除 WS `userId` 兼容分支 | 后端已完成，前端有残留 | `WebSocketAuthChannelInterceptor.java:52-56` 强制 Bearer；`websocket.js:96-97` 仍保留 fallback | — |
 | 在真实服务上走一遍 | 无法核验 | 本次未启动服务 | — |
 | 3D 资源权限 | 未开始 | `CompanionAssetController` 无鉴权 | BE-02 |
-| 文件下载/预览鉴权 | 未开始 | `SecurityConfig:49` + Controller 无校验 | BE-01 |
+| 文件下载/预览鉴权 | 已完成代码与回归 | PR #27：JWT/成员/短期能力链接，公开头像与私有附件分离；公网激活待验 | BE-01 |
 | 整聊已读成员校验 | 未开始 | `MessageService:298-305` | BE-04 |
-| 内部令牌默认值 | 未开始 | `application.properties:108`；`config.py:43` | BE-03 |
+| 内部令牌默认值 | 部分 | Funnel profile 拒绝缺失/开发默认值；其它部署和实际轮换未核对 | BE-03 |
 | 配置文件密钥改环境变量 + 扫描 | 部分 | 已用 `${ENV}`，但仍有默认值；CI 无扫描 | BE-03、OPS-04 |
 | 轮换已泄露密钥 | 无法核验 | 需要运维确认 | BE-03（标注未知） |
 | Testcontainers 启动测试 | 未开始 | pom 无 testcontainers；CI 排除启动测试 | OPS-04 |

@@ -13,8 +13,9 @@ import java.util.stream.Stream;
  * endpoint /ws and the native endpoint /ws-native all read it.
  *
  * cors.exclusive-origins, when set, is the whole list: the built-in origins and
- * cors.allowed-origins are dropped, not extended. The funnel profile uses it so
- * that a publicly reachable backend answers the published site only.
+ * cors.allowed-origins are dropped, not extended. The funnel profile retains
+ * loopback/Electron clients and one published site; the public gateway separately
+ * restricts incoming browser origins to that site alone.
  */
 @Slf4j
 @Component

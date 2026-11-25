@@ -15,7 +15,8 @@ class FunnelReadinessControllerTest {
 
     private MockMvc mvc(String address, String exclusive) {
         MockEnvironment environment = new MockEnvironment().withProperty("server.address", address)
-                .withProperty("cors.exclusive-origins", exclusive);
+                .withProperty("cors.exclusive-origins", exclusive)
+                .withProperty("funnel.public-origin", ORIGIN);
         for (String key : new String[]{"jwt.secret", "agent.internal.token", "agent.internal.signing-secret", "companion.api-key.secret"}) {
             environment.withProperty(key, "fixture-only-not-for-use-outside-tests-" + key);
         }
@@ -30,7 +31,7 @@ class FunnelReadinessControllerTest {
             return request;
         })).andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.ready").value(true))
-                .andExpect(jsonPath("$.policyVersion").value("nexus-funnel-v1"))
+                .andExpect(jsonPath("$.policyVersion").value("nexus-funnel-v2"))
                 .andExpect(jsonPath("$.origins[0]").value(ORIGIN));
     }
 
@@ -42,6 +43,20 @@ class FunnelReadinessControllerTest {
                 return request;
             })).andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.ready").value(false));
         }
+    }
+
+    @Test
+    void loopbackAndElectronClientsCanCoexistWithoutAllowingAnotherPublicOrigin() throws Exception {
+        String origins = ORIGIN + ",http://localhost:*,http://127.0.0.1:*,app://*";
+        mvc("127.0.0.1", origins).perform(get("/internal/funnel/readiness").with(request -> {
+            request.setRemoteAddr("127.0.0.1");
+            return request;
+        })).andExpect(status().isOk()).andExpect(jsonPath("$.publicOrigin").value(ORIGIN))
+                .andExpect(jsonPath("$.origins.length()").value(4));
+        mvc("127.0.0.1", origins + ",https://evil.example").perform(get("/internal/funnel/readiness").with(request -> {
+            request.setRemoteAddr("127.0.0.1");
+            return request;
+        })).andExpect(status().isServiceUnavailable());
     }
 
     @Test
