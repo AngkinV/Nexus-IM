@@ -20,6 +20,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Autowired
     private MessageValidationInterceptor messageValidationInterceptor;
 
+    @Autowired
+    private AllowedOrigins allowedOrigins;
+
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
         log.info("配置 WebSocket 消息代理: /topic, /queue");
@@ -43,16 +46,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         log.info("注册 WebSocket STOMP 端点: /ws");
+        String[] origins = allowedOrigins.patterns().toArray(String[]::new);
         // Register with SockJS, allowing XHR fallback
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns(
-                        "http://localhost:*",
-                        "http://127.0.0.1:*",
-                        "https://chat.angkin.cn",
-                        "https://*.angkin.cn",
-                        "https://nexus-chat-fwohlcnoevd.qoder.zone",
-                        "app://*"
-                )
+                .setAllowedOriginPatterns(origins)
                 .withSockJS()
                 .setSessionCookieNeeded(false)
                 .setStreamBytesLimit(512 * 1024)
@@ -61,14 +58,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
         // Also register native WebSocket endpoint (no SockJS)
         registry.addEndpoint("/ws-native")
-                .setAllowedOriginPatterns(
-                        "http://localhost:*",
-                        "http://127.0.0.1:*",
-                        "https://chat.angkin.cn",
-                        "https://*.angkin.cn",
-                        "https://nexus-chat-fwohlcnoevd.qoder.zone",
-                        "app://*"
-                );
+                .setAllowedOriginPatterns(origins);
     }
 
     @Override

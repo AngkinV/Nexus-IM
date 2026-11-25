@@ -176,8 +176,11 @@ import IdentityAvatar from '@/components/identity/IdentityAvatar.vue'
 import { ref, onMounted, onBeforeUnmount, onUpdated, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { WarningFilled, Download, PictureFilled, Loading } from '@element-plus/icons-vue'
-import { API_BASE_URL } from '@/services/runtimeConfig'
+import { SERVER_BASE_URL } from '@/services/runtimeConfig'
+import { fileAPI } from '@/services/api'
 import { useSettingsStore } from '@/stores/settings'
+import { useUserStore } from '@/stores/user'
+import { createMessageFiles } from '@/utils/messageFiles.mjs'
 
 import dayjs from 'dayjs'
 import { useI18n } from 'vue-i18n'
@@ -187,6 +190,7 @@ import 'vue3-emoji-picker/css'
 const router = useRouter()
 const { t } = useI18n()
 const settings = useSettingsStore()
+const userStore = useUserStore()
 
 const props = defineProps({
   messages: {
@@ -198,6 +202,23 @@ const props = defineProps({
 const emit = defineEmits(['reply', 'edit', 'recall', 'react', 'viewEditHistory', 'resend'])
 
 const listRef = ref(null)
+const fileRevision = ref(0)
+const messageFiles = createMessageFiles({
+  serverBase: SERVER_BASE_URL,
+  // Refreshing every minute needs enough headroom to renew before expiry.
+  renewBeforeMs: 90_000,
+  getAccess: async reference => (await fileAPI.getAccess(reference)).data,
+  onChange: () => { fileRevision.value++ }
+})
+const refreshMessageFiles = () => {
+  void messageFiles.refresh(userStore.token && userStore.currentUser?.id != null ? props.messages : [])
+}
+
+watch(() => props.messages, refreshMessageFiles, { deep: true, immediate: true })
+watch([() => userStore.token, () => userStore.currentUser?.id], () => {
+  messageFiles.reset()
+  refreshMessageFiles()
+}, { flush: 'sync' })
 
 // Emoji reaction picker open state (keyed by message id). Prism is dark-only.
 const openPicker = ref(null)
@@ -229,12 +250,16 @@ const RECALL_WINDOW_MS = 2 * 60 * 1000
 const MAX_EDIT_COUNT = 3
 const now = ref(Date.now())
 let clockTimer = null
+let fileTimer = null
 onMounted(() => {
   clockTimer = setInterval(() => { now.value = Date.now() }, 15000)
+  fileTimer = setInterval(refreshMessageFiles, 60_000)
   document.addEventListener('mousedown', handleDocPointerDown)
 })
 onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer)
+  if (fileTimer) clearInterval(fileTimer)
+  messageFiles.reset()
   document.removeEventListener('mousedown', handleDocPointerDown)
 })
 
@@ -314,37 +339,21 @@ const formatFileSize = (bytes) => {
 }
 
 const getPreviewSrc = (msg) => {
-  // Priority: previewUrl > fileUrl > content
-  if (msg.previewUrl) {
-    return msg.previewUrl.startsWith('http') ? msg.previewUrl : `${API_BASE_URL}${msg.previewUrl}`
-  }
-  if (msg.downloadUrl) {
-    return msg.downloadUrl.startsWith('http') ? msg.downloadUrl : `${API_BASE_URL}${msg.downloadUrl}`
-  }
-  if (msg.fileUrl) {
-    return msg.fileUrl.startsWith('http') ? msg.fileUrl : `${API_BASE_URL}${msg.fileUrl}`
-  }
-  return msg.content
+  void fileRevision.value
+  return messageFiles.source(msg)
 }
 
 const getDownloadSrc = (msg) => {
-  if (msg.downloadUrl) {
-    return msg.downloadUrl.startsWith('http') ? msg.downloadUrl : `${API_BASE_URL}${msg.downloadUrl}`
-  }
-  if (msg.fileUrl) {
-    return msg.fileUrl.startsWith('http') ? msg.fileUrl : `${API_BASE_URL}${msg.fileUrl}`
-  }
-  return '#'
+  void fileRevision.value
+  return messageFiles.source(msg, 'download') || '#'
 }
 
-
-  const handleFileClick = (msg) => {
-    // 直接下载文件
-    const url = getDownloadSrc(msg)
-    if (url && url !== '#') {
-      window.open(url, '_blank')
-    }
+const handleFileClick = (msg) => {
+  const url = getDownloadSrc(msg)
+  if (url && url !== '#') {
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
+}
 
 const handleAvatarClick = (senderId) => {
   if (senderId) {

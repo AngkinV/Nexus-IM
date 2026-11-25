@@ -19,6 +19,10 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
 
     Optional<FileUpload> findByMd5Hash(String md5Hash);
 
+    Optional<FileUpload> findByFilePath(String filePath);
+
+    Optional<FileUpload> findFirstByMd5HashAndUploaderIdAndUploadCompleteTrue(String md5Hash, Long uploaderId);
+
     List<FileUpload> findByUploaderId(Long uploaderId);
 
     List<FileUpload> findByUploadCompleteAndCreatedAtBefore(Boolean uploadComplete, LocalDateTime before);

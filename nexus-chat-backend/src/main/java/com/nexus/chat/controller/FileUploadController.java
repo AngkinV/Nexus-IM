@@ -4,6 +4,9 @@ import com.nexus.chat.model.FileUpload;
 import com.nexus.chat.repository.FileUploadRepository;
 import com.nexus.chat.storage.UploadStorage;
 import com.nexus.chat.security.CurrentUser;
+import com.nexus.chat.service.FileAccessService;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -42,6 +45,7 @@ public class FileUploadController {
 
     private final FileUploadRepository fileUploadRepository;
     private final UploadStorage storage;
+    private final FileAccessService fileAccessService;
 
     /**
      * 单文件上传（小于5MB）
@@ -67,7 +71,9 @@ public class FileUploadController {
             String md5Hash = calculateMD5(file.getBytes());
 
             // 检查是否已存在相同文件（秒传）
-            Optional<FileUpload> existing = fileUploadRepository.findByMd5Hash(md5Hash);
+            Optional<FileUpload> existing = fileUploadRepository.findFirstByMd5HashAndUploaderIdAndUploadCompleteTrue(md5Hash, uploaderId)
+                    .filter(candidate -> (candidate.getExpiresAt() == null || candidate.getExpiresAt().isAfter(LocalDateTime.now()))
+                            && Files.isRegularFile(storage.resolve(candidate.getFilePath())));
             if (existing.isPresent() && existing.get().getUploadComplete()) {
                 FileUpload existingFile = existing.get();
                 log.info("文件秒传: md5={}, fileId={}", md5Hash, existingFile.getFileId());
@@ -133,12 +139,25 @@ public class FileUploadController {
             @RequestParam(value = "totalSize", required = false) Long totalSize,
             @RequestParam(value = "uploaderId", required = false) Long claimedUploaderId) {
         Long uploaderId = CurrentUser.require(claimedUploaderId);
+        try {
+            UUID.fromString(fileId);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid upload id");
+        }
+        if (fileId.length() != 36 || totalChunks < 1 || totalChunks > 20 || chunkIndex < 0 || chunkIndex >= totalChunks
+                || chunk.getSize() > 5 * 1024 * 1024 || (totalSize != null && (totalSize < 0 || totalSize > MAX_FILE_SIZE))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid upload chunk");
+        }
+        fileUploadRepository.findByFileId(fileId).ifPresent(existing -> {
+            if (!uploaderId.equals(existing.getUploaderId())) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Upload belongs to another user");
+            if (Boolean.TRUE.equals(existing.getUploadComplete())) throw new ResponseStatusException(HttpStatus.CONFLICT, "Upload already complete");
+        });
 
         log.debug("分片上传请求: fileId={}, chunkIndex={}/{}", fileId, chunkIndex, totalChunks);
 
         try {
             // 创建临时分片目录
-            File chunksDir = storage.resolve("chunks/" + fileId).toFile();
+            File chunksDir = storage.resolve("chunks/" + uploaderId + "/" + fileId).toFile();
             if (!chunksDir.exists()) {
                 chunksDir.mkdirs();
             }
@@ -164,7 +183,7 @@ public class FileUploadController {
                 String filePath = dateDir + "/" + storedName;
 
                 // 合并分片
-                mergeChunks(fileId, totalChunks, storage.resolve(filePath));
+                mergeChunks(uploaderId, fileId, totalChunks, totalSize, storage.resolve(filePath));
 
                 // 计算合并后文件的MD5
                 byte[] fileBytes = Files.readAllBytes(storage.resolve(filePath));
@@ -206,20 +225,34 @@ public class FileUploadController {
     /**
      * 获取文件信息
      */
+    @GetMapping("/access")
+    public ResponseEntity<Map<String, Object>> getFileAccess(@RequestParam String reference) {
+        Long actor = CurrentUser.require();
+        FileUpload file = fileAccessService.findByReference(reference)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found"));
+        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(fileAccessService.signedAccess(file, actor));
+    }
+
     @GetMapping("/{fileId}/info")
     public ResponseEntity<Map<String, Object>> getFileInfo(@PathVariable String fileId) {
+        Long actor = CurrentUser.require();
         Optional<FileUpload> fileOpt = fileUploadRepository.findByFileId(fileId);
         if (fileOpt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
-        return ResponseEntity.ok(buildResponse(fileOpt.get()));
+        fileAccessService.requireReadable(fileOpt.get(), actor);
+        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(buildResponse(fileOpt.get()));
     }
 
     /**
      * 下载文件
      */
     @GetMapping("/download/{fileId}")
-    public ResponseEntity<Resource> downloadFile(@PathVariable String fileId) {
+    public ResponseEntity<Resource> downloadFile(@PathVariable String fileId,
+            @RequestParam(required = false) Long expiresAt,
+            @RequestParam(required = false) Long viewerId,
+            @RequestParam(required = false) String signature) {
 
         Optional<FileUpload> fileOpt = fileUploadRepository.findByFileId(fileId);
         if (fileOpt.isEmpty()) {
@@ -227,6 +260,7 @@ public class FileUploadController {
         }
 
         FileUpload file = fileOpt.get();
+        fileAccessService.requireRequestAccess(file, expiresAt, viewerId, signature);
 
         // 检查文件是否过期
         if (file.getExpiresAt() != null && file.getExpiresAt().isBefore(LocalDateTime.now())) {
@@ -234,20 +268,20 @@ public class FileUploadController {
         }
 
         try {
-            Path filePath = storage.resolve(file.getFilePath());
+            Path candidate = storage.resolve(file.getFilePath());
+            if (!Files.isRegularFile(candidate)) return ResponseEntity.notFound().build();
+            Path filePath = candidate.toRealPath();
+            if (!filePath.startsWith(storage.root().toRealPath())) return ResponseEntity.notFound().build();
             Resource resource = new UrlResource(filePath.toUri());
-
-            if (!resource.exists()) {
-                return ResponseEntity.notFound().build();
-            }
 
             String encodedFilename = URLEncoder.encode(file.getOriginalName(), StandardCharsets.UTF_8)
                     .replace("+", "%20");
 
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(file.getMimeType() != null
-                            ? file.getMimeType()
-                            : "application/octet-stream"))
+                    .contentType(FileAccessService.safeContentType(file.getMimeType()))
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Content-Security-Policy", "sandbox")
                     .header(HttpHeaders.CONTENT_DISPOSITION,
                             "attachment; filename*=UTF-8''" + encodedFilename)
                     .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(file.getFileSize()))
@@ -263,7 +297,10 @@ public class FileUploadController {
      * 在线预览文件
      */
     @GetMapping("/preview/{fileId}")
-    public ResponseEntity<Resource> previewFile(@PathVariable String fileId) {
+    public ResponseEntity<Resource> previewFile(@PathVariable String fileId,
+            @RequestParam(required = false) Long expiresAt,
+            @RequestParam(required = false) Long viewerId,
+            @RequestParam(required = false) String signature) {
 
         Optional<FileUpload> fileOpt = fileUploadRepository.findByFileId(fileId);
         if (fileOpt.isEmpty()) {
@@ -271,6 +308,7 @@ public class FileUploadController {
         }
 
         FileUpload file = fileOpt.get();
+        fileAccessService.requireRequestAccess(file, expiresAt, viewerId, signature);
 
         // 检查文件是否过期
         if (file.getExpiresAt() != null && file.getExpiresAt().isBefore(LocalDateTime.now())) {
@@ -278,17 +316,17 @@ public class FileUploadController {
         }
 
         try {
-            Path filePath = storage.resolve(file.getFilePath());
+            Path candidate = storage.resolve(file.getFilePath());
+            if (!Files.isRegularFile(candidate)) return ResponseEntity.notFound().build();
+            Path filePath = candidate.toRealPath();
+            if (!filePath.startsWith(storage.root().toRealPath())) return ResponseEntity.notFound().build();
             Resource resource = new UrlResource(filePath.toUri());
 
-            if (!resource.exists()) {
-                return ResponseEntity.notFound().build();
-            }
-
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(file.getMimeType() != null
-                            ? file.getMimeType()
-                            : "application/octet-stream"))
+                    .contentType(FileAccessService.safeContentType(file.getMimeType()))
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Content-Security-Policy", "sandbox")
                     .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
                     .body(resource);
 
@@ -318,7 +356,8 @@ public class FileUploadController {
         if (filename == null || !filename.contains(".")) {
             return "";
         }
-        return filename.substring(filename.lastIndexOf("."));
+        String extension = filename.substring(filename.lastIndexOf("."));
+        return extension.matches("\\.[A-Za-z0-9]{1,12}") ? extension : "";
     }
 
     private String getMimeType(String filename) {
@@ -361,18 +400,21 @@ public class FileUploadController {
         }
     }
 
-    private void mergeChunks(String fileId, int totalChunks, Path mergedPath) throws IOException {
-
+    private void mergeChunks(Long uploaderId, String fileId, int totalChunks, Long totalSize, Path mergedPath) throws IOException {
+        Path chunks = storage.resolve("chunks/" + uploaderId + "/" + fileId);
+        long size = 0;
         for (int i = 0; i < totalChunks; i++) {
-            Path chunkPath = storage.resolve("chunks/" + fileId + "/chunk_" + i);
-            byte[] chunkData = Files.readAllBytes(chunkPath);
-            Files.write(mergedPath, chunkData,
-                    java.nio.file.StandardOpenOption.CREATE,
-                    java.nio.file.StandardOpenOption.APPEND);
+            Path chunk = chunks.resolve("chunk_" + i);
+            if (!Files.isRegularFile(chunk)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Upload chunks missing");
+            size += Files.size(chunk);
         }
-
-        // 删除临时分片目录
-        deleteDirectory(storage.resolve("chunks/" + fileId).toFile());
+        if (size > MAX_FILE_SIZE || (totalSize != null && size != totalSize)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid total upload size");
+        }
+        try (var out = Files.newOutputStream(mergedPath, java.nio.file.StandardOpenOption.CREATE_NEW)) {
+            for (int i = 0; i < totalChunks; i++) Files.copy(chunks.resolve("chunk_" + i), out);
+        }
+        deleteDirectory(chunks.toFile());
     }
 
     private void deleteDirectory(File directory) {

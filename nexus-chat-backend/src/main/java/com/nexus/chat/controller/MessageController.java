@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -67,6 +68,8 @@ public class MessageController {
             notifyMessageToMembers(chatId, senderId, message);
 
             return ResponseEntity.ok(message);
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (RuntimeException e) {
             log.error("发送消息失败: {}", e.getMessage());
             return ResponseEntity.badRequest().build();

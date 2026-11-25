@@ -42,6 +42,16 @@ test('URL protocol allowlist preserves uploads and local preview without /api', 
     assert.equal(resolve('/uploads/a.png'), 'http://localhost:8080/uploads/a.png')
     for (const url of ['javascript:alert(1)', 'data:text/html,x', 'file:///etc/a', '//evil/a']) assert.equal(resolve(url), '')
 })
+test('legacy backend upload avatars use the current backend while external avatars remain external', () => {
+    const base = 'https://lvmacbook-air.tail007e54.ts.net'
+    for (const host of ['http://localhost:8080', 'http://127.0.0.1:8080', 'https://47.118.29.122']) {
+        assert.equal(resolveAvatarUrl(`${host}/uploads/avatars/avatar.png?token=synthetic-old-token`, base), `${base}/uploads/avatars/avatar.png`)
+    }
+    assert.equal(resolveAvatarUrl('https://cdn.example.test/avatars/person.png', base), 'https://cdn.example.test/avatars/person.png')
+    const credentialed = new URL('https://cdn.example.test/person.png')
+    credentialed.username = 'fixture'
+    assert.equal(resolveAvatarUrl(credentialed.href, base), '')
+})
 test('field revision: late snapshot cannot undo avatar/presence WS; unprovided fields survive', () => {
     const ledger = createRevisionLedger(); ledger.setOwner(1)
     let record = ledger.merge(7, {}, { id: 7, nickname: 'original', avatar: 'old', isOnline: true })

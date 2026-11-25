@@ -47,6 +47,7 @@ public class UserService {
     private final PostRepository postRepository;
     private final RedisCacheService redisCacheService;
     private final UploadStorage uploadStorage;
+    private final FileAccessService fileAccessService;
 
     /** Avatars live under the uploads directory and, unlike attachments, never expire. */
     private static final String AVATAR_DIR = "avatars/";
@@ -78,7 +79,7 @@ public class UserService {
             user.setNickname(nickname);
         }
         if (avatarUrl != null) {
-            user.setAvatarUrl(avatarUrl);
+            user.setAvatarUrl(fileAccessService.authorizeAvatar(avatarUrl, userId));
         }
 
         User updated = userRepository.save(user);

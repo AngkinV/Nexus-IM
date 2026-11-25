@@ -58,7 +58,7 @@ class AgentMcpSecurityTest {
     @ImportAutoConfiguration({PropertyPlaceholderAutoConfiguration.class, ServletWebServerFactoryAutoConfiguration.class, DispatcherServletAutoConfiguration.class,
             WebMvcAutoConfiguration.class, HttpMessageConvertersAutoConfiguration.class, JacksonAutoConfiguration.class,
             ErrorMvcAutoConfiguration.class, SecurityAutoConfiguration.class, SecurityFilterAutoConfiguration.class})
-    @Import({SecurityConfig.class, JwtAuthenticationFilter.class, AgentMcpConfig.class, AgentToolRegistry.class,
+    @Import({SecurityConfig.class, AllowedOrigins.class, JwtAuthenticationFilter.class, AgentMcpConfig.class, AgentToolRegistry.class,
             InternalAgentController.class, AgentExceptionHandler.class})
     static class App {
         // One fixture instance shared by the beans and the test body.

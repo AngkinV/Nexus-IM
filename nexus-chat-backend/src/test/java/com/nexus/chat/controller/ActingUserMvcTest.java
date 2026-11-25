@@ -5,6 +5,9 @@ import com.nexus.chat.exception.GlobalExceptionHandler;
 import com.nexus.chat.service.ChatService;
 import com.nexus.chat.service.ContactService;
 import com.nexus.chat.service.MessageService;
+import com.nexus.chat.service.AuthService;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -155,5 +158,32 @@ class ActingUserMvcTest {
 
         verify(messageService).getChatMessages(eq(5L), eq(1L), anyInt(), anyInt());
         verify(messageService, never()).getChatMessages(any(), eq(2L), anyInt(), anyInt());
+    }
+
+    @Test
+    void attachmentAndAvatarAuthorizationStatusesAreNotSwallowed() throws Exception {
+        loginAs(1L);
+        org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "File access denied"))
+                .when(messageService).sendMessage(any(), any(), any(), any(), any(), any(), any());
+        mvc.perform(post("/api/messages").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"chatId\":5,\"content\":\"fixture\",\"messageType\":\"file\",\"fileUrl\":\"/api/files/download/private\"}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Avatar access denied"))
+                .when(chatService).createGroupChat(any(), any());
+        mvc.perform(post("/api/chats/group").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"fixture\",\"memberIds\":[2],\"avatar\":\"/uploads/private.png\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void registrationCannotTurnAvatarDenialIntoAnUnrelatedBadRequest() throws Exception {
+        AuthService auth = mock(AuthService.class);
+        org.mockito.Mockito.doThrow(new ResponseStatusException(HttpStatus.FORBIDDEN, "Avatar access denied"))
+                .when(auth).register(any(), any(), any());
+        MockMvc authMvc = MockMvcBuilders.standaloneSetup(new AuthController(auth, null, null))
+                .setControllerAdvice(new GlobalExceptionHandler(new StaticMessageSource())).build();
+        authMvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"fixture\",\"email\":\"fixture@example.invalid\",\"avatarUrl\":\"/api/files/download/private\"}"))
+                .andExpect(status().isForbidden());
     }
 }

@@ -15,6 +15,10 @@ import java.util.Optional;
 @Repository
 public interface MessageRepository extends JpaRepository<Message, Long> {
 
+    @Query("select count(m) > 0 from Message m join ChatMember cm on cm.chatId = m.chatId " +
+            "where cm.userId = :userId and m.fileUrl in :references and (m.isRecalled = false or m.isRecalled is null)")
+    boolean existsReadableFileReference(@Param("userId") Long userId, @Param("references") List<String> references);
+
     interface ScopeAttribution { Long getChatId(); LocalDateTime getCreatedAt(); }
     @Query("select m.chatId as chatId, m.createdAt as createdAt from Message m where m.id = :id")
     Optional<ScopeAttribution> findScopeAttribution(@Param("id") Long id);
