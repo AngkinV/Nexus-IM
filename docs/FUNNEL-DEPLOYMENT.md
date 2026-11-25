@@ -1,12 +1,18 @@
 # Qoder 前端 + Tailscale Funnel 受控后端入口
 
-## 当前状态（2026-11-25 17:15，UTC+8）
+## 当前状态（UTC+8，按核对时间分列，越靠上越新）
+
+- **11-26 00:07 只读核对**：链路三段在本机都已在位，**按已对公网开放对待**。Funnel on，`/` 代理到 `http://127.0.0.1:18080`；网关在监听 `127.0.0.1:18080`（node 进程，00:03 启动，工作目录是 funnel-gateway 工作树），本机 `/health` 返回 200，本机经网关请求 `/internal/funnel/readiness` 返回 404；Java（23:43 启动，工作目录是主仓库）只监听 `127.0.0.1:8080`，本机 readiness 返回 200，`ready=true`、`policyVersion=nexus-funnel-v2`；Python 监听 `*:8100`（所有网卡，Funnel 不代理它）。写这条记录的助手没有启停任何服务，也没有改 Funnel 配置。**没有从外部设备访问过**，登录、聊天、上传均未验收，Qoder 是否重新发布未核对。
+- **11-25 23:59 只读核对**：Funnel 配置和后端状态同上，但网关 18080 当时没有监听（00:03 才启动）。
+- **11-25 21:06 只读核对（沿用当时记录）**：已存在指向 18080 的 Funnel 配置（来源未核对，助手未执行开启）；当时后端仍是 local，网关未运行。
+
+以下五条是 **11-25 17:15 的历史记录**，其中“Funnel 未开启”只对当时成立：
 
 - 原站点：`https://nexus-chat-2026-fwohlcnoevd.qoder.zone`。此前只确认登录页能加载；登录、真实聊天、上传和外部设备访问尚未验收。
 - 主实现通过 PR #27 合入远端与本地主线（`8663647`，三项 CI 全绿）。当前兼容修正保留本机/Electron 直连，同时公网网关仍仅接受 Qoder 来源；以最新 git/PR 为准。**代码落地不等于公网激活**。
 - 主仓库的原 `.env.production`、`nexus-theme.css` 和 Qoder 站点元数据已逐字节保留。仓库提交的发布目标是 Funnel，本机原发布端点仍等后端 ready 后再切换，不提前改变已发布站点。
 - Java/Python 当前由用户从主仓库运行；**助手没有启停它们**。运行中的旧 Java 的本地 readiness 请求返回 403；新版网关已实际拒绝为它启动，18080 没有新增监听。
-- **Funnel 未开启，Qoder 未重新发布。** 修改源码和构建通过不代表公网已经接通。
+- **17:15 时 Funnel 未开启，Qoder 未重新发布。** 修改源码和构建通过不代表公网已经接通。
 
 ## 架构与公开范围
 
@@ -73,6 +79,14 @@ Java 的 `agent.internal.token` 对应 Python 环境变量 `JAVA_INTERNAL_TOKEN`
 mvn -f /Users/anglv/Nexus/nexus-chat-backend/pom.xml -q spring-boot:run -Dstart-class=com.nexus.chat.tools.FunnelSecretPrep -Dspring-boot.run.arguments=check
 ```
 
+后端在运行、只想 `check` 时，加三个跳过参数就直接用 `target/classes` 里已编译好的类，不走编译和资源复制，不改写运行中后端正在用的文件：
+
+```bash
+mvn -f /Users/anglv/Nexus/nexus-chat-backend/pom.xml -q spring-boot:run -Dmaven.main.skip=true -Dmaven.test.skip=true -Dmaven.resources.skip=true -Dstart-class=com.nexus.chat.tools.FunnelSecretPrep -Dspring-boot.run.arguments=check
+```
+
+前提是主仓库已编译过含本工具的版本；它读到的配置是上次编译时复制进 `target/classes` 的那份，之后改过 `application-local.properties` 而没重新编译的话不会体现。`prepare` 本来就要求两个后端已停，用不带跳过参数的命令。
+
 检查未就绪是正常结果；确认显示现有记录全部可解密后，用户执行：
 
 ```bash
@@ -81,7 +95,8 @@ mvn -f /Users/anglv/Nexus/nexus-chat-backend/pom.xml -q spring-boot:run -Dstart-
 
 - JWT 只用现有文件/环境，不从 Keychain 查询、覆盖或轮换；JWT不合格就拒绝。
 - 已有 Keychain 项不合格时在任何写入前拒绝，不覆盖它们。只为缺失的其余强密钥生成随机值，写入后回读；秘密不进参数、文件、Git或输出。
-- 每条现有加密记录必须可解密。旧密钥需可归档，原配置为空且有待迁移数据时拒绝，不猜默认值。
+- 每条现有加密记录必须可解密。旧密钥需可归档，原配置为空且有待迁移数据时 `check` 和 `prepare` 都报拒绝，不猜默认值。
+- 出错时只输出异常类型和所在步骤（配置项名、Keychain 项名或表列名），不输出异常内容；旧密钥归档项的名称带指纹，也不输出。
 - 只在一个数据库事务里更新 `api_key_encrypted`，逐条回读校验；失败整体回滚，新旧 Keychain 密钥留存可恢复。中断后重试沿用已保存的目标密钥，不再次轮换。
 - 迁移成功后，不带新 Companion Keychain 值启动 Java（包括local模式）会无法解密旧模型凭据，不再用原来的裸启动命令。
 
@@ -95,11 +110,28 @@ bash /Users/anglv/Nexus/nginx/funnel-start.sh java
 bash /Users/anglv/Nexus/nginx/funnel-start.sh python
 ```
 
+`java` 最终在 `nexus-chat-backend` 里执行 `mvn spring-boot:run -Dspring-boot.run.profiles=local,funnel`，`python` 最终在 `nexus-agent-backend` 里执行 `ENGINE=langgraph .venv311/bin/python main.py`。
+
 脚本仅供用户启动，自动进入各自原主仓库目录，用子进程环境注入对应 Keychain 值，不解除私有文件 `uchg`。Keychain读取失败/缺项立即退出；端口已占用时不重复启动，也不代用户停止。脚本针对本次三项都需准备的配置；如果用户此前已在外部提供有效强密钥但Keychain不含全部三项，需要保留并合并其既有安全启动环境，不盲目生成替换。
 
-测试仅使用合成密文、假 Keychain 和内存数据库。真实 Keychain读取及无写入的interactive help已核对；真实prepare写入/MySQL迁移必须用户确认后验证，不能用合成测试冒充。现有MCP凭据密钥不在本工具迁移范围。
+测试仅使用合成密文、假 Keychain 和内存数据库。真实 Keychain读取及无写入的interactive help已核对；真实prepare写入/MySQL迁移必须用户确认后验证，不能用合成测试冒充。启动脚本只做过语法解析，并在临时目录里跑过一份把 Keychain 读取、`lsof`、`mvn`、Python 都换成假程序的副本（缺项、读取失败、空值、端口占用、没有私有配置都在启动前退出，密钥只出现在子进程环境里）；真实脚本助手没有执行过。现有MCP凭据密钥不在本工具迁移范围。
 
-## 激活顺序（尚未执行）
+## 把本地数据库恢复到原密钥（restore）
+
+公网环境改为在容器里从空库起步（见 `docs/PUBLIC-ISOLATION-PLAN.md`），本地数据库不再需要钥匙串里的那把加密密钥。`restore` 把 `prepare` 迁移过的模型凭据换回配置文件里的原密钥，之后用原来的命令（`mvn spring-boot:run`）启动即可解密。
+
+```bash
+mvn -f /Users/anglv/Nexus/nexus-chat-backend/pom.xml -q spring-boot:run -Dstart-class=com.nexus.chat.tools.FunnelSecretPrep -Dspring-boot.run.arguments=restore
+```
+
+- 按普通启动（不带 profile）解析配置。要求两个后端都已停止，并输入 `RESTORE`；全部记录已在原密钥下时不询问、不写入。
+- 单事务，只更新 `api_key_encrypted`，逐条回读校验，失败整体回滚。钥匙串不改动。
+- 用原密钥和钥匙串密钥都解不开的记录存在时，什么都不写。
+- 恢复之后，`funnel-start.sh java` 注入的钥匙串密钥解不开这些记录；本地请用原来的命令启动。
+
+**2026-11-26 01:53 这条命令已对真实本地数据库执行过一次：4 条记录换回原密钥并提交，钥匙串三项仍在。** 这次执行是助手验证时的失误，不是用户操作：助手以为后端还在运行、工具会拒绝，把确认词通过管道传了进去，而后端当时已停止。01:54 只读核对：4 条都能用原配置密钥解密，无法解密 0。如需回到迁移后的状态，由用户再执行一次 `prepare`。
+
+## 激活顺序（进行中，各步现状见“当前状态”）
 
 1. 完成全量回归，按项目 PR 流程落地代码，保留用户已有前端主题、Qoder 站点元数据及私有文件。
 2. 用户检查上述密钥来源，并同步 Java/Python 的互信配置。配置已通过环境变量提供时，无需重复写文件。
@@ -109,6 +141,8 @@ bash /Users/anglv/Nexus/nginx/funnel-start.sh python
    cd /Users/anglv/Nexus/nexus-chat-backend
    mvn spring-boot:run -Dspring-boot.run.profiles=local,funnel
    ```
+
+   密钥若是用上节工具放进 Keychain 的，这一步改用上节的 `funnel-start.sh java` 和 `funnel-start.sh python`（两端都重启，互信值才一致），上面的裸命令拿不到这些值，会被密钥门禁拒绝。
 
    Python 未改代码；若调整它的互信配置，需由用户同步配置并重启 Python。助手不代启停。
 
@@ -137,4 +171,5 @@ bash /Users/anglv/Nexus/nginx/funnel-start.sh python
 - 过期文件回归已做撤回验证：撤掉修复后 `/api/files/access` 真实测试响应从 410 变成 200，新回归失败；已还原修复后跑全套通过。
 - 跨域夹具增加了仅测试启用的 profile，避免污染其他真实 JPA 测试；MCP 审计回归捕获真实日志事件，不依赖跨上下文的全局 stdout，原有内容、权限与隐私断言均保留。
 - Python 全量：864 passed、6 skipped（28.19 秒；测试配置有 1 条 pytest warning），无 Python 代码改动、未调用真实 embedding 功能。
-- 当前旧 Java 的实际启动拒绝已验证；它不满足公开条件，没有开启 Funnel，也没有把这些隔离回归当作真实公网验收。
+- 17:15 时旧 Java 的实际启动拒绝已验证；它当时不满足公开条件，助手没有开启 Funnel（之后出现的 Funnel 配置见“当前状态”），也没有把这些隔离回归当作真实公网验收。
+- 11-26 00:05 这一轮加固：`FunnelSecretPrepTest` 11/11、`FunnelSecretGuardTest` 5/5 通过，新增断言先在旧实现上失败 3 项再修复；改动只在该工具及其测试、没有新增测试方法，全量 730 项未重跑。

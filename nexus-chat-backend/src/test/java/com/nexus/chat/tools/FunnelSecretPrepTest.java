@@ -103,7 +103,16 @@ class FunnelSecretPrepTest {
         String text = printed.toString(StandardCharsets.UTF_8);
         assertFalse(text.contains(OLD));
         assertFalse(text.contains("synthetic-key"));
-        for (String value : keychain.items.values()) assertFalse(text.contains(value));
+        for (Map.Entry<String, String> item : keychain.items.entrySet()) {
+            assertFalse(text.contains(item.getValue()));
+            // The archive account ends in a fingerprint of the old key.
+            if (item.getKey().contains(".old.")) assertFalse(text.contains(item.getKey().substring(item.getKey().lastIndexOf('.') + 1)));
+        }
+    }
+
+    private String reported(Exception failure) {
+        FunnelSecretPrep.reportFailure(failure, new PrintStream(printed, true, StandardCharsets.UTF_8));
+        return printed.toString(StandardCharsets.UTF_8);
     }
 
     @Test
@@ -174,8 +183,10 @@ class FunnelSecretPrepTest {
     void aKeychainThatDoesNotKeepTheNewKeyStopsBeforeTheDatabaseIsTouched() throws Exception {
         keychain.dropWrites = true;
         Map<Long, String> before = rows();
-        assertThrows(IllegalStateException.class, () -> run(true, false, FunnelSecretPrep.CONFIRMATION));
+        String text = reported(assertThrows(IllegalStateException.class, () -> run(true, false, FunnelSecretPrep.CONFIRMATION)));
         assertEquals(before, rows());
+        // The first key the tool has to generate is the one whose write was lost.
+        assertTrue(text.contains("所在步骤: 写入并回读 Keychain 项 " + FunnelSecretGuard.REQUIRED.get(1)));
     }
 
     @Test
@@ -195,7 +206,10 @@ class FunnelSecretPrepTest {
                                     return invoke(result, m, a);
                                 });
                     });
-            assertThrows(SQLException.class, () -> run(true, failing, false, FunnelSecretPrep.CONFIRMATION));
+            String text = reported(assertThrows(SQLException.class, () -> run(true, failing, false, FunnelSecretPrep.CONFIRMATION)));
+            assertTrue(text.contains("所在步骤: 更新并回读 model_credentials.api_key_encrypted"));
+            assertFalse(text.contains("synthetic failure"));
+            assertNoSecretPrinted();
         }
         assertEquals(before, rows());
         Map<String, String> keys = new LinkedHashMap<>(keychain.items);
@@ -255,13 +269,17 @@ class FunnelSecretPrepTest {
             }
         }
         Map<Long, String> before = rows();
-        try (Connection db = DriverManager.getConnection(url)) {
-            assertFalse(FunnelSecretPrep.run(true, environment().withProperty("companion.api-key.secret", ""),
-                    keychain, db, (host, port) -> false, () -> FunnelSecretPrep.CONFIRMATION,
-                    new PrintStream(printed, true, StandardCharsets.UTF_8)));
+        for (boolean prepare : new boolean[]{false, true}) {
+            try (Connection db = DriverManager.getConnection(url)) {
+                assertFalse(FunnelSecretPrep.run(prepare, environment().withProperty("companion.api-key.secret", ""),
+                        keychain, db, (host, port) -> false, () -> FunnelSecretPrep.CONFIRMATION,
+                        new PrintStream(printed, true, StandardCharsets.UTF_8)));
+            }
         }
         assertEquals(before, rows());
         assertTrue(keychain.items.isEmpty());
+        // check must not send the user to a prepare that is going to refuse.
+        assertFalse(printed.toString(StandardCharsets.UTF_8).contains("需由用户执行 prepare"));
     }
 
     @Test
@@ -271,6 +289,132 @@ class FunnelSecretPrepTest {
         String text = printed.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("SQLException"));
         assertFalse(text.contains("synthetic-private-url-and-password"));
+    }
+
+    private boolean restore(Connection db, boolean backendsUp, String typed) throws Exception {
+        return FunnelSecretPrep.restore(environment(), keychain, db, (host, port) -> backendsUp, () -> typed,
+                new PrintStream(printed, true, StandardCharsets.UTF_8));
+    }
+
+    private boolean restore(boolean backendsUp, String typed) throws Exception {
+        try (Connection db = DriverManager.getConnection(url)) {
+            return restore(db, backendsUp, typed);
+        }
+    }
+
+    private void assertAllUnderOriginalKey() throws Exception {
+        CompanionCryptoService original = new CompanionCryptoService(OLD);
+        Map<Long, String> rows = rows();
+        assertEquals("synthetic-key-one", original.decrypt(rows.get(1L)));
+        assertEquals("合成密钥二", original.decrypt(rows.get(2L)));
+        assertNull(rows.get(3L));
+        assertEquals("", rows.get(4L));
+        assertEquals("synthetic-key-five", original.decrypt(rows.get(5L)));
+    }
+
+    @Test
+    void restoreReturnsEveryRowToTheConfiguredKeyKeepsTheKeychainAndIsRepeatable() throws Exception {
+        assertTrue(run(true, false, FunnelSecretPrep.CONFIRMATION));
+        Map<String, String> keys = new LinkedHashMap<>(keychain.items);
+        Map<Long, String> migrated = rows();
+
+        assertTrue(restore(false, FunnelSecretPrep.RESTORE_CONFIRMATION));
+        assertAllUnderOriginalKey();
+        assertNotEquals(migrated.get(1L), rows().get(1L));
+        assertEquals(keys, keychain.items);
+        assertNoSecretPrinted();
+
+        // Nothing left to do: no confirmation is asked for and nothing is rewritten.
+        Map<Long, String> restored = rows();
+        assertTrue(restore(false, null));
+        assertEquals(restored, rows());
+        assertEquals(keys, keychain.items);
+        assertTrue(printed.toString(StandardCharsets.UTF_8).contains("无需恢复"));
+    }
+
+    @Test
+    void restoreRefusesWhileABackendListensOrWithoutTheTypedConfirmation() throws Exception {
+        assertTrue(run(true, false, FunnelSecretPrep.CONFIRMATION));
+        Map<Long, String> migrated = rows();
+        assertFalse(restore(true, FunnelSecretPrep.RESTORE_CONFIRMATION));
+        assertFalse(restore(false, FunnelSecretPrep.CONFIRMATION));
+        assertFalse(restore(false, null));
+        assertEquals(migrated, rows());
+    }
+
+    @Test
+    void restoreHandlesRowsSavedUnderEitherKey() throws Exception {
+        assertTrue(run(true, false, FunnelSecretPrep.CONFIRMATION));
+        // A key saved while the backend ran without the Keychain key is already under the original one.
+        try (Connection db = DriverManager.getConnection(url);
+             PreparedStatement insert = db.prepareStatement("INSERT INTO model_credentials VALUES (7, ?)")) {
+            insert.setString(1, new CompanionCryptoService(OLD).encrypt("synthetic-key-seven"));
+            insert.executeUpdate();
+        }
+        String untouched = rows().get(7L);
+        assertTrue(restore(false, FunnelSecretPrep.RESTORE_CONFIRMATION));
+        assertAllUnderOriginalKey();
+        assertEquals(untouched, rows().get(7L));
+        assertTrue(printed.toString(StandardCharsets.UTF_8).contains("原配置密钥可解 1，待恢复 3"));
+    }
+
+    @Test
+    void restoreAbortsBeforeAnyWriteWhenARowIsUnreadableByBothKeys() throws Exception {
+        assertTrue(run(true, false, FunnelSecretPrep.CONFIRMATION));
+        try (Connection db = DriverManager.getConnection(url); Statement statement = db.createStatement()) {
+            statement.execute("INSERT INTO model_credentials VALUES (9, '"
+                    + new CompanionCryptoService("another-synthetic-secret").encrypt("lost") + "')");
+        }
+        Map<Long, String> before = rows();
+        assertFalse(restore(false, FunnelSecretPrep.RESTORE_CONFIRMATION));
+        assertEquals(before, rows());
+    }
+
+    @Test
+    void aFailureMidRestoreRollsBackAndTheNextRunFinishes() throws Exception {
+        assertTrue(run(true, false, FunnelSecretPrep.CONFIRMATION));
+        Map<Long, String> migrated = rows();
+        AtomicInteger updates = new AtomicInteger();
+        try (Connection real = DriverManager.getConnection(url)) {
+            Connection failing = (Connection) Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{Connection.class},
+                    (proxy, method, args) -> {
+                        Object result = invoke(real, method, args);
+                        if (!method.getName().equals("prepareStatement")) return result;
+                        return Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{PreparedStatement.class},
+                                (p, m, a) -> {
+                                    if (m.getName().equals("executeUpdate") && updates.incrementAndGet() == 2) {
+                                        throw new SQLException("synthetic failure");
+                                    }
+                                    return invoke(result, m, a);
+                                });
+                    });
+            assertThrows(SQLException.class, () -> restore(failing, false, FunnelSecretPrep.RESTORE_CONFIRMATION));
+        }
+        assertEquals(migrated, rows());
+        assertTrue(restore(false, FunnelSecretPrep.RESTORE_CONFIRMATION));
+        assertAllUnderOriginalKey();
+    }
+
+    @Test
+    void restoreRefusesWhenTheConfiguredKeyIsBlankOrIsTheKeychainKey() throws Exception {
+        assertTrue(run(true, false, FunnelSecretPrep.CONFIRMATION));
+        Map<Long, String> migrated = rows();
+        for (String configured : new String[]{"", keychain.items.get("companion.api-key.secret")}) {
+            try (Connection db = DriverManager.getConnection(url)) {
+                assertFalse(FunnelSecretPrep.restore(environment().withProperty("companion.api-key.secret", configured),
+                        keychain, db, (host, port) -> false, () -> FunnelSecretPrep.RESTORE_CONFIRMATION,
+                        new PrintStream(printed, true, StandardCharsets.UTF_8)));
+            }
+        }
+        assertEquals(migrated, rows());
+        assertNoSecretPrinted();
+    }
+
+    @Test
+    void plainConfigurationResolvesWithoutTheFunnelProfile() {
+        var environment = FunnelSecretPrep.resolve();
+        assertNull(environment.getProperty("funnel.public-origin"));
+        assertTrue(environment.getRequiredProperty("spring.datasource.url").startsWith("jdbc:"));
     }
 
     private static Object invoke(Object target, java.lang.reflect.Method method, Object[] args) throws Throwable {
