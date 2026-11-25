@@ -11,7 +11,9 @@
 #
 # It never touches the local development setup: different ports, its own database, its own
 # secrets (macOS Keychain service "nexus-public"), and images built from a commit, not from
-# the working tree. Secrets are never written to disk, printed, or passed as arguments.
+# the working tree. Secrets live in the Keychain; this script never prints them, passes them
+# as arguments, or writes them to a file on the Mac. Inside the VM, Docker keeps each
+# container's environment (which includes them) in its own state on the VM disk.
 set +x
 set -euo pipefail
 
