@@ -78,6 +78,19 @@
             </template>
           </el-input>
 
+          <el-input
+            v-if="registrationPolicy.inviteRequired"
+            v-model="registerForm.inviteCode"
+            :placeholder="$t('auth.inviteCode')"
+            size="large"
+            class="custom-input mt-3"
+            maxlength="64"
+          >
+            <template #prefix>
+              <el-icon><Ticket /></el-icon>
+            </template>
+          </el-input>
+
           <div class="email-code-row">
             <el-input
               v-model="registerForm.email"
@@ -90,6 +103,7 @@
               </template>
             </el-input>
             <el-button
+              v-if="registrationPolicy.emailCodeRequired"
               type="primary"
               size="large"
               class="send-code-btn"
@@ -102,6 +116,7 @@
           </div>
 
           <el-input
+            v-if="registrationPolicy.emailCodeRequired"
             v-model="registerForm.verificationCode"
             :placeholder="$t('auth.enterCode')"
             size="large"
@@ -191,7 +206,10 @@ import { loginDestination } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
 import { useUserStore } from '@/stores/user'
 import { authAPI, userAPI, resolveFileUrl } from '@/services/api'
-import { Camera, User, Lock, Message, Iphone, Postcard, Key } from '@element-plus/icons-vue'
+import {
+  DEFAULT_REGISTRATION_POLICY, normalizeRegistrationPolicy, isRegisterFormComplete, registerPayload, inviteForEmailCode
+} from '@/services/registrationPolicy'
+import { Camera, User, Lock, Message, Iphone, Postcard, Key, Ticket } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const { t } = useI18n()
@@ -220,25 +238,31 @@ const registerForm = reactive({
   phone: '',
   password: '',
   confirmPassword: '',
-  verificationCode: ''
+  verificationCode: '',
+  inviteCode: ''
 })
 
 const isLoginValid = computed(() => {
   return loginForm.usernameOrEmail && loginForm.password
 })
 
-const isRegisterValid = computed(() => {
-  return registerForm.username &&
-         registerForm.email &&
-         registerForm.nickname &&
-         registerForm.password &&
-         registerForm.confirmPassword &&
-         registerForm.verificationCode
-})
+// What this backend asks of a new account; until it answers, the form is the usual one.
+const registrationPolicy = ref(DEFAULT_REGISTRATION_POLICY)
+
+const loadRegistrationPolicy = async () => {
+  try {
+    registrationPolicy.value = normalizeRegistrationPolicy((await authAPI.getRegistrationPolicy()).data)
+  } catch {
+    registrationPolicy.value = DEFAULT_REGISTRATION_POLICY
+  }
+}
+
+const isRegisterValid = computed(() => isRegisterFormComplete(registerForm, registrationPolicy.value))
 
 const canSendCode = computed(() => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  return emailRegex.test(registerForm.email) && countdown.value === 0 && !sendingCode.value
+  return emailRegex.test(registerForm.email) && countdown.value === 0 && !sendingCode.value &&
+         (!registrationPolicy.value.inviteRequired || Boolean(registerForm.inviteCode.trim()))
 })
 
 const toggleMode = () => {
@@ -254,6 +278,7 @@ const toggleMode = () => {
     clearInterval(countdownTimer)
     countdownTimer = null
   }
+  if (!isLoginMode.value) loadRegistrationPolicy()
 }
 
 const triggerFileInput = () => {
@@ -298,7 +323,7 @@ const handleSendCode = async () => {
 
   sendingCode.value = true
   try {
-    await authAPI.sendVerificationCode(registerForm.email, 'REGISTER')
+    await authAPI.sendVerificationCode(registerForm.email, 'REGISTER', inviteForEmailCode(registerForm, registrationPolicy.value))
     ElMessage.success(t('auth.codeSent'))
     startCountdown()
   } catch (error) {
@@ -337,7 +362,7 @@ const handleRegister = async () => {
     return
   }
 
-  if (!registerForm.verificationCode) {
+  if (registrationPolicy.value.emailCodeRequired && !registerForm.verificationCode) {
     ElMessage.error(t('auth.codeRequired'))
     return
   }
@@ -345,14 +370,7 @@ const handleRegister = async () => {
   loading.value = true
   try {
     const chosenAvatar = avatarFile.value ? avatarPreview.value : null
-    await userStore.register({
-      username: registerForm.username,
-      email: registerForm.email,
-      nickname: registerForm.nickname,
-      password: registerForm.password,
-      phone: registerForm.phone || null,
-      verificationCode: registerForm.verificationCode
-    })
+    await userStore.register(registerPayload(registerForm, registrationPolicy.value))
     // Uploading needs a signed-in account, so the picture can only be sent once the
     // account exists. Sending it before registering was always refused.
     if (chosenAvatar?.startsWith('data:image/')) {

@@ -3,6 +3,7 @@ package com.nexus.chat.service;
 import com.nexus.chat.dto.AuthResponse;
 import com.nexus.chat.dto.LoginRequest;
 import com.nexus.chat.dto.RegisterRequest;
+import com.nexus.chat.dto.RegistrationPolicyResponse;
 import com.nexus.chat.exception.BusinessException;
 import com.nexus.chat.model.EmailVerificationCode.CodeType;
 import com.nexus.chat.model.User;
@@ -25,22 +26,38 @@ public class AuthService {
     private final VerificationCodeService verificationCodeService;
     private final SecurityService securityService;
     private final FileAccessService fileAccessService;
+    private final RegistrationPolicy registrationPolicy;
+
+    public RegistrationPolicyResponse registrationPolicy() {
+        return new RegistrationPolicyResponse(registrationPolicy.isInviteRequired(), registrationPolicy.isEmailCodeRequired());
+    }
+
+    /** Throws unless an email code may be sent or checked for this request. */
+    public void requireEmailCodeAllowed(String inviteCode) {
+        registrationPolicy.requireEmailCodeAllowed(inviteCode);
+    }
 
     @Transactional
     public AuthResponse register(RegisterRequest request, String ip, String userAgent) {
-        // Verify the verification code first
-        if (request.getVerificationCode() == null || request.getVerificationCode().isEmpty()) {
-            throw new BusinessException("请输入邮箱验证码");
-        }
+        // First, so a request without a usable invite learns nothing about existing accounts.
+        // Any failure below rolls this transaction back, which gives the use back.
+        registrationPolicy.consumeInvite(request.getInviteCode());
 
-        boolean codeValid = verificationCodeService.verifyCode(
-                request.getEmail(),
-                request.getVerificationCode(),
-                CodeType.REGISTER
-        );
+        if (registrationPolicy.isEmailCodeRequired()) {
+            // Verify the verification code first
+            if (request.getVerificationCode() == null || request.getVerificationCode().isEmpty()) {
+                throw new BusinessException("请输入邮箱验证码");
+            }
 
-        if (!codeValid) {
-            throw new BusinessException("验证码无效或已过期");
+            boolean codeValid = verificationCodeService.verifyCode(
+                    request.getEmail(),
+                    request.getVerificationCode(),
+                    CodeType.REGISTER
+            );
+
+            if (!codeValid) {
+                throw new BusinessException("验证码无效或已过期");
+            }
         }
 
         // Check if username already exists

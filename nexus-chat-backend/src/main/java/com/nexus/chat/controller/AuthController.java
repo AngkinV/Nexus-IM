@@ -4,8 +4,10 @@ import com.nexus.chat.dto.AuthResponse;
 import com.nexus.chat.dto.ChangePasswordRequest;
 import com.nexus.chat.dto.LoginRequest;
 import com.nexus.chat.dto.RegisterRequest;
+import com.nexus.chat.dto.RegistrationPolicyResponse;
 import com.nexus.chat.dto.SendCodeRequest;
 import com.nexus.chat.dto.VerifyCodeRequest;
+import com.nexus.chat.exception.BusinessException;
 import com.nexus.chat.model.EmailVerificationCode.CodeType;
 import com.nexus.chat.security.CurrentUser;
 import com.nexus.chat.security.JwtTokenProvider;
@@ -28,11 +30,17 @@ public class AuthController {
     private final VerificationCodeService verificationCodeService;
     private final JwtTokenProvider jwtTokenProvider;
 
+    @GetMapping("/registration-policy")
+    public RegistrationPolicyResponse registrationPolicy() {
+        return authService.registrationPolicy();
+    }
+
     @PostMapping("/send-code")
     public ResponseEntity<?> sendVerificationCode(@RequestBody SendCodeRequest request) {
         log.info("发送验证码请求: email={}, type={}", request.getEmail(), request.getType());
         try {
             CodeType type = CodeType.valueOf(request.getType().toUpperCase());
+            authService.requireEmailCodeAllowed(request.getInviteCode());
             verificationCodeService.sendVerificationCode(request.getEmail(), type);
             return ResponseEntity.ok(java.util.Map.of(
                 "message", "验证码已发送",
@@ -51,6 +59,7 @@ public class AuthController {
         log.info("验证验证码请求: email={}", request.getEmail());
         try {
             CodeType type = CodeType.valueOf(request.getType().toUpperCase());
+            authService.requireEmailCodeAllowed(request.getInviteCode());
             boolean valid = verificationCodeService.verifyCode(request.getEmail(), request.getCode(), type);
             if (valid) {
                 return ResponseEntity.ok(java.util.Map.of(
@@ -65,6 +74,8 @@ public class AuthController {
             }
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(java.util.Map.of("message", "无效的验证码类型"));
+        } catch (BusinessException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage(), "success", false));
         }
     }
 

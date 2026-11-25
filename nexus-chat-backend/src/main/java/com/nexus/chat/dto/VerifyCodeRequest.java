@@ -3,6 +3,7 @@ package com.nexus.chat.dto;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 @Data
 @NoArgsConstructor
@@ -11,4 +12,6 @@ public class VerifyCodeRequest {
     private String email;
     private String code;
     private String type; // REGISTER, RESET_PASSWORD, CHANGE_EMAIL
+    @ToString.Exclude // never logged
+    private String inviteCode;
 }

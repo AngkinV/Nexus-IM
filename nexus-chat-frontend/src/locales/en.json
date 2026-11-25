@@ -144,6 +144,7 @@
     "codeRequired": "Please enter verification code",
     "codeInvalid": "Invalid or expired verification code",
     "enterCode": "Enter 6-digit code",
+    "inviteCode": "Invite code",
     "pleaseLogin": "Please log in first",
     "setupTitle": "Your Profile",
     "setupSubtitle": "Enter your name and add a profile picture.",

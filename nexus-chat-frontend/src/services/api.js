@@ -48,8 +48,11 @@ apiClient.interceptors.response.use(
 
 // Auth API
 export const authAPI = {
-    register: ({ email, username, password, nickname, phone, avatarUrl, verificationCode }) =>
-        apiClient.post('/auth/register', { email, username, password, nickname, phone, avatarUrl, verificationCode }),
+    register: ({ email, username, password, nickname, phone, avatarUrl, verificationCode, inviteCode }) =>
+        apiClient.post('/auth/register', { email, username, password, nickname, phone, avatarUrl, verificationCode, inviteCode }),
+
+    getRegistrationPolicy: () =>
+        apiClient.get('/auth/registration-policy'),
 
     login: (usernameOrEmail, password) =>
         apiClient.post('/auth/login', { usernameOrEmail, password }),
@@ -60,8 +63,8 @@ export const authAPI = {
     changePassword: (userId, currentPassword, newPassword) =>
         apiClient.post('/auth/change-password', { currentPassword, newPassword }, { params: { userId } }),
 
-    sendVerificationCode: (email, type = 'REGISTER') =>
-        apiClient.post('/auth/send-code', { email, type }),
+    sendVerificationCode: (email, type = 'REGISTER', inviteCode) =>
+        apiClient.post('/auth/send-code', { email, type, inviteCode }),
 
     verifyCode: (email, code, type = 'REGISTER') =>
         apiClient.post('/auth/verify-code', { email, code, type })
