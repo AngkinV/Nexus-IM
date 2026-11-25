@@ -102,12 +102,14 @@ class RegistryBindingProvider:
     dedicated header is rebuilt from Java's encrypted-at-rest record. Internal
     and supplier secrets come from the trusted quarantine source, not arguments.
     """
-    def __init__(self, authority, *, allowed_origins, allow_http=False, redactor=None, forbidden_secrets=None):
+    def __init__(self, authority, *, allowed_origins, allow_http=False, any_public_origin=False,
+                 redactor=None, forbidden_secrets=None):
         self.authority = authority
         self.types = _module("types")
         self.bridge, self.network = _module("bridge"), _module("network")
         self.allowed_origins = frozenset(allowed_origins)
         self.allow_http = allow_http
+        self.any_public_origin = any_public_origin
         self.redactor, self.forbidden = redactor, forbidden_secrets
 
     async def binding(self, service, principal, context):
@@ -128,7 +130,8 @@ class RegistryBindingProvider:
                 raise self.types.SecurityViolation("HEADER_DENIED")
         # Managed UUID services are always external; no user-controlled localhost exception.
         network = self.network.NetworkPolicy(service.endpoint, external=True,
-                                             allowed_origins=self.allowed_origins, allow_http=self.allow_http)
+                                             allowed_origins=self.allowed_origins, allow_http=self.allow_http,
+                                             any_public_origin=self.any_public_origin)
         return self.bridge.MCPBinding(service, network, headers, self.redactor, self.forbidden)
 
 
@@ -321,5 +324,6 @@ def management_policy():
     network.install_log_redaction(redactor)  # Before even the signed Java registry read.
     authority = JavaMcpAuthority(redactor=redactor, forbidden_secrets=forbidden)
     bindings = RegistryBindingProvider(authority, allowed_origins=_origins(settings),
-                  allow_http=settings.mcp_allow_http, redactor=redactor, forbidden_secrets=forbidden)
+                  allow_http=settings.mcp_allow_http, any_public_origin=settings.mcp_allow_any_public_origin,
+                  redactor=redactor, forbidden_secrets=forbidden)
     return T4BPolicyAdapter(authority=authority, bindings=bindings, redactor=redactor)

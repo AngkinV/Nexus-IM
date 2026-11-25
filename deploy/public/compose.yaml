@@ -93,6 +93,8 @@ services:
       REDIS_URL: redis://:${NEXUS_REDIS_PASSWORD:?}@redis:6379/2
       # Model endpoints users enter may only resolve to public addresses (checked at connect time).
       MODEL_ENDPOINT_ALLOW_PRIVATE_NETWORK: "false"
+      # Users may add their own MCP servers: any origin, HTTPS only, public addresses only.
+      MCP_ALLOW_ANY_PUBLIC_ORIGIN: "true"
       CHROMA_PERSIST_DIR: /app/data/chroma
       CHECKPOINT_PATH: /app/data/checkpoints.sqlite
       HOME: /tmp

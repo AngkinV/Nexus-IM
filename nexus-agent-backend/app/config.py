@@ -151,6 +151,9 @@ class Settings(BaseSettings):
     # Operator-approved origins for user-managed services. Empty denies all external probes/calls.
     mcp_allowed_origins: str = "[]"
     mcp_allow_http: bool = False
+    # Accept any origin for user-managed services, as long as it resolves to public addresses only.
+    # For deployments where each user brings their own servers; off, the allowlist above decides.
+    mcp_allow_any_public_origin: bool = False
     # Longest result an external tool may hand to the model.
     mcp_external_result_max_chars: int = 8000
 
