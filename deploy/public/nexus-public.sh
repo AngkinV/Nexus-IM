@@ -62,12 +62,46 @@ secret_env() {
     done
 }
 
+# Starts the VM as a launchd job of its own, so it does not belong to whatever program ran
+# this script. Started as a child of a terminal or chat app, the VM is stopped when that
+# app quits, and the public site goes down with it.
+start_vm_detached() {
+    local lima work plist label=cn.nexus.public.vm domain="gui/$(id -u)" log="$HOME/Library/Logs/nexus-public-vm.log" i
+    lima=$(command -v limactl)
+    [[ "$lima$HOME" != *[\<\>\&]* ]] || fail '路径里有 < > & 字符，无法启动虚拟机。'
+    work=$(mktemp -d /tmp/nexus-public-vm.XXXXXX); plist="$work/$label.plist"
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key><array><string>$lima</string><string>start</string><string>$VM</string><string>--tty=false</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>AbandonProcessGroup</key><true/>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$lima"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>StandardOutPath</key><string>$log</string>
+  <key>StandardErrorPath</key><string>$log</string>
+</dict></plist>
+PLIST
+    launchctl bootout "$domain/$label" 2>/dev/null || true
+    launchctl bootstrap "$domain" "$plist" || { rm -rf "$work"; fail '虚拟机启动任务没有装上。'; }
+    rm -rf "$work"
+    printf '正在启动虚拟机…\n'
+    for i in $(seq 1 100); do
+        # "Running" is reported before the guest accepts connections; wait for the firewall unit too.
+        if [[ $(limactl list --format '{{.Status}}' "$VM" 2>/dev/null) == Running ]] \
+            && limactl shell --workdir / "$VM" -- sudo systemctl is-active --quiet nexus-guard.service 2>/dev/null; then return 0; fi
+        sleep 3
+    done
+    fail "虚拟机 5 分钟内没有启动，日志在 $log"
+}
+
 cmd=${1:-}; shift || true
 case "$cmd" in
 vm)
     command -v limactl >/dev/null 2>&1 || fail '需要先安装 Lima：brew install lima'
     limactl list -q 2>/dev/null | grep -qx "$VM" || limactl create --name "$VM" --tty=false "$here/lima.yaml"
-    [[ $(limactl list --format '{{.Status}}' "$VM") == Running ]] || limactl start "$VM" --tty=false
+    [[ $(limactl list --format '{{.Status}}' "$VM") == Running ]] || start_vm_detached
     require_vm
     printf '虚拟机已运行，防火墙已启用。\n'
     ;;
