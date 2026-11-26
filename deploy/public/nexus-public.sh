@@ -9,6 +9,8 @@
 #   bash deploy/public/nexus-public.sh summary [hours]    what reached the gateway (default 24h)
 #   bash deploy/public/nexus-public.sh backup             database dump into ~/NexusPublicBackups
 #   bash deploy/public/nexus-public.sh reset              delete ALL public data (asks for confirmation)
+#   bash deploy/public/nexus-public.sh schedule on|off|status   daily backup + summary at 09:00 (a launchd job)
+#   bash deploy/public/nexus-public.sh daily              what that job runs: backup, keep the newest 14, summary
 #
 # It never touches the local development setup: different ports, its own database, its own
 # secrets (macOS Keychain service "nexus-public"), and images built from a commit, not from
@@ -25,6 +27,10 @@ repo=$(cd "$here/../.." && pwd)
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 vm() { limactl shell --workdir / "$VM" -- sudo "$@"; }
 container() { printf 'nexus-public-%s-1' "$1"; }
+LABEL=cn.nexus.public.daily
+BACKUPS="$HOME/NexusPublicBackups"
+# The text goes in as an argument, never into the AppleScript source.
+notify() { /usr/bin/osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "Nexus 公网环境"' -e 'end run' "$1" >/dev/null 2>&1 || true; }
 
 require_vm() {
     command -v limactl >/dev/null 2>&1 || fail '需要先安装 Lima：brew install lima'
@@ -157,12 +163,64 @@ if probes: print("  被拒绝最多的路径: " + "，".join("%s×%d" % (json.du
 backup)
     require_vm
     umask 077
-    mkdir -p "$HOME/NexusPublicBackups"
-    target="$HOME/NexusPublicBackups/nexus_chat-$(date +%Y%m%d-%H%M%S).sql.gz"
-    vm docker exec "$(container mysql)" sh -c 'exec mysqldump --no-tablespaces --single-transaction -unexus -p"$MYSQL_PASSWORD" nexus_chat 2>/dev/null' | gzip > "$target.part"
+    mkdir -p "$BACKUPS"
+    target="$BACKUPS/nexus_chat-$(date +%Y%m%d-%H%M%S).sql.gz"
+    vm docker exec "$(container mysql)" sh -c 'exec mysqldump --no-tablespaces --single-transaction -unexus -p"$MYSQL_PASSWORD" nexus_chat 2>/dev/null' | gzip > "$target.part" || true
+    # A failed dump must reach the check below, not end the script with a stray .part file.
     gzip -t "$target.part" && [[ $(gzip -dc "$target.part" | tail -c 200 | grep -c 'Dump completed') == 1 ]] || { rm -f "$target.part"; fail '备份不完整，已删除。'; }
     mv "$target.part" "$target"
     printf '数据库已备份到 %s（不含上传的文件）。\n' "$target"
+    ;;
+daily)
+    # Run by launchd once a day (see: schedule). Says nothing while the VM is switched off.
+    printf '== %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    command -v limactl >/dev/null 2>&1 || fail '找不到 limactl。'
+    [[ $(limactl list --format '{{.Status}}' "$VM" 2>/dev/null) == Running ]] || { printf '虚拟机没有运行，跳过。\n'; exit 0; }
+    if ! bash "$here/nexus-public.sh" backup; then
+        notify '每日备份失败：公网环境可能没有运行，执行 status 查看。'
+        exit 1
+    fi
+    # Only this script writes files with this name pattern; keep the newest 14.
+    ls -1t "$BACKUPS"/nexus_chat-*.sql.gz 2>/dev/null | tail -n +15 | while IFS= read -r old; do rm -f "$old"; done
+    text=$(bash "$here/nexus-public.sh" summary 24)
+    printf '%s\n' "$text"
+    # Lines 1 and 3 are counts only; the lines that quote visitor addresses stay in the log file.
+    notify "$(printf '%s\n' "$text" | sed -n '1p;3p' | sed 's/^ *//' | paste -sd '；' -)"
+    ;;
+schedule)
+    plist="$HOME/Library/LaunchAgents/$LABEL.plist"; domain="gui/$(id -u)"
+    case "${1:-status}" in
+    on)
+        lima=$(command -v limactl) || fail '需要先安装 Lima：brew install lima'
+        [[ "$here$lima$HOME" != *[\<\>\&]* ]] || fail '路径里有 < > & 字符，无法写入计划任务。'
+        umask 077; mkdir -p "$HOME/Library/LaunchAgents" "$BACKUPS"
+        cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$here/nexus-public.sh</string><string>daily</string></array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(dirname "$lima"):/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>StandardOutPath</key><string>$BACKUPS/daily.log</string>
+  <key>StandardErrorPath</key><string>$BACKUPS/daily.log</string>
+</dict></plist>
+PLIST
+        /usr/bin/plutil -lint "$plist" >/dev/null || { rm -f "$plist"; fail '计划任务文件格式不对，未启用。'; }
+        launchctl bootout "$domain/$LABEL" 2>/dev/null || true
+        launchctl bootstrap "$domain" "$plist" || { rm -f "$plist"; fail '计划任务没有装上。'; }
+        printf '已启用：每天 09:00 备份数据库并发一条摘要通知（电脑当时在睡眠就等唤醒后补做）。\n记录在 %s/daily.log，关闭用 schedule off。\n' "$BACKUPS"
+        ;;
+    off)
+        launchctl bootout "$domain/$LABEL" 2>/dev/null || true
+        rm -f "$plist"
+        printf '已关闭每日任务。已有的备份没有动。\n'
+        ;;
+    status)
+        if launchctl print "$domain/$LABEL" >/dev/null 2>&1; then printf '每日任务：已启用（09:00）\n'; else printf '每日任务：未启用\n'; fi
+        ;;
+    *) fail "用法: bash $0 schedule on|off|status" ;;
+    esac
     ;;
 reset)
     require_vm
@@ -175,7 +233,7 @@ reset)
     printf '已清空并停止。执行 up 重新启动（密钥仍用钥匙串里原有的）。\n'
     ;;
 *)
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac
