@@ -55,14 +55,15 @@ import static org.mockito.Mockito.mock;
  * without the security chain, where only the endpoints' own check can refuse.
  */
 class OriginPolicyTest {
-    private static final String QODER = "https://nexus-chat-2026-fwohlcnoevd.qoder.zone";
+    private static final String QODER = "https://nexus-im-web-2026-fwohlcnoevd.qoder.zone";
     private static final List<String> LOCAL_CLIENTS = List.of("http://localhost:5173", "http://localhost:3000", "http://localhost:5174",
             "http://127.0.0.1:5173", "app://nexus-chat");
     private static final List<String> BUILT_IN = List.of("http://localhost:5173", "http://localhost:3000", "http://localhost:5174",
             "http://127.0.0.1:5173", "https://chat.angkin.cn", "https://www.angkin.cn",
             "https://nexus-chat-fwohlcnoevd.qoder.zone", "app://nexus-chat");
     private static final List<String> UNKNOWN = List.of("https://evil.example", QODER + ".evil.example",
-            "http://nexus-chat-2026-fwohlcnoevd.qoder.zone", "https://other-site.qoder.zone",
+            "http://nexus-im-web-2026-fwohlcnoevd.qoder.zone", "https://other-site.qoder.zone",
+            "https://nexus-chat-2026-fwohlcnoevd.qoder.zone",
             "https://angkin.cn.evil.example", "http://localhost.evil.example:5173");
     private static final HttpClient HTTP = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
 

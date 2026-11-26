@@ -145,7 +145,7 @@ test('spoofed forwarding prefix, identity and connection-nominated headers are r
 
 test('unexpected Origins are refused for HTTP and WebSocket without reaching the backend', async () => {
   const count = received.length
-  for (const origin of ['https://evil.example', PUBLIC_ORIGIN + '.evil.example', 'null', 'http://localhost:5173', 'app://nexus-chat']) {
+  for (const origin of ['https://evil.example', 'https://nexus-chat-2026-fwohlcnoevd.qoder.zone', PUBLIC_ORIGIN + '.evil.example', 'null', 'http://localhost:5173', 'app://nexus-chat']) {
     assert.equal((await rawRequest(base, '/api/users/7', { headers: { Origin: origin } })).status, 403)
     assert.equal((await rawRequest(base, '/ws-native', { headers: upgradeHeaders(origin) })).status, 403)
   }
