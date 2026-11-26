@@ -36,6 +36,7 @@
 - [7. 职责分工对比](#comparison)
 - [8. 建议的阅读顺序](#reading-order)
 - [9. 项目边界与红线](docs/BOUNDARIES.md)
+- [10. 公网环境：运行、迭代与扩展边界](docs/PUBLIC-OPERATIONS.md)
 
 本文保留四模块原有说明，并整合以下历史来源的独有信息：`nexus-chat-backend/README.md`、`nexus-chat-backend/PROJECT_OVERVIEW.md`、`nexus-chat-frontend/README.md`、`nexus-chat-frontend/PROJECT_OVERVIEW.md`。这些路径仅记录合并来源，不再作为文档入口。Agent、Flutter、IM 计划、平台资源与技能文档仍各自保留。
 
