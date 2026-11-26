@@ -7,7 +7,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class AllowedOriginsTest {
-    private static final String QODER = "https://nexus-chat-2026-fwohlcnoevd.qoder.zone";
+    private static final String QODER = "https://nexus-im-web-2026-fwohlcnoevd.qoder.zone";
     private static final List<String> BUILT_IN = List.of("http://localhost:*", "http://127.0.0.1:*", "https://chat.angkin.cn",
             "https://*.angkin.cn", "https://nexus-chat-fwohlcnoevd.qoder.zone", QODER, "app://*");
 

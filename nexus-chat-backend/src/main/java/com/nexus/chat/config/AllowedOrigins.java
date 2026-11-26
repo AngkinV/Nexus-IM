@@ -27,7 +27,7 @@ public class AllowedOrigins {
             "https://chat.angkin.cn",
             "https://*.angkin.cn",
             "https://nexus-chat-fwohlcnoevd.qoder.zone",
-            "https://nexus-chat-2026-fwohlcnoevd.qoder.zone",
+            "https://nexus-im-web-2026-fwohlcnoevd.qoder.zone",
             "app://*"
     );
 

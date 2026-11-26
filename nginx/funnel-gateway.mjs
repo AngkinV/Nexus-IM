@@ -2,7 +2,7 @@ import http from 'node:http'
 import net from 'node:net'
 import { pathToFileURL } from 'node:url'
 
-export const PUBLIC_ORIGIN = 'https://nexus-chat-2026-fwohlcnoevd.qoder.zone'
+export const PUBLIC_ORIGIN = 'https://nexus-im-web-2026-fwohlcnoevd.qoder.zone'
 const POLICY_VERSION = 'nexus-funnel-v2'
 const BACKEND_ORIGINS = new Set([PUBLIC_ORIGIN, 'http://localhost:*', 'http://127.0.0.1:*', 'app://*'])
 const API_GROUPS = new Set(['auth', 'users', 'contacts', 'groups', 'chats', 'messages', 'files', 'posts', 'sync', 'companion', 'agent', 'tavern'])

@@ -11,7 +11,7 @@ shows up as a failed control. Exit code 0 only if every check passed.
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 
 BASE = 'http://127.0.0.1:18080'
-ORIGIN = 'https://nexus-chat-2026-fwohlcnoevd.qoder.zone'
+ORIGIN = 'https://nexus-im-web-2026-fwohlcnoevd.qoder.zone'
 HERE = os.path.dirname(os.path.abspath(__file__))
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 RESULTS = []

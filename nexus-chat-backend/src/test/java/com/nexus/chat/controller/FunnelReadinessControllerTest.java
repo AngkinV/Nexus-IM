@@ -11,7 +11,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class FunnelReadinessControllerTest {
-    private static final String ORIGIN = "https://nexus-chat-2026-fwohlcnoevd.qoder.zone";
+    private static final String ORIGIN = "https://nexus-im-web-2026-fwohlcnoevd.qoder.zone";
 
     private MockMvc mvc(String address, String exclusive) {
         MockEnvironment environment = new MockEnvironment().withProperty("server.address", address)
