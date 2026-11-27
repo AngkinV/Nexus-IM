@@ -56,7 +56,7 @@ async function api(f) {
 }
 async function ws(f) {
     return (await load('../services/websocket.js', f, {
-        '@stomp/stompjs': 'const Client = class { activate() { f.transports++ } }',
+        '@stomp/stompjs': 'const Client = class { constructor(options) { f.wsOptions = options } activate() { f.transports++ } deactivate() { f.deactivations = (f.deactivations || 0) + 1 } }',
         'sockjs-client': 'const SockJS = class { constructor() { f.transports++ } }',
         '@/stores/user': 'const useUserStore = () => f.user',
         '@/stores/chat': 'const useChatStore = () => f.chat',
@@ -193,4 +193,40 @@ test('known-expired WS connect/reconnect never activates transport', async () =>
     service.attemptReconnect(1)
     assert.equal(f.transports, 0); assert.equal(service.reconnectTimer, null)
     assert.equal(f.clearCalls, 0)
+})
+
+test('a factor challenge leaves the existing account untouched and a completed factor reaches the real API', async () => {
+    const f = await setup(); f.persist(future); f.user.loadUserFromStorage()
+    const before = new Map(f.memory)
+    f.authAPI.login = async () => { throw { response: { data: { message: 'error.auth.2fa.required' } } } }
+    await assert.rejects(f.user.login('fixture', 'unit-only'), message => message === 'error.auth.2fa.required')
+    assert.equal(f.user.token, future); assert.equal(f.user.currentUser.id, 1)
+    assert.deepEqual(f.memory, before)
+    let args
+    f.authAPI.login = async (...values) => { args = values; return { data: { token: 'factor-complete-fixture', userId: 1, username: 'fixture' } } }
+    await f.user.login('fixture', 'unit-only', '123456')
+    assert.deepEqual(args, ['fixture', 'unit-only', '123456'])
+    assert.equal(f.memory.get('token'), 'factor-complete-fixture')
+})
+
+test('a server disconnect expires this session immediately without reconnecting or clearing drafts', async () => {
+    const f = await setup(); f.persist(future); f.user.loadUserFromStorage()
+    const service = await ws(f); service.connect(1)
+    assert.equal(f.transports, 2)
+    f.wsOptions.onWebSocketClose({ code: 4001, reason: 'new_login' })
+    assert.equal(f.user.isLoggedIn, false)
+    assert.equal(service.client, null); assert.equal(service.reconnectTimer, null)
+    assert.equal(f.navigations, 1)
+    assert.equal(f.memory.size, 3); assert.equal(f.clearCalls, 0); assert.equal(f.resetCalls, 0)
+})
+
+test('an old socket close does not expire a newer token for the same account', async () => {
+    const f = await setup(); f.persist(future); f.user.loadUserFromStorage()
+    const service = await ws(f); service.connect(1)
+    const old = f.wsOptions
+    f.next = 'newer-session-fixture'; await f.user.login('fixture', 'unit-only')
+    old.onWebSocketClose({ code: 4001, reason: 'password_changed' })
+    assert.equal(f.user.token, 'newer-session-fixture')
+    assert.equal(f.user.isLoggedIn, true); assert.equal(f.navigations, 0)
+    service.disconnect()
 })

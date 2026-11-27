@@ -30,6 +30,14 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
      */
     boolean existsBySessionToken(String sessionToken);
 
+    /** Public validity is owner + expiry + one live session, never the UI's mutable isCurrent flag. */
+    @Query("SELECT COUNT(s) > 0 FROM UserSession s WHERE s.userId = :userId "
+            + "AND s.sessionToken = :token AND s.expiresAt > :now "
+            + "AND (:singleSession = false OR NOT EXISTS (SELECT otherSession.id FROM UserSession otherSession "
+            + "WHERE otherSession.userId = :userId AND otherSession.sessionToken <> :token AND otherSession.expiresAt > :now))")
+    boolean isActiveSession(@Param("userId") Long userId, @Param("token") String token,
+                            @Param("now") LocalDateTime now, @Param("singleSession") boolean singleSession);
+
     /**
      * Find current session for a user
      */

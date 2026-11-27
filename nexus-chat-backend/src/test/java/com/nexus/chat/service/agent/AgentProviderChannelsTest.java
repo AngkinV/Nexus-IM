@@ -30,7 +30,8 @@ class AgentProviderChannelsTest {
     private final ModelCredentialRepository repo = mock(ModelCredentialRepository.class);
     private final CompanionCryptoService crypto = mock(CompanionCryptoService.class);
     private final AgentProviderService service = new AgentProviderService(
-            repo, crypto, new ObjectMapper(), mock(ModelEndpointGuard.class), mock(PythonModelGateway.class));
+            repo, crypto, new ObjectMapper(), mock(ModelEndpointGuard.class), mock(PythonModelGateway.class),
+            new com.nexus.chat.util.CredentialAddressPolicy(false));
     private long nextId = 1;
 
     @BeforeEach void table() {

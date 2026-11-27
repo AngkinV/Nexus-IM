@@ -13,6 +13,7 @@ import { playMessageSound, playSendSound, playErrorSound } from '@/utils/uiSound
 import { resolveFileUrl } from '@/services/api'
 import { WS_URL } from '@/services/runtimeConfig'
 import i18n from '@/locales/i18n'
+import { rememberSignOut, signOutMessageKey } from '@/utils/loginSecurity.js'
 
 /**
  * Call signaling message types
@@ -105,7 +106,8 @@ class WebSocketService {
         if (this.client) this.disconnect()
         this.forcedLogout = false
         const generation = ++this.generation
-        const current = () => generation === this.generation && sameId(useUserStore().currentUser?.id, userId)
+        const current = () => generation === this.generation && sameId(useUserStore().currentUser?.id, userId) &&
+            localStorage.getItem('token') === token && useUserStore().token === token
         this.currentUserId = userId
         this.stopOwnerWatch = watch(() => useUserStore().currentUser?.id, owner => {
             if (!sameId(owner, userId)) this.disconnect()
@@ -116,6 +118,7 @@ class WebSocketService {
 
         // Get JWT token for authentication
         const token = localStorage.getItem('token')
+        const authSession = useUserStore().captureSession()
 
         this.client = new Client({
             webSocketFactory: () => socket,
@@ -160,8 +163,10 @@ class WebSocketService {
                 useConnectionStore().markConnecting()
             },
 
-            onWebSocketClose: () => {
+            onWebSocketClose: (event) => {
                 if (!current()) return
+                if (event?.code === 4001 && signOutMessageKey(event.reason) &&
+                    this.endRevokedSession(token, authSession, event.reason)) return
                 useContactStore().invalidatePresence()
                 console.log('WebSocket closed')
                 this.connected = false
@@ -523,14 +528,16 @@ class WebSocketService {
         if (!mySid || !targets.includes(mySid)) return // not this device
 
         console.warn('This device was signed out remotely')
+        this.endRevokedSession(token, useUserStore().captureSession(), data.payload?.reason || 'session_revoked')
+    }
+
+    endRevokedSession(token, expectedSession, reason) {
+        if (!useUserStore().expireSession(token, expectedSession)) return false
         this.forcedLogout = true
-        localStorage.removeItem('token')
-        localStorage.removeItem('user')
-        try { this.disconnect() } catch (e) { /* ignore */ }
-        const here = window.location.hash || window.location.pathname
-        if (!String(here).includes('/login')) {
-            window.location.reload()
-        }
+        rememberSignOut(reason)
+        try { this.disconnect() } catch { /* transport is already closing */ }
+        navigateToLogin()
+        return true
     }
 
     /**

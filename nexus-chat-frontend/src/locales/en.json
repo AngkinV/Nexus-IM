@@ -150,7 +150,18 @@
     "setupSubtitle": "Enter your name and add a profile picture.",
     "setupAddPhoto": "Add Profile Photo",
     "setupNamePlaceholder": "Your Name (required)",
-    "setupName": "Name"
+    "setupName": "Name",
+    "twoFactorCode": "Authenticator code or recovery code",
+    "twoFactorPlaceholder": "6-digit code or one-time recovery code",
+    "twoFactorHelp": "Two-step verification is enabled. Enter a code from your authenticator, or an unused recovery code.",
+    "twoFactorRequired": "Your password was verified. Complete two-step verification to sign in.",
+    "twoFactorInvalid": "The authenticator or recovery code is incorrect. Check it and try again.",
+    "twoFactorUsed": "This code was already used. Wait for a new authenticator code, or use an unused recovery code.",
+    "twoFactorNotReady": "This account has incomplete two-step verification settings. Contact the maintainer before signing in.",
+    "loginLocked": "Too many failed verification attempts. Try again later; the active session is not affected.",
+    "signedInElsewhere": "This account signed in on another device. You were signed out here; sign in again.",
+    "passwordChangedElsewhere": "The account password changed. You were signed out here; sign in with the new password.",
+    "sessionRevoked": "This device’s sign-in session ended. Sign in again."
   },
   "chat": {
     "newChat": "New Chat",
@@ -1218,7 +1229,8 @@
       "testSuccessTitle": "{name}: connection successful",
       "testFailureTitle": "{name}: connection failed",
       "testRequestFailed": "Could not complete the connection test. Check the endpoint, network and model settings, then retry.",
-      "testEmbeddingDimension": "Embedding dimension: {dimension}"
+      "testEmbeddingDimension": "Embedding dimension: {dimension}",
+      "keyRequiredForNewAddress": "The service address changed. Enter the API key again before saving; the saved address and key have not changed."
     },
     "knowledge": {
       "title": "Knowledge bases",

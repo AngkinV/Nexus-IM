@@ -41,8 +41,14 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             handleConnect(accessor);
         } else if (StompCommand.DISCONNECT.equals(accessor.getCommand())) {
             handleDisconnect(accessor);
-        } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand()) || StompCommand.SEND.equals(accessor.getCommand())) {
-            authorizeDestination(accessor);
+        } else {
+            if (sessionRegistry.enforced() && !sessionRegistry.isSessionAuthorized(accessor.getSessionId())) {
+                sessionRegistry.closeSession(accessor.getSessionId(), "session_revoked");
+                throw new MessageDeliveryException("Session revoked");
+            }
+            if (StompCommand.SUBSCRIBE.equals(accessor.getCommand()) || StompCommand.SEND.equals(accessor.getCommand())) {
+                authorizeDestination(accessor);
+            }
         }
 
         return message;
@@ -68,9 +74,15 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         accessor.setUser(new StompPrincipal(String.valueOf(userId)));
         log.info("WebSocket JWT 认证成功: userId={}", userId);
 
-        // Register session in distributed registry
-        sessionRegistry.registerSession(userId, accessor.getSessionId());
-        presenceService.userConnected(userId, accessor.getSessionId());
+        if (sessionRegistry.enforced()) {
+            sessionRegistry.registerAuthenticatedSession(userId, accessor.getSessionId(), sid,
+                    jwtTokenProvider.getExpirationFromToken(token),
+                    () -> presenceService.userConnected(userId, accessor.getSessionId()));
+        } else {
+            // Preserve the legacy/local multi-device handshake.
+            sessionRegistry.registerSession(userId, accessor.getSessionId());
+            presenceService.userConnected(userId, accessor.getSessionId());
+        }
     }
 
     private void authorizeDestination(StompHeaderAccessor accessor) {

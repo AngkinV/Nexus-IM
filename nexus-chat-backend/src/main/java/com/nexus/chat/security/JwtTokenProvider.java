@@ -81,6 +81,11 @@ public class JwtTokenProvider {
         return claims.getSubject();
     }
 
+    public java.time.Instant getExpirationFromToken(String token) {
+        Claims claims = Jwts.parser().verifyWith(getSigningKey()).build().parseSignedClaims(token).getPayload();
+        return claims.getExpiration() == null ? null : claims.getExpiration().toInstant();
+    }
+
     public boolean validateToken(String token) {
         try {
             Jwts.parser()

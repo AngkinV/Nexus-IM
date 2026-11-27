@@ -27,7 +27,8 @@ class McpManagementStoreTest {
     private final ObjectMapper json = new ObjectMapper();
     private final McpServerRepository repository = mock(McpServerRepository.class);
     private final McpCredentialCrypto crypto = new McpCredentialCrypto(Base64.getEncoder().encodeToString(new byte[32]));
-    private final McpManagementStore store = new McpManagementStore(repository, json, crypto);
+    private final McpManagementStore store = new McpManagementStore(repository, json, crypto,
+            new com.nexus.chat.util.CredentialAddressPolicy(false));
     private final Map<String, McpServerEntity> rows = new HashMap<>();
 
     McpManagementStoreTest() {

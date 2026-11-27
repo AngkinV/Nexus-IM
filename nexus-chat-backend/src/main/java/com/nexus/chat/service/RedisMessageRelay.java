@@ -1,5 +1,8 @@
 package com.nexus.chat.service;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.nexus.chat.dto.WebSocketMessage;
+import com.nexus.chat.util.TrustedLogoutNotice;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -15,6 +18,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -36,6 +40,7 @@ public class RedisMessageRelay implements MessageListener {
     private final RedisCacheService redisCacheService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SimpUserRegistry userRegistry;
+    private final WebSocketSessionRegistry sessionRegistry;
 
     private static final String BROADCAST_CHANNEL = "ws:broadcast";
     private final String instanceId = UUID.randomUUID().toString().substring(0, 8);
@@ -89,6 +94,38 @@ public class RedisMessageRelay implements MessageListener {
         }
     }
 
+    /** A trusted server notice is the only frame allowed through after a login session is revoked. */
+    public void sendLogoutNotice(Long targetUserId, String destination, WebSocketMessage payload) {
+        if (userRegistry.getUser(String.valueOf(targetUserId)) != null) {
+            messagingTemplate.convertAndSend(destination, payload, TrustedLogoutNotice.headers());
+        }
+        publishControl("logout_notice", targetUserId, destination, payload, null, null);
+    }
+
+    /** Always broadcast revocation, even when this instance also has a local connection. */
+    public void revokeSessions(Long targetUserId, List<String> tokens, String reason) {
+        sessionRegistry.closeLoginSessions(targetUserId, tokens, reason);
+        publishControl("session_revocation", targetUserId, null, null, tokens, reason);
+    }
+
+    private void publishControl(String kind, Long userId, String destination, Object payload,
+                                List<String> tokens, String reason) {
+        try {
+            ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+            RelayMessage relay = new RelayMessage();
+            relay.setOriginInstance(instanceId);
+            relay.setTargetUserId(userId);
+            relay.setKind(kind);
+            relay.setDestination(destination);
+            if (payload != null) relay.setPayload(mapper.writeValueAsString(payload));
+            relay.setSessionTokens(tokens);
+            relay.setReason(reason);
+            redisCacheService.publishMessage(BROADCAST_CHANNEL, mapper.writeValueAsString(relay));
+        } catch (RuntimeException | JsonProcessingException unavailable) {
+            log.warn("[Relay] Could not publish a session control ({})", unavailable.getClass().getSimpleName());
+        }
+    }
+
     /**
      * Redis message listener callback.
      * Called when any instance publishes to ws:broadcast.
@@ -107,6 +144,17 @@ public class RedisMessageRelay implements MessageListener {
                 return;
             }
 
+            if ("session_revocation".equals(relayMsg.getKind())) {
+                sessionRegistry.closeLoginSessions(relayMsg.getTargetUserId(), relayMsg.getSessionTokens(), relayMsg.getReason());
+                return;
+            }
+            if ("logout_notice".equals(relayMsg.getKind())) {
+                if (userRegistry.getUser(String.valueOf(relayMsg.getTargetUserId())) != null) {
+                    messagingTemplate.convertAndSend(relayMsg.getDestination(), relayMsg.getPayload(), TrustedLogoutNotice.headers());
+                }
+                return;
+            }
+
             // Check if the target user is connected to THIS instance
             String userIdStr = String.valueOf(relayMsg.getTargetUserId());
             if (userRegistry.getUser(userIdStr) != null) {
@@ -116,7 +164,7 @@ public class RedisMessageRelay implements MessageListener {
                         relayMsg.getTargetUserId(), instanceId);
             }
         } catch (Exception e) {
-            log.error("[Relay] Failed to process relayed message", e);
+            log.error("[Relay] Failed to process relayed message ({})", e.getClass().getSimpleName());
         }
     }
 
@@ -133,5 +181,12 @@ public class RedisMessageRelay implements MessageListener {
         private Long targetUserId;
         private String destination;
         private String payload;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String kind;
+        @lombok.ToString.Exclude
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private List<String> sessionTokens;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String reason;
     }
 }

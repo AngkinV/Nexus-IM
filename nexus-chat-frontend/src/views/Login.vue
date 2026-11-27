@@ -39,8 +39,11 @@
 
         <!-- Login Form -->
         <div v-if="isLoginMode" class="input-group">
+          <p v-if="signOutMessage" role="alert" class="login-feedback">{{ $t(signOutMessage) }}</p>
           <el-input
             v-model="loginForm.usernameOrEmail"
+            autocomplete="username"
+            :disabled="loading"
             :placeholder="$t('auth.usernameOrEmail')"
             size="large"
             class="custom-input"
@@ -52,6 +55,8 @@
           </el-input>
           <el-input
             v-model="loginForm.password"
+            autocomplete="current-password"
+            :disabled="loading"
             :placeholder="$t('auth.password')"
             size="large"
             type="password"
@@ -63,6 +68,18 @@
               <el-icon><Lock /></el-icon>
             </template>
           </el-input>
+          <div v-if="secondFactorRequired" class="second-factor mt-3">
+            <label for="login-second-factor">{{ $t('auth.twoFactorCode') }}</label>
+            <el-input
+              id="login-second-factor" ref="factorInput" v-model="loginForm.twoFactorCode"
+              size="large" class="custom-input mt-3" maxlength="32"
+              autocomplete="one-time-code" :disabled="loading"
+              :placeholder="$t('auth.twoFactorPlaceholder')"
+              aria-describedby="login-factor-help" @keyup.enter="handleLogin"
+            ><template #prefix><el-icon><Key /></el-icon></template></el-input>
+            <p id="login-factor-help">{{ $t('auth.twoFactorHelp') }}</p>
+          </div>
+          <p v-if="loginError" role="alert" class="login-feedback">{{ $t(loginError) }}</p>
         </div>
 
         <!-- Register Form -->
@@ -200,7 +217,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onUnmounted } from 'vue'
+import { ref, computed, reactive, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { loginDestination } from '@/router/navigation'
 import { useI18n } from 'vue-i18n'
@@ -211,6 +228,7 @@ import {
 } from '@/services/registrationPolicy'
 import { Camera, User, Lock, Message, Iphone, Postcard, Key, Ticket } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { needsSecondFactor, loginErrorKey, takeSignOutMessage } from '@/utils/loginSecurity.js'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -228,7 +246,8 @@ let countdownTimer = null
 
 const loginForm = reactive({
   usernameOrEmail: '',
-  password: ''
+  password: '',
+  twoFactorCode: ''
 })
 
 const registerForm = reactive({
@@ -242,9 +261,17 @@ const registerForm = reactive({
   inviteCode: ''
 })
 
-const isLoginValid = computed(() => {
-  return loginForm.usernameOrEmail && loginForm.password
-})
+const secondFactorRequired = ref(false)
+const factorInput = ref(null)
+const loginError = ref('')
+const signOutMessage = ref(takeSignOutMessage())
+watch([() => loginForm.usernameOrEmail, () => loginForm.password], () => {
+  secondFactorRequired.value = false
+  loginForm.twoFactorCode = ''
+  loginError.value = ''
+}, { flush: 'sync' })
+const isLoginValid = computed(() => Boolean(loginForm.usernameOrEmail && loginForm.password &&
+  (!secondFactorRequired.value || loginForm.twoFactorCode.trim())))
 
 // What this backend asks of a new account; until it answers, the form is the usual one.
 const registrationPolicy = ref(DEFAULT_REGISTRATION_POLICY)
@@ -266,6 +293,11 @@ const canSendCode = computed(() => {
 })
 
 const toggleMode = () => {
+  if (loading.value) return
+  loginError.value = ''
+  signOutMessage.value = null
+  secondFactorRequired.value = false
+  loginForm.twoFactorCode = ''
   isLoginMode.value = !isLoginMode.value
   // Reset forms
   loginForm.usernameOrEmail = ''
@@ -334,16 +366,27 @@ const handleSendCode = async () => {
 }
 
 const handleLogin = async () => {
-  if (!isLoginValid.value) return
+  if (!isLoginValid.value || loading.value) return
 
   loading.value = true
+  loginError.value = ''
+  let focusFactor = false
   try {
-    await userStore.login(loginForm.usernameOrEmail, loginForm.password)
+    await userStore.login(loginForm.usernameOrEmail, loginForm.password, loginForm.twoFactorCode.trim())
     if (route.name === 'Login') await router.replace(loginDestination(router, route.query))
   } catch (error) {
-    ElMessage.error(error || t('auth.loginFailed'))
+    loginError.value = loginErrorKey(error)
+    if (needsSecondFactor(error)) {
+      secondFactorRequired.value = true
+      loginForm.twoFactorCode = ''
+      focusFactor = true
+    } else ElMessage.error(t(loginError.value))
   } finally {
     loading.value = false
+    if (focusFactor) {
+      await nextTick()
+      factorInput.value?.focus()
+    }
   }
 }
 
@@ -394,6 +437,8 @@ const handleRegister = async () => {
 }
 
 onUnmounted(() => {
+  loginForm.password = ''
+  loginForm.twoFactorCode = ''
   if (countdownTimer) {
     clearInterval(countdownTimer)
   }
@@ -568,6 +613,11 @@ p {
 .toggle-mode a:hover {
   text-decoration: underline;
 }
+
+.second-factor, .login-feedback { text-align: left; }
+.second-factor label { color: var(--tg-text-primary, #e4e1e6); font-size: 14px; }
+.second-factor p, .login-feedback { line-height: 1.6; overflow-wrap: anywhere; }
+.login-feedback { color: var(--tg-text-primary, #e4e1e6); }
 
 /* Scrollbar styling for the card */
 .login-card::-webkit-scrollbar {

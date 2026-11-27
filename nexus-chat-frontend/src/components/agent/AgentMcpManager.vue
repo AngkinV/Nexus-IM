@@ -103,7 +103,7 @@ const serviceLabel = id => workspace.mcp.servers.find(server => server.serverId 
 const editableTools = computed(() => workspace.mcp.catalogs[form.serverId]?.configVersion === form.configVersion ? workspace.mcp.catalogs[form.serverId].tools : [])
 let epoch = 0, returnFocus = null
 const catalog = server => workspace.mcp.catalogs[server.serverId]?.configVersion === server.configVersion ? workspace.mcp.catalogs[server.serverId] : null
-const errorLabel = code => t(code === 'MCP_CONFLICT' ? 'mcp.conflict' : code === 'MCP_STALE' ? 'mcp.stale' : code === 'MCP_PROBE_FAILED' ? 'mcp.probeFailed' : 'mcp.unavailable')
+const errorLabel = code => t(code === 'MCP_CREDENTIAL_REQUIRED' ? 'mcp.credentialRequired' : code === 'MCP_CONFLICT' ? 'mcp.conflict' : code === 'MCP_STALE' ? 'mcp.stale' : code === 'MCP_PROBE_FAILED' ? 'mcp.probeFailed' : 'mcp.unavailable')
 function cancelEdit() { clearMcpCredential(form); editing.value = false }
 function close(value = false) { ++epoch; busy.value = false; cancelEdit(); feedback.value = ''; emit('update:modelValue', value) }
 function restoreFocus() { if (returnFocus?.isConnected) returnFocus.focus(); returnFocus = null }

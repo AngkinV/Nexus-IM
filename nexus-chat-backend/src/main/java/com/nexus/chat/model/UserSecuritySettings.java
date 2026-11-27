@@ -26,11 +26,17 @@ public class UserSecuritySettings {
     @Column(name = "two_factor_enabled")
     private Boolean twoFactorEnabled = false;
 
+    @lombok.ToString.Exclude
     @Column(name = "two_factor_secret")
     private String twoFactorSecret;
 
+    @lombok.ToString.Exclude
     @Column(name = "backup_codes", columnDefinition = "TEXT")
     private String backupCodes;
+
+    /** Highest TOTP step accepted for public authentication; prevents replay in the drift window. */
+    @Column(name = "last_accepted_totp_step")
+    private Long lastAcceptedTotpStep;
 
     @Column(name = "password_changed_at")
     private LocalDateTime passwordChangedAt;

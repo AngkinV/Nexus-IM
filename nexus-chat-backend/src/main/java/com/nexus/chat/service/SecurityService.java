@@ -21,6 +21,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -39,7 +41,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @org.springframework.beans.factory.annotation.Autowired)
 public class SecurityService {
 
     private static final int SESSION_TTL_DAYS = 30;
@@ -50,6 +52,16 @@ public class SecurityService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RedisMessageRelay messageRelay;
+    private final PublicAuthPolicy authPolicy;
+    private final LoginAuditService loginAudit;
+
+    /** Existing direct callers keep local defaults; Spring supplies the public policy. */
+    public SecurityService(UserSessionRepository sessions, LoginHistoryRepository history,
+                           UserSecuritySettingsRepository settings, UserRepository users,
+                           PasswordEncoder passwords, RedisMessageRelay relay) {
+        this(sessions, history, settings, users, passwords, relay,
+                new PublicAuthPolicy(false, false), new LoginAuditService(history));
+    }
 
     // ---------------------------------------------------------------------
     // Login audit
@@ -67,10 +79,19 @@ public class SecurityService {
         UserAgentParser.Result ua = UserAgentParser.parse(userAgent);
         String location = resolveLocation(ip);
 
-        // The freshest login becomes the only "current" session.
-        sessionRepository.clearCurrentSession(userId);
-
-        UserSession session = findMatchingSession(userId, ua, ip);
+        List<String> revokedTokens = List.of();
+        UserSession session;
+        if (authPolicy.singleSession()) {
+            lockSecurityUser(userId);
+            List<UserSession> previous = sessionRepository.findByUserIdOrderByLastActiveDesc(userId);
+            revokedTokens = previous.stream().map(UserSession::getSessionToken)
+                    .filter(token -> token != null && !token.isBlank()).toList();
+            sessionRepository.deleteAll(previous);
+            session = null; // Never reuse a device/browser/IP session in public mode.
+        } else {
+            sessionRepository.clearCurrentSession(userId);
+            session = findMatchingSession(userId, ua, ip);
+        }
         if (session == null) {
             session = new UserSession();
             session.setUserId(userId);
@@ -93,6 +114,7 @@ public class SecurityService {
         history.setDevice(ua.deviceName());
         history.setBrowser(ua.browser());
         loginHistoryRepository.save(history);
+        if (!revokedTokens.isEmpty()) forceLogoutDevices(userId, revokedTokens, "new_login");
 
         return session.getSessionToken();
     }
@@ -102,16 +124,19 @@ public class SecurityService {
      */
     @Transactional
     public void recordFailedLogin(Long userId, String ip, String userAgent, String reason) {
-        UserAgentParser.Result ua = UserAgentParser.parse(userAgent);
-        LoginHistory history = new LoginHistory();
-        history.setUserId(userId);
-        history.setSuccess(false);
-        history.setIpAddress(ip);
-        history.setLocation(resolveLocation(ip));
-        history.setDevice(ua.deviceName());
-        history.setBrowser(ua.browser());
-        history.setFailureReason(reason);
-        loginHistoryRepository.save(history);
+        Runnable audit = () -> {
+            try { loginAudit.failed(userId, ip, userAgent, reason); }
+            catch (RuntimeException unavailable) {
+                log.warn("Failed login audit unavailable: {}", unavailable.getClass().getSimpleName());
+            }
+        };
+        // Authentication throws and rolls back. Persist the audit afterwards, in a new transaction,
+        // rather than losing it or deadlocking a second transaction against the account row lock.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCompletion(int status) { audit.run(); }
+            });
+        } else audit.run();
     }
 
     private UserSession findMatchingSession(Long userId, UserAgentParser.Result ua, String ip) {
@@ -139,6 +164,10 @@ public class SecurityService {
      */
     @Transactional
     public List<SessionDTO> listSessions(Long userId, String currentSessionToken) {
+        if (authPolicy.singleSession()) {
+            lockSecurityUser(userId);
+            requireCurrentSession(userId, currentSessionToken);
+        }
         List<UserSession> sessions = sessionRepository.findByUserIdOrderByLastActiveDesc(userId);
         if (currentSessionToken != null) {
             boolean changed = false;
@@ -169,6 +198,7 @@ public class SecurityService {
     /** Revoke a single non-current session belonging to the user. */
     @Transactional
     public void revokeSession(Long userId, Long sessionId) {
+        if (authPolicy.singleSession()) { revokeSession(userId, sessionId, null); return; }
         sessionRepository.findById(sessionId)
                 .filter(s -> s.getUserId().equals(userId) && !Boolean.TRUE.equals(s.getIsCurrent()))
                 .ifPresent(s -> {
@@ -181,6 +211,7 @@ public class SecurityService {
     /** Sign out everywhere except the current device. */
     @Transactional
     public void revokeOtherSessions(Long userId) {
+        if (authPolicy.singleSession()) { revokeOtherSessions(userId, null); return; }
         List<UserSession> others = sessionRepository.findByUserIdOrderByLastActiveDesc(userId).stream()
                 .filter(s -> !Boolean.TRUE.equals(s.getIsCurrent()))
                 .collect(Collectors.toList());
@@ -192,13 +223,56 @@ public class SecurityService {
         forceLogoutDevices(userId, tokens);
     }
 
+    @Transactional
+    public void revokeSession(Long userId, Long sessionId, String currentToken) {
+        if (!authPolicy.singleSession()) { revokeSession(userId, sessionId); return; }
+        lockSecurityUser(userId);
+        requireCurrentSession(userId, currentToken);
+        sessionRepository.findById(sessionId)
+                .filter(session -> Objects.equals(session.getUserId(), userId)
+                        && !Objects.equals(session.getSessionToken(), currentToken))
+                .ifPresent(session -> {
+                    sessionRepository.deleteById(session.getId());
+                    forceLogoutDevices(userId, List.of(session.getSessionToken()));
+                });
+    }
+
+    @Transactional
+    public void revokeOtherSessions(Long userId, String currentToken) {
+        if (!authPolicy.singleSession()) { revokeOtherSessions(userId); return; }
+        revokeOtherSessions(userId, currentToken, "session_revoked");
+    }
+
+    /** Preserve the JWT request's actual session, never a flag another device may have changed. */
+    @Transactional
+    public void revokeOtherSessions(Long userId, String currentToken, String reason) {
+        lockSecurityUser(userId);
+        requireCurrentSession(userId, currentToken);
+        List<UserSession> others = sessionRepository.findByUserIdOrderByLastActiveDesc(userId).stream()
+                .filter(session -> !Objects.equals(session.getSessionToken(), currentToken)).toList();
+        if (others.isEmpty()) return;
+        List<String> tokens = others.stream().map(UserSession::getSessionToken).toList();
+        sessionRepository.deleteAll(others);
+        forceLogoutDevices(userId, tokens, reason);
+    }
+
+    public void requireCurrentSession(Long userId, String currentToken) {
+        if (authPolicy.singleSession() && (currentToken == null || currentToken.isBlank()
+                || !sessionRepository.isActiveSession(userId, currentToken, LocalDateTime.now(), true))) {
+            throw new BusinessException("error.auth.session.revoked");
+        }
+    }
+
     /** End the session identified by its token (used on explicit logout). */
     @Transactional
     public void endSession(Long userId, String sessionToken) {
         if (sessionToken == null) return;
         sessionRepository.findBySessionToken(sessionToken)
                 .filter(s -> s.getUserId().equals(userId))
-                .ifPresent(s -> sessionRepository.deleteById(s.getId()));
+                .ifPresent(s -> {
+                    sessionRepository.deleteById(s.getId());
+                    if (authPolicy.singleSession()) forceLogoutDevices(userId, List.of(sessionToken), "logout");
+                });
     }
 
     /**
@@ -208,14 +282,34 @@ public class SecurityService {
      * if it matches.
      */
     private void forceLogoutDevices(Long userId, List<String> sessionTokens) {
-        try {
-            WebSocketMessage msg = new WebSocketMessage(
-                    WebSocketMessage.MessageType.FORCE_LOGOUT,
-                    Map.of("targetSids", sessionTokens));
-            messageRelay.sendToUser(userId, "/topic/user." + userId + ".messages", msg);
-        } catch (Exception e) {
-            log.warn("Failed to push force-logout to user {}: {}", userId, e.getMessage());
-        }
+        forceLogoutDevices(userId, sessionTokens, "session_revoked");
+    }
+
+    private void forceLogoutDevices(Long userId, List<String> sessionTokens, String reason) {
+        List<String> targets = sessionTokens.stream().filter(token -> token != null && !token.isBlank()).distinct().toList();
+        if (targets.isEmpty()) return;
+        Runnable notify = () -> {
+            try {
+                WebSocketMessage msg = new WebSocketMessage(WebSocketMessage.MessageType.FORCE_LOGOUT,
+                        Map.of("targetSids", targets, "reason", reason));
+                if (authPolicy.singleSession()) messageRelay.sendLogoutNotice(userId, "/topic/user." + userId + ".messages", msg);
+                else messageRelay.sendToUser(userId, "/topic/user." + userId + ".messages", msg);
+            } catch (RuntimeException unavailable) {
+                log.warn("Logout notice unavailable: {}", unavailable.getClass().getSimpleName());
+            }
+            if (authPolicy.singleSession()) {
+                try { messageRelay.revokeSessions(userId, targets, reason); }
+                catch (RuntimeException unavailable) {
+                    log.warn("Socket revocation relay unavailable: {}", unavailable.getClass().getSimpleName());
+                }
+            }
+        };
+        // Never kick an existing device for a login/password change that subsequently rolls back.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { notify.run(); }
+            });
+        } else notify.run();
     }
 
     // ---------------------------------------------------------------------
@@ -244,13 +338,68 @@ public class SecurityService {
         return dto;
     }
 
+    /** Called only after the password matches, in the account-locking authentication transaction. */
+    @Transactional
+    public void requireLoginSecondFactor(Long userId, String supplied) {
+        if (!authPolicy.twoFactorLoginRequired()) return;
+        lockSecurityUser(userId);
+        UserSecuritySettings settings = securityRepository.findByUserId(userId).orElse(null);
+        if (settings == null || !Boolean.TRUE.equals(settings.getTwoFactorEnabled())) return;
+        if (settings.getTwoFactorSecret() == null || settings.getTwoFactorSecret().isBlank()) {
+            throw new BusinessException("error.auth.2fa.not.setup");
+        }
+        if (supplied == null || supplied.isBlank()) throw new BusinessException("error.auth.2fa.required");
+        String code = supplied.trim();
+        if (code.length() > 32) throw new BusinessException("error.auth.2fa.invalid.code");
+        if (code.matches("[0-9]{6}")) {
+            Long step = TotpUtil.matchingStep(settings.getTwoFactorSecret(), code, 1);
+            if (step == null) throw new BusinessException("error.auth.2fa.invalid.code");
+            if (settings.getLastAcceptedTotpStep() != null && step <= settings.getLastAcceptedTotpStep()) {
+                throw new BusinessException("error.auth.2fa.code.used");
+            }
+            settings.setLastAcceptedTotpStep(step);
+            securityRepository.save(settings);
+            return;
+        }
+        String compact = code.toUpperCase(java.util.Locale.ROOT).replace("-", "");
+        if (!compact.matches("[A-Z2-9]{8}")) throw new BusinessException("error.auth.2fa.invalid.code");
+        String recovery = compact.substring(0, 4) + "-" + compact.substring(4);
+        List<String> hashes = settings.getBackupCodes() == null || settings.getBackupCodes().isBlank()
+                ? new ArrayList<>() : new ArrayList<>(java.util.Arrays.asList(settings.getBackupCodes().split(",")));
+        for (int i = 0; i < hashes.size(); i++) {
+            boolean matches;
+            try { matches = passwordEncoder.matches(recovery, hashes.get(i)); }
+            catch (RuntimeException invalidHash) { matches = false; }
+            if (matches) {
+                hashes.remove(i);
+                settings.setBackupCodes(String.join(",", hashes));
+                securityRepository.save(settings);
+                return;
+            }
+        }
+        throw new BusinessException("error.auth.2fa.invalid.code");
+    }
+
     @Transactional
     public SecuritySettingsDTO setTwoFactorEnabled(Long userId, boolean enabled) {
+        return setTwoFactorEnabled(userId, enabled, null);
+    }
+
+    @Transactional
+    public SecuritySettingsDTO setTwoFactorEnabled(Long userId, boolean enabled, String currentToken) {
+        lockSecurityUser(userId);
+        requireCurrentSession(userId, currentToken);
         UserSecuritySettings s = getOrCreateSettings(userId);
+        if (enabled && authPolicy.twoFactorLoginRequired()
+                && (!Boolean.TRUE.equals(s.getTwoFactorEnabled())
+                    || s.getTwoFactorSecret() == null || s.getTwoFactorSecret().isBlank())) {
+            throw new BusinessException("error.auth.2fa.confirm.required");
+        }
         s.setTwoFactorEnabled(enabled);
         if (!enabled) {
             s.setTwoFactorSecret(null);
             s.setBackupCodes(null);
+            s.setLastAcceptedTotpStep(null);
         }
         securityRepository.save(s);
         return getSecuritySettings(userId);
@@ -266,12 +415,20 @@ public class SecurityService {
      */
     @Transactional
     public Map<String, Object> beginTwoFactorSetup(Long userId) {
+        return beginTwoFactorSetup(userId, null);
+    }
+
+    @Transactional
+    public Map<String, Object> beginTwoFactorSetup(Long userId, String currentToken) {
+        lockSecurityUser(userId);
+        requireCurrentSession(userId, currentToken);
         UserSecuritySettings s = getOrCreateSettings(userId);
         if (Boolean.TRUE.equals(s.getTwoFactorEnabled())) {
             throw new BusinessException("error.auth.2fa.already.enabled");
         }
         String secret = TotpUtil.generateSecret();
         s.setTwoFactorSecret(secret);
+        s.setLastAcceptedTotpStep(null);
         securityRepository.save(s);
 
         String account = userRepository.findById(userId)
@@ -291,13 +448,25 @@ public class SecurityService {
      */
     @Transactional
     public Map<String, Object> confirmTwoFactor(Long userId, String code) {
+        return confirmTwoFactor(userId, code, null);
+    }
+
+    @Transactional
+    public Map<String, Object> confirmTwoFactor(Long userId, String code, String currentToken) {
+        lockSecurityUser(userId);
+        requireCurrentSession(userId, currentToken);
         UserSecuritySettings s = getOrCreateSettings(userId);
         if (s.getTwoFactorSecret() == null) {
             throw new BusinessException("error.auth.2fa.not.setup");
         }
-        if (!TotpUtil.verify(s.getTwoFactorSecret(), code, 1)) {
+        if (authPolicy.twoFactorLoginRequired() && Boolean.TRUE.equals(s.getTwoFactorEnabled())) {
+            throw new BusinessException("error.auth.2fa.already.enabled");
+        }
+        Long step = authPolicy.twoFactorLoginRequired() ? TotpUtil.matchingStep(s.getTwoFactorSecret(), code, 1) : null;
+        if (authPolicy.twoFactorLoginRequired() ? step == null : !TotpUtil.verify(s.getTwoFactorSecret(), code, 1)) {
             throw new BusinessException("error.auth.2fa.invalid.code");
         }
+        if (step != null) s.setLastAcceptedTotpStep(step);
         List<String> plainCodes = generateBackupCodes(10);
         String stored = plainCodes.stream()
                 .map(passwordEncoder::encode)
@@ -336,8 +505,16 @@ public class SecurityService {
         securityRepository.save(s);
     }
 
+    private void lockSecurityUser(Long userId) {
+        if (authPolicy.singleSession() || authPolicy.twoFactorLoginRequired()) {
+            userRepository.findForSecurityUpdate(userId)
+                    .orElseThrow(() -> new BusinessException("error.user.not.found"));
+        }
+    }
+
     @Transactional
     public UserSecuritySettings getOrCreateSettings(Long userId) {
+        lockSecurityUser(userId);
         return securityRepository.findByUserId(userId).orElseGet(() -> {
             UserSecuritySettings s = new UserSecuritySettings();
             s.setUserId(userId);

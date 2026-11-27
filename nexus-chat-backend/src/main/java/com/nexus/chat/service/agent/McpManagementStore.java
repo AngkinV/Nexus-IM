@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.nexus.chat.util.CredentialAddressPolicy;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,11 +34,19 @@ public class McpManagementStore {
     private final McpServerRepository repository;
     private final ObjectMapper json;
     private final McpCredentialCrypto crypto;
+    private final CredentialAddressPolicy addressPolicy;
 
-    public McpManagementStore(McpServerRepository repository, ObjectMapper json, McpCredentialCrypto crypto) {
+    public McpManagementStore(McpServerRepository repository, ObjectMapper json, McpCredentialCrypto crypto,
+                              CredentialAddressPolicy addressPolicy) {
         this.repository = repository;
         this.json = json;
         this.crypto = crypto;
+        this.addressPolicy = addressPolicy;
+    }
+
+    /** The saved credential belongs to the old server: send a new one, or clearCredential, with the new address. */
+    private ResponseStatusException credentialRequired() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "MCP_CREDENTIAL_REQUIRED");
     }
 
     private ResponseStatusException bad() {
@@ -164,6 +173,10 @@ public class McpManagementStore {
         boolean connectionChanged = !create && (!old.path("url").equals(config.path("url"))
                 || !old.path("transport").equals(config.path("transport"))
                 || patch.has("credential") || patch.path("clearCredential").asBoolean());
+        if (!create && entity.credentialCiphertext != null && !patch.has("credential")
+                && !patch.path("clearCredential").asBoolean() && addressPolicy.mustReenter(
+                        CredentialAddressPolicy.server(old.path("url").asText(null)),
+                        CredentialAddressPolicy.server(config.path("url").asText(null)))) throw credentialRequired();
         if (patch.path("clearCredential").asBoolean()) {
             entity.credentialCiphertext = null;
             config.put("credentialKind", "none").putNull("credentialHeaderName");

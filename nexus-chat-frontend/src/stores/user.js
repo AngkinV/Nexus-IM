@@ -52,10 +52,12 @@ export const useUserStore = defineStore('user', () => {
         }
     }
 
-    const login = async (usernameOrEmail, password) => {
+    const login = async (usernameOrEmail, password, twoFactorCode) => {
         isLoading.value = true
         try {
-            const response = await authAPI.login(usernameOrEmail, password)
+            const response = twoFactorCode
+                ? await authAPI.login(usernameOrEmail, password, twoFactorCode)
+                : await authAPI.login(usernameOrEmail, password)
             const { token: authToken, userId, username, nickname, avatarUrl, email, phone, bio, profileBackground } = response.data
 
             currentUser.value = {

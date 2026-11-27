@@ -23,6 +23,12 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Autowired
     private AllowedOrigins allowedOrigins;
 
+    @Autowired
+    private com.nexus.chat.service.WebSocketSessionRegistry sessions;
+
+    @Autowired
+    private WebSocketSessionOutboundInterceptor outboundSessionGuard;
+
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
         log.info("配置 WebSocket 消息代理: /topic, /queue");
@@ -59,6 +65,30 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         // Also register native WebSocket endpoint (no SockJS)
         registry.addEndpoint("/ws-native")
                 .setAllowedOriginPatterns(origins);
+    }
+
+    @Override
+    public void configureWebSocketTransport(org.springframework.web.socket.config.annotation.WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(handler -> new org.springframework.web.socket.handler.WebSocketHandlerDecorator(handler) {
+            @Override
+            public void afterConnectionEstablished(org.springframework.web.socket.WebSocketSession session) throws Exception {
+                sessions.trackTransport(session);
+                try { super.afterConnectionEstablished(session); }
+                catch (Exception failed) { sessions.removeTransport(session.getId()); throw failed; }
+            }
+
+            @Override
+            public void afterConnectionClosed(org.springframework.web.socket.WebSocketSession session,
+                                              org.springframework.web.socket.CloseStatus status) throws Exception {
+                try { super.afterConnectionClosed(session, status); }
+                finally { sessions.removeTransport(session.getId()); }
+            }
+        });
+    }
+
+    @Override
+    public void configureClientOutboundChannel(ChannelRegistration registration) {
+        registration.interceptors(outboundSessionGuard);
     }
 
     @Override

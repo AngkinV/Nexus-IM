@@ -177,7 +177,8 @@ export const useAgentWorkspaceStore = defineStore('agentWorkspace', () => {
     }
     function safeMcpFailure(error, ticket) {
         // Never retain a raw backend error/message/payload (may include credentials).
-        const code = error?.response?.status === 409 || /CONFLICT|VERSION/.test(error?.code || error?.response?.data?.code || '')
+        const code = error?.response?.data?.code === 'MCP_CREDENTIAL_REQUIRED' ? 'MCP_CREDENTIAL_REQUIRED'
+            : error?.response?.status === 409 || /CONFLICT|VERSION/.test(error?.code || error?.response?.data?.code || '')
             ? 'MCP_CONFLICT' : error?.code === 'MCP_STALE' ? 'MCP_STALE' : error?.code === 'MCP_PROBE_FAILED' ? 'MCP_PROBE_FAILED' : 'MCP_UNAVAILABLE'
         if (mcpCurrent(ticket)) mcp.value.error = code
         return mcpError(code)

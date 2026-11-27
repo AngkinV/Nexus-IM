@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @org.springframework.beans.factory.annotation.Autowired)
 public class AuthService {
 
     private final UserRepository userRepository;
@@ -28,6 +28,14 @@ public class AuthService {
     private final FileAccessService fileAccessService;
     private final RegistrationPolicy registrationPolicy;
     private final LoginThrottle loginThrottle;
+    private final PublicAuthPolicy authPolicy;
+
+    /** Preserve the local policy for existing direct callers; Spring injects the configured policy. */
+    public AuthService(UserRepository users, PasswordEncoder passwords, JwtTokenProvider jwt,
+                       VerificationCodeService codes, SecurityService security, FileAccessService files,
+                       RegistrationPolicy registration, LoginThrottle throttle) {
+        this(users, passwords, jwt, codes, security, files, registration, throttle, new PublicAuthPolicy(false, false));
+    }
 
     public RegistrationPolicyResponse registrationPolicy() {
         return new RegistrationPolicyResponse(registrationPolicy.isInviteRequired(), registrationPolicy.isEmailCodeRequired());
@@ -106,8 +114,14 @@ public class AuthService {
     public AuthResponse login(LoginRequest request, String ip, String userAgent) {
         String usernameOrEmail = request.getUsernameOrEmail();
 
-        // Try to find user by username or email
-        User user = userRepository.findByUsernameOrEmail(usernameOrEmail, usernameOrEmail).orElse(null);
+        // The public scalar lookup does not cache a stale user before waiting for the row lock.
+        User user;
+        if (authPolicy.singleSession() || authPolicy.twoFactorLoginRequired()) {
+            Long id = userRepository.findIdForLogin(usernameOrEmail).orElse(null);
+            user = id == null ? null : userRepository.findForSecurityUpdate(id).orElse(null);
+        } else {
+            user = userRepository.findByUsernameOrEmail(usernameOrEmail, usernameOrEmail).orElse(null);
+        }
 
         // One counter per account however it is named; names without an account are counted
         // as typed, so both cases answer alike.
@@ -126,7 +140,17 @@ public class AuthService {
             loginThrottle.failed(throttleKey);
             throw new BusinessException("error.auth.invalid.credentials");
         }
-        loginThrottle.succeeded(throttleKey);
+        // A password alone must neither issue a JWT nor replace the existing session when 2FA is enabled.
+        try {
+            securityService.requireLoginSecondFactor(user.getId(), request.getTwoFactorCode());
+        } catch (BusinessException invalidFactor) {
+            if (!"error.auth.2fa.required".equals(invalidFactor.getMessage())
+                    && !"error.auth.2fa.not.setup".equals(invalidFactor.getMessage())) {
+                securityService.recordFailedLogin(user.getId(), ip, userAgent, "invalid_second_factor");
+                loginThrottle.failed(throttleKey);
+            }
+            throw invalidFactor;
+        }
 
         // Update online status
         user.setIsOnline(true);
@@ -137,6 +161,12 @@ public class AuthService {
 
         // Generate JWT token carrying the session id.
         String token = jwtTokenProvider.generateToken(user.getId(), user.getUsername(), sessionToken);
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() { loginThrottle.succeeded(throttleKey); }
+                    });
+        } else loginThrottle.succeeded(throttleKey);
 
         return new AuthResponse(
                 token,
@@ -152,8 +182,10 @@ public class AuthService {
 
     @Transactional
     public void logout(Long userId, String sessionToken) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException("error.user.not.found"));
+        User user = authPolicy.singleSession()
+                ? userRepository.findForSecurityUpdate(userId).orElseThrow(() -> new BusinessException("error.user.not.found"))
+                : userRepository.findById(userId).orElseThrow(() -> new BusinessException("error.user.not.found"));
+        securityService.requireCurrentSession(userId, sessionToken);
         user.setIsOnline(false);
         userRepository.save(user);
 
@@ -163,8 +195,15 @@ public class AuthService {
 
     @Transactional
     public void changePassword(Long userId, String currentPassword, String newPassword) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException("error.user.not.found"));
+        changePassword(userId, currentPassword, newPassword, null);
+    }
+
+    @Transactional
+    public void changePassword(Long userId, String currentPassword, String newPassword, String currentSessionToken) {
+        User user = authPolicy.singleSession()
+                ? userRepository.findForSecurityUpdate(userId).orElseThrow(() -> new BusinessException("error.user.not.found"))
+                : userRepository.findById(userId).orElseThrow(() -> new BusinessException("error.user.not.found"));
+        securityService.requireCurrentSession(userId, currentSessionToken);
 
         if (currentPassword == null || !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
             throw new BusinessException("error.auth.password.incorrect");
@@ -181,6 +220,9 @@ public class AuthService {
 
         // Persist the change time + recomputed strength for the security page.
         securityService.recordPasswordChange(userId, newPassword);
+        if (authPolicy.singleSession()) {
+            securityService.revokeOtherSessions(userId, currentSessionToken, "password_changed");
+        }
     }
 
 }

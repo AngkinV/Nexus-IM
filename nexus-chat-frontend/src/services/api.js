@@ -3,6 +3,7 @@ import axios from 'axios'
 import { failureBelongsToSession, isKnownExpiredJwt, isPublicAuthRequest, navigateToLogin } from '../utils/sessionGuard.js'
 import { useUserStore } from '@/stores/user'
 import { API_BASE_URL, SERVER_BASE_URL } from './runtimeConfig'
+import { rememberSignOut } from '../utils/loginSecurity.js'
 
 const apiClient = axios.create({
     baseURL: API_BASE_URL,
@@ -40,7 +41,10 @@ apiClient.interceptors.response.use(
     error => {
         const currentSession = localStorage.getItem('token')
         if (!isPublicAuthRequest(error.config?.url) && failureBelongsToSession(error, currentSession) && error.config?._authSession) {
-            if (useUserStore().expireSession(currentSession, error.config._authSession)) navigateToLogin()
+            if (useUserStore().expireSession(currentSession, error.config._authSession)) {
+                if (error.response?.data?.code === 'SESSION_REVOKED') rememberSignOut('session_revoked')
+                navigateToLogin()
+            }
         }
         return Promise.reject(error)
     }
@@ -54,8 +58,9 @@ export const authAPI = {
     getRegistrationPolicy: () =>
         apiClient.get('/auth/registration-policy'),
 
-    login: (usernameOrEmail, password) =>
-        apiClient.post('/auth/login', { usernameOrEmail, password }),
+    login: (usernameOrEmail, password, twoFactorCode) =>
+        apiClient.post('/auth/login', { usernameOrEmail, password,
+            ...(typeof twoFactorCode === 'string' && twoFactorCode.trim() ? { twoFactorCode: twoFactorCode.trim() } : {}) }),
 
     logout: (userId) =>
         apiClient.post('/auth/logout', null, { params: { userId } }),

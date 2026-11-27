@@ -41,17 +41,17 @@ public class SecurityController {
 
     /** DELETE /api/users/{userId}/sessions/{sessionId} — revoke one device */
     @DeleteMapping("/sessions/{sessionId}")
-    public ResponseEntity<Void> revokeSession(@PathVariable Long userId, @PathVariable Long sessionId) {
+    public ResponseEntity<Void> revokeSession(@PathVariable Long userId, @PathVariable Long sessionId, HttpServletRequest request) {
         assertSelf(userId);
-        securityService.revokeSession(userId, sessionId);
+        securityService.revokeSession(userId, sessionId, (String) request.getAttribute("sessionToken"));
         return ResponseEntity.ok().build();
     }
 
     /** DELETE /api/users/{userId}/sessions — sign out everywhere except current */
     @DeleteMapping("/sessions")
-    public ResponseEntity<Void> revokeOtherSessions(@PathVariable Long userId) {
+    public ResponseEntity<Void> revokeOtherSessions(@PathVariable Long userId, HttpServletRequest request) {
         assertSelf(userId);
-        securityService.revokeOtherSessions(userId);
+        securityService.revokeOtherSessions(userId, (String) request.getAttribute("sessionToken"));
         return ResponseEntity.ok().build();
     }
 
@@ -73,31 +73,31 @@ public class SecurityController {
 
     /** POST /api/users/{userId}/security/two-factor/setup — start TOTP enrollment */
     @PostMapping("/security/two-factor/setup")
-    public ResponseEntity<Map<String, Object>> setupTwoFactor(@PathVariable Long userId) {
+    public ResponseEntity<Map<String, Object>> setupTwoFactor(@PathVariable Long userId, HttpServletRequest request) {
         assertSelf(userId);
-        return ResponseEntity.ok(securityService.beginTwoFactorSetup(userId));
+        return ResponseEntity.ok(securityService.beginTwoFactorSetup(userId, (String) request.getAttribute("sessionToken")));
     }
 
     /** POST /api/users/{userId}/security/two-factor/verify { "code": "123456" } — confirm + enable */
     @PostMapping("/security/two-factor/verify")
     public ResponseEntity<Map<String, Object>> verifyTwoFactor(
             @PathVariable Long userId,
-            @RequestBody Map<String, String> body) {
+            @RequestBody Map<String, String> body, HttpServletRequest request) {
         assertSelf(userId);
-        return ResponseEntity.ok(securityService.confirmTwoFactor(userId, body.get("code")));
+        return ResponseEntity.ok(securityService.confirmTwoFactor(userId, body.get("code"), (String) request.getAttribute("sessionToken")));
     }
 
     /** PUT /api/users/{userId}/security/two-factor { "enabled": false } — disable only */
     @PutMapping("/security/two-factor")
     public ResponseEntity<SecuritySettingsDTO> disableTwoFactor(
             @PathVariable Long userId,
-            @RequestBody Map<String, Boolean> body) {
+            @RequestBody Map<String, Boolean> body, HttpServletRequest request) {
         assertSelf(userId);
         if (Boolean.TRUE.equals(body.get("enabled"))) {
             // Enabling requires the setup + verify flow, not a bare toggle.
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use the setup/verify flow to enable 2FA");
         }
-        return ResponseEntity.ok(securityService.setTwoFactorEnabled(userId, false));
+        return ResponseEntity.ok(securityService.setTwoFactorEnabled(userId, false, (String) request.getAttribute("sessionToken")));
     }
 
     /** Reject access to another user's security data. */
