@@ -10,6 +10,8 @@ import com.nexus.chat.repository.MessageRepository;
 import com.nexus.chat.repository.UserSessionRepository;
 import com.nexus.chat.security.JwtAuthenticationFilter;
 import com.nexus.chat.security.JwtTokenProvider;
+import com.nexus.chat.service.AuthSessionValidator;
+import com.nexus.chat.service.PublicAuthPolicy;
 import com.nexus.chat.service.agent.AgentToolService;
 import com.nexus.chat.service.agent.tool.AgentToolRegistry;
 import org.junit.jupiter.api.Test;
@@ -58,8 +60,8 @@ class AgentMcpSecurityTest {
     @ImportAutoConfiguration({PropertyPlaceholderAutoConfiguration.class, ServletWebServerFactoryAutoConfiguration.class, DispatcherServletAutoConfiguration.class,
             WebMvcAutoConfiguration.class, HttpMessageConvertersAutoConfiguration.class, JacksonAutoConfiguration.class,
             ErrorMvcAutoConfiguration.class, SecurityAutoConfiguration.class, SecurityFilterAutoConfiguration.class})
-    @Import({SecurityConfig.class, AllowedOrigins.class, JwtAuthenticationFilter.class, AgentMcpConfig.class, AgentToolRegistry.class,
-            InternalAgentController.class, AgentExceptionHandler.class})
+    @Import({SecurityConfig.class, AllowedOrigins.class, JwtAuthenticationFilter.class, AuthSessionValidator.class, PublicAuthPolicy.class,
+            AgentMcpConfig.class, AgentToolRegistry.class, InternalAgentController.class, AgentExceptionHandler.class})
     static class App {
         // One fixture instance shared by the beans and the test body.
         static AgentToolFixture shared;

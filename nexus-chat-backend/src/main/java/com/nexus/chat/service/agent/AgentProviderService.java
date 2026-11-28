@@ -10,6 +10,7 @@ import com.nexus.chat.model.ModelChannels;
 import com.nexus.chat.model.ModelCredential;
 import com.nexus.chat.repository.ModelCredentialRepository;
 import com.nexus.chat.service.CompanionCryptoService;
+import com.nexus.chat.util.CredentialAddressPolicy;
 import com.nexus.chat.util.ModelEndpointGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,10 @@ public class AgentProviderService {
     private final ObjectMapper objectMapper;
     private final ModelEndpointGuard endpointGuard;
     private final PythonModelGateway gateway;
+    private final CredentialAddressPolicy addressPolicy;
+
+    /** Sent as {@code details.reason} so the settings form can say what to do in the user's language. */
+    static final String KEY_REQUIRED_FOR_NEW_ADDRESS = "KEY_REQUIRED_FOR_NEW_ADDRESS";
 
     public List<AgentProviderDtos.ProviderView> listForUser(Long userId) {
         return repository.findByUserIdOrderByIsDefaultDescUpdatedAtDesc(userId).stream().map(this::toView).toList();
@@ -62,6 +67,18 @@ public class AgentProviderService {
 
         ModelCredential entity = channelToSave(userId, req, purpose, vendor, format);
         String formatBefore = entity.getId() == null ? null : ModelChannels.apiFormat(entity);
+        // Checked before anything on the saved row is touched, so a refusal leaves it as it was.
+        if (key == null && entity.getId() != null && emptyToNull(entity.getApiKeyEncrypted()) != null) {
+            ModelCredential edited = new ModelCredential();
+            edited.setProvider(entity.getProvider());
+            edited.setVendor(vendor != null ? vendor : entity.getVendor());
+            edited.setApiFormat(format != null ? format : entity.getApiFormat());
+            if (addressPolicy.mustReenter(destination(entity, entity.getBaseUrl()), destination(edited, base))) {
+                throw new AgentException(AgentErrorCode.AGENT_PARAM_40001,
+                        "The service address changed. Enter the API key again to save this channel.",
+                        Map.of("reason", KEY_REQUIRED_FOR_NEW_ADDRESS));
+            }
+        }
         if (vendor != null) entity.setVendor(vendor);
         if (format != null) entity.setApiFormat(format);
         if (key != null || !Objects.equals(base, entity.getBaseUrl()) || !Objects.equals(model, entity.getDefaultModel())
@@ -214,6 +231,15 @@ public class AgentProviderService {
             result.setError(objectMapper.createObjectNode().put("code", "CONFIG_CHANGED").put("summary", result.getMessage()));
         }
         return result;
+    }
+
+    /**
+     * Where this channel's key is sent. An address names its own server; without one the
+     * Python service picks the endpoint from the adapter name, so that name stands for it.
+     */
+    private static String destination(ModelCredential channel, String baseUrl) {
+        String server = CredentialAddressPolicy.server(baseUrl);
+        return server != null ? server : "default:" + ModelChannels.adapterName(channel, true);
     }
 
     private ModelCredential owned(Long userId, Long id) {

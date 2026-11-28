@@ -92,6 +92,19 @@ test('a failed real probe remains error while raw credentials never enter state'
   assert.ok(!JSON.stringify(store.mcp).includes(SECRET))
 })
 
+test('changed-server credential rejection is preserved and never stores raw error text or a fake success', async () => {
+  reply([record(1, { credentialConfigured: true, credentialKind: 'bearer' })]); await store.loadMcpServers()
+  const original = JSON.stringify(store.mcp.servers[0])
+  replies.push(() => { throw { response: { status: 400, data: { code: 'MCP_CREDENTIAL_REQUIRED', message: SECRET } } } })
+  await assert.rejects(store.patchMcpServer(SID, 1, { url: 'https://other.example.invalid/mcp' }),
+    error => error.code === 'MCP_CREDENTIAL_REQUIRED')
+  assert.equal(store.mcp.error, 'MCP_CREDENTIAL_REQUIRED')
+  assert.equal(JSON.stringify(store.mcp.servers[0]), original)
+  assert.ok(!JSON.stringify(store.mcp).includes(SECRET))
+  assert.match(messages.zh.mcp.credentialRequired, /重新填写/)
+  assert.match(messages.en.mcp.credentialRequired, /Enter a new credential/)
+})
+
 test('old probe after patch cannot overwrite the new configuration', async () => {
   reply([record()]); await store.loadMcpServers()
   const pending = defer(); replies.push(() => pending.promise)

@@ -21,7 +21,8 @@ class AgentProviderCatalogTest {
     private final ModelCredentialRepository repo = mock(ModelCredentialRepository.class);
     private final CompanionCryptoService crypto = mock(CompanionCryptoService.class);
     private final PythonModelGateway gateway = mock(PythonModelGateway.class);
-    private final AgentProviderService service = new AgentProviderService(repo, crypto, mapper, mock(ModelEndpointGuard.class), gateway);
+    private final AgentProviderService service = new AgentProviderService(repo, crypto, mapper, mock(ModelEndpointGuard.class), gateway,
+            new com.nexus.chat.util.CredentialAddressPolicy(false));
 
     private ModelCredential channel() {
         ModelCredential c = new ModelCredential();

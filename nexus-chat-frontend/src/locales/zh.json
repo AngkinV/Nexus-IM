@@ -150,7 +150,18 @@
     "setupSubtitle": "填写昵称并上传一张头像，就可以开始了。",
     "setupAddPhoto": "添加头像",
     "setupNamePlaceholder": "请输入昵称（必填）",
-    "setupName": "昵称"
+    "setupName": "昵称",
+    "twoFactorCode": "验证器验证码或恢复码",
+    "twoFactorPlaceholder": "6 位验证码，或一次性恢复码",
+    "twoFactorHelp": "账号已开启二次验证。输入验证器中的验证码，或使用一个尚未使用的恢复码。",
+    "twoFactorRequired": "密码验证通过，请完成二次验证后登录。",
+    "twoFactorInvalid": "验证码或恢复码不正确，请检查后重试。",
+    "twoFactorUsed": "这个验证码已使用，请等待验证器生成新码，或使用未使用的恢复码。",
+    "twoFactorNotReady": "账号的二次验证设置不完整，暂时无法登录，请联系维护者。",
+    "loginLocked": "连续验证失败次数过多，请稍后再试；当前登录会话不受影响。",
+    "signedInElsewhere": "账号已在其他设备登录，本设备已退出，请重新登录。",
+    "passwordChangedElsewhere": "账号密码已更改，本设备已退出，请使用新密码登录。",
+    "sessionRevoked": "本设备的登录会话已结束，请重新登录。"
   },
   "chat": {
     "newChat": "新建对话",
@@ -657,6 +668,8 @@
     "twoFactorInvalidCode": "验证码不正确",
     "twoFactorSetupFailed": "无法开始设置，请重试",
     "confirmDisable2fa": "确定要关闭两步验证吗？关闭后账户保护会降低。",
+    "twoFactorDisableProof": "输入验证器验证码或未使用的恢复码，以确认关闭两步验证。",
+    "verifyDisableAction": "验证并关闭",
     "backupCodesHint": "请妥善保存这些一次性备用码，每个仅可使用一次。",
     "savedBackupCodes": "我已保存",
     "copied": "已复制",
@@ -1218,7 +1231,8 @@
       "testSuccessTitle": "{name}：连接成功",
       "testFailureTitle": "{name}：连接失败",
       "testRequestFailed": "无法完成连接测试，请检查地址、网络及模型设置后重试。",
-      "testEmbeddingDimension": "向量维度：{dimension}"
+      "testEmbeddingDimension": "向量维度：{dimension}",
+      "keyRequiredForNewAddress": "服务地址已变化，请重新填写 API Key 后再保存；原有地址和 Key 尚未修改。"
     },
     "knowledge": {
       "title": "知识库管理",

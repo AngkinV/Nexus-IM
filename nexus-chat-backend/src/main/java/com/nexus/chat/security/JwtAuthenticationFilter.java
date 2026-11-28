@@ -24,11 +24,17 @@ import java.util.Collections;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
+@RequiredArgsConstructor(onConstructor_ = @org.springframework.beans.factory.annotation.Autowired)
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final UserSessionRepository sessionRepository;
+    private final com.nexus.chat.service.AuthSessionValidator authValidator;
+
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, UserSessionRepository sessionRepository) {
+        this(jwtTokenProvider, sessionRepository, new com.nexus.chat.service.AuthSessionValidator(
+                sessionRepository, new com.nexus.chat.service.PublicAuthPolicy(false, false)));
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -43,9 +49,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (jwtTokenProvider.validateToken(token)) {
                 String sessionToken = jwtTokenProvider.getSessionTokenFromToken(token);
 
-                // Session-backed tokens: if the session was revoked, reject (401).
-                // Legacy tokens without a session id are left alone for compatibility.
-                if (sessionToken != null && !sessionRepository.existsBySessionToken(sessionToken)) {
+                // Public tokens must have been issued under fresh-sid semantics; legacy/local stays compatible.
+                Long userId = jwtTokenProvider.getUserIdFromToken(token);
+                if ((authValidator.enforced() && !jwtTokenProvider.hasCurrentSessionPolicy(token))
+                        || !authValidator.active(userId, sessionToken)) {
                     log.debug("会话已被吊销, 拒绝请求: {}", request.getRequestURI());
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     response.setContentType("application/json;charset=UTF-8");
@@ -53,7 +60,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     return;
                 }
 
-                Long userId = jwtTokenProvider.getUserIdFromToken(token);
                 String username = jwtTokenProvider.getUsernameFromToken(token);
 
                 UsernamePasswordAuthenticationToken authentication =

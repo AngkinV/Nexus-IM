@@ -360,7 +360,10 @@ async function save() {
     if (!payload.defaultModel) openEdit(store.getById(saved.id) || saved)
     else formDialog.value = false
   } catch (err) {
-    ElMessage.error(err?.response?.data?.message || err.message || t('agent.providers.saveFailed'))
+    const reason = err?.response?.data?.details?.reason
+    ElMessage.error(reason === 'KEY_REQUIRED_FOR_NEW_ADDRESS'
+      ? t('agent.providers.keyRequiredForNewAddress')
+      : (err?.response?.data?.message || err.message || t('agent.providers.saveFailed')))
   } finally {
     saving.value = false
   }

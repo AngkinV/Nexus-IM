@@ -52,10 +52,12 @@ export const useUserStore = defineStore('user', () => {
         }
     }
 
-    const login = async (usernameOrEmail, password) => {
+    const login = async (usernameOrEmail, password, twoFactorCode) => {
         isLoading.value = true
         try {
-            const response = await authAPI.login(usernameOrEmail, password)
+            const response = twoFactorCode
+                ? await authAPI.login(usernameOrEmail, password, twoFactorCode)
+                : await authAPI.login(usernameOrEmail, password)
             const { token: authToken, userId, username, nickname, avatarUrl, email, phone, bio, profileBackground } = response.data
 
             currentUser.value = {
@@ -82,7 +84,7 @@ export const useUserStore = defineStore('user', () => {
 
             return currentUser.value
         } catch (error) {
-            throw error.response?.data?.message || error.message || 'Login failed'
+            throw error.response?.data?.messageKey || error.response?.data?.message || error.message || 'Login failed'
         } finally {
             isLoading.value = false
         }

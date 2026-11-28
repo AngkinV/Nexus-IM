@@ -5,6 +5,9 @@ import com.nexus.chat.controller.FunnelReadinessController;
 import com.nexus.chat.repository.UserSessionRepository;
 import com.nexus.chat.security.JwtAuthenticationFilter;
 import com.nexus.chat.security.JwtTokenProvider;
+import com.nexus.chat.service.AuthSessionValidator;
+import com.nexus.chat.service.PublicAuthPolicy;
+import com.nexus.chat.service.RedisCacheService;
 import com.nexus.chat.service.PresenceService;
 import com.nexus.chat.service.WebSocketSessionRegistry;
 import org.junit.jupiter.api.Nested;
@@ -72,7 +75,8 @@ class OriginPolicyTest {
     @ImportAutoConfiguration({PropertyPlaceholderAutoConfiguration.class, ServletWebServerFactoryAutoConfiguration.class,
             DispatcherServletAutoConfiguration.class, WebMvcAutoConfiguration.class, HttpMessageConvertersAutoConfiguration.class,
             JacksonAutoConfiguration.class, ErrorMvcAutoConfiguration.class, WebSocketServletAutoConfiguration.class})
-    @Import({AllowedOrigins.class, WebSocketConfig.class})
+    @Import({AllowedOrigins.class, WebSocketConfig.class, PublicAuthPolicy.class, AuthSessionValidator.class,
+            WebSocketSessionRegistry.class, WebSocketSessionOutboundInterceptor.class})
     static class WebSocketOnly {
         @Bean
         JwtTokenProvider jwtTokenProvider() {
@@ -85,8 +89,14 @@ class OriginPolicyTest {
         }
 
         @Bean
-        WebSocketAuthChannelInterceptor webSocketAuthChannelInterceptor(JwtTokenProvider tokens, UserSessionRepository sessions) {
-            return new WebSocketAuthChannelInterceptor(tokens, mock(WebSocketSessionRegistry.class), mock(PresenceService.class), sessions);
+        RedisCacheService redisCacheService() {
+            return mock(RedisCacheService.class);
+        }
+
+        @Bean
+        WebSocketAuthChannelInterceptor webSocketAuthChannelInterceptor(JwtTokenProvider tokens, UserSessionRepository sessions,
+                                                                       WebSocketSessionRegistry registry) {
+            return new WebSocketAuthChannelInterceptor(tokens, registry, mock(PresenceService.class), sessions);
         }
 
         @Bean

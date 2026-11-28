@@ -30,17 +30,28 @@ public final class TotpUtil {
 
     /** Verify a code against the secret, tolerating +/- {@code window} steps of clock drift. */
     public static boolean verify(String base32Secret, String code, int window) {
-        if (base32Secret == null || code == null) return false;
+        return matchingStep(base32Secret, code, window) != null;
+    }
+
+    /** The newest matching counter, so callers can atomically reject a reused TOTP. */
+    public static Long matchingStep(String base32Secret, String code, int window) {
+        if (base32Secret == null || code == null || window < 0 || window > 10) return null;
         String trimmed = code.trim();
-        if (!trimmed.matches("\\d{" + DIGITS + "}")) return false;
-        byte[] key = base32Decode(base32Secret);
-        long counter = System.currentTimeMillis() / 1000L / TIME_STEP_SECONDS;
-        for (int i = -window; i <= window; i++) {
-            if (constantTimeEquals(generateCode(key, counter + i), trimmed)) {
-                return true;
+        String secret = base32Secret.trim().replace("=", "").replace(" ", "").toUpperCase(java.util.Locale.ROOT);
+        if (!trimmed.matches("\\d{" + DIGITS + "}") || !secret.matches("[A-Z2-7]{16,128}")) return null;
+        try {
+            byte[] key = base32Decode(secret);
+            long counter = System.currentTimeMillis() / 1000L / TIME_STEP_SECONDS;
+            Long matched = null;
+            for (int i = -window; i <= window; i++) {
+                if (counter + i >= 0 && constantTimeEquals(generateCode(key, counter + i), trimmed)) {
+                    matched = counter + i;
+                }
             }
+            return matched;
+        } catch (RuntimeException invalidSecret) {
+            return null;
         }
-        return false;
     }
 
     /** otpauth:// URI for QR codes / manual entry. */

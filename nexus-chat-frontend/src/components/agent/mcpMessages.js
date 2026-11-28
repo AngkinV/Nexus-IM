@@ -52,6 +52,7 @@ const copy = {
   newCredential: ['New credential (write-only)', '新凭据（只写）'],
   keepCredential: ['Leave blank to keep an existing credential. It is never returned here.', '更新时留空会保留原凭据；这里不会回显凭据。'],
   clearCredential: ['Remove the stored credential', '移除已保存凭据'],
+  credentialRequired: ['The service address changed. Enter a new credential, or explicitly remove the stored one, then save again.', '服务地址已变化，请重新填写凭据，或明确移除原凭据后再保存。'],
   loadToolsFirst: ['Discover tools before adding new approvals. Existing approvals can always be removed.', '请先发现工具再新增授权；原有授权可随时移除。'],
   conflict: ['The configuration changed. Reload before saving.', '配置版本已变化，请重新加载后再保存。'],
   stale: ['The account or configuration changed. This old response was ignored.', '账号或配置已变化，旧响应已忽略。'],

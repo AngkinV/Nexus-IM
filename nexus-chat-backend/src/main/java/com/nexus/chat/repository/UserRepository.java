@@ -2,6 +2,8 @@ package com.nexus.chat.repository;
 
 import com.nexus.chat.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -22,6 +24,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 
     Optional<User> findByUsernameOrEmail(String username, String email);
+
+    /** Current/locking read: do not establish an old MySQL repeatable-read snapshot before waiting. */
+    @Query(value = "SELECT id FROM users WHERE username = :identity OR email = :identity FOR UPDATE", nativeQuery = true)
+    Optional<Long> findIdForLogin(@Param("identity") String identity);
+
+    /** Serializes session rotation, password changes and second-factor updates across instances. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :userId")
+    Optional<User> findForSecurityUpdate(@Param("userId") Long userId);
 
     boolean existsByUsername(String username);
 

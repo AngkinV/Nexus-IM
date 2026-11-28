@@ -118,11 +118,11 @@ public class AuthController {
 
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@RequestParam(name = "userId", required = false) Long claimedUserId,
-                                            @RequestBody ChangePasswordRequest request) {
+                                            @RequestBody ChangePasswordRequest request, HttpServletRequest httpRequest) {
         Long userId = CurrentUser.require(claimedUserId);
         log.info("修改密码请求: userId={}", userId);
         try {
-            authService.changePassword(userId, request.getCurrentPassword(), request.getNewPassword());
+            authService.changePassword(userId, request.getCurrentPassword(), request.getNewPassword(), bearerSessionToken(httpRequest));
             log.info("修改密码成功: userId={}", userId);
             return ResponseEntity.ok(java.util.Map.of("message", "密码修改成功", "success", true));
         } catch (RuntimeException e) {
