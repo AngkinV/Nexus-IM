@@ -668,6 +668,8 @@
     "twoFactorInvalidCode": "验证码不正确",
     "twoFactorSetupFailed": "无法开始设置，请重试",
     "confirmDisable2fa": "确定要关闭两步验证吗？关闭后账户保护会降低。",
+    "twoFactorDisableProof": "输入验证器验证码或未使用的恢复码，以确认关闭两步验证。",
+    "verifyDisableAction": "验证并关闭",
     "backupCodesHint": "请妥善保存这些一次性备用码，每个仅可使用一次。",
     "savedBackupCodes": "我已保存",
     "copied": "已复制",

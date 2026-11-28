@@ -64,6 +64,10 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             log.warn("WebSocket JWT token 无效");
             throw new MessageDeliveryException("Invalid JWT token");
         }
+        if (sessionRegistry.enforced() && !jwtTokenProvider.hasCurrentSessionPolicy(token)) {
+            sessionRegistry.closeSession(accessor.getSessionId(), "session_revoked");
+            throw new MessageDeliveryException("Login session policy changed; sign in again");
+        }
         // Enforce session revocation: a revoked device can't (re)connect.
         String sid = jwtTokenProvider.getSessionTokenFromToken(token);
         if (sid != null && !sessionRepository.existsBySessionToken(sid)) {

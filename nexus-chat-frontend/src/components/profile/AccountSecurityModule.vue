@@ -285,6 +285,8 @@ import { useUserStore } from '@/stores/user'
 import { authAPI, securityAPI } from '@/services/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { disableTwoFactorWithProof } from '@/utils/twoFactorChange.js'
+import { loginErrorKey } from '@/utils/loginSecurity.js'
 import {
   Key, Lock, Monitor, Clock, Iphone, Platform, Refresh, ArrowRight,
   CircleCheck, Check, Warning, WarningFilled, CopyDocument
@@ -482,34 +484,51 @@ const verifyTwoFactorCode = async () => {
     twoFactorStep.value = 'codes'
     ElMessage.success(t('profile.twoFactorEnabledMsg'))
   } catch (error) {
-    const key = error?.response?.data?.message
-    const msg = key === 'error.auth.2fa.invalid.code'
-      ? t('profile.twoFactorInvalidCode')
-      : t('common.operationFailed')
-    ElMessage.error(msg)
+    const key = loginErrorKey(error)
+    ElMessage.error(t(['auth.twoFactorInvalid', 'auth.twoFactorUsed', 'auth.loginLocked', 'auth.twoFactorNotReady'].includes(key)
+      ? key : 'common.operationFailed'))
   } finally {
     verifying.value = false
   }
 }
 
 const disableTwoFactor = async () => {
-  if (!userId.value) return
-  try {
-    await ElMessageBox.confirm(t('profile.confirmDisable2fa'), t('profile.twoFactorAuth'), {
-      confirmButtonText: t('profile.disableAction'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning'
-    })
-  } catch (e) {
-    return // user cancelled
+  if (!userId.value || twoFactorBusy.value) return
+  const captured = userStore.captureSession()
+  if (!captured.storedToken || captured.token !== captured.storedToken) return
+  const isCurrent = () => {
+    const now = userStore.captureSession()
+    return ['revision', 'token', 'owner', 'storedToken', 'storedUser'].every(key => now[key] === captured[key])
   }
   twoFactorBusy.value = true
   try {
-    const { data } = await securityAPI.disableTwoFactor(userId.value)
-    twoFactorEnabled.value = !!data.twoFactorEnabled
+    try {
+      await ElMessageBox.confirm(t('profile.confirmDisable2fa'), t('profile.twoFactorAuth'), {
+        confirmButtonText: t('profile.disableAction'), cancelButtonText: t('common.cancel'), type: 'warning'
+      })
+    } catch (cancel) { return }
+    const result = await disableTwoFactorWithProof({
+      isCurrent,
+      disable: code => securityAPI.disableTwoFactor(captured.owner, code,
+        { owner: captured.owner, session: captured.storedToken }),
+      askCode: async () => {
+        const answer = await ElMessageBox.prompt(t('profile.twoFactorDisableProof'), t('profile.twoFactorAuth'), {
+          confirmButtonText: t('profile.verifyDisableAction'), cancelButtonText: t('common.cancel'),
+          inputType: 'text', inputPlaceholder: t('auth.twoFactorPlaceholder'),
+          inputValidator: value => (typeof value === 'string' && !!value.trim() && value.trim().length <= 32)
+            || t('profile.twoFactorDisableProof')
+        })
+        return answer.value
+      }
+    })
+    if (!result || !isCurrent()) return
+    twoFactorEnabled.value = result.data.twoFactorEnabled
     ElMessage.success(t('profile.twoFactorDisabledMsg'))
-  } catch (e) {
-    ElMessage.error(t('common.operationFailed'))
+  } catch (error) {
+    if (!isCurrent()) return
+    const key = loginErrorKey(error)
+    ElMessage.error(t(['auth.twoFactorInvalid', 'auth.twoFactorUsed', 'auth.loginLocked'].includes(key)
+      ? key : 'common.operationFailed'))
   } finally {
     twoFactorBusy.value = false
   }

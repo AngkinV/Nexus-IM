@@ -3,6 +3,7 @@ package com.nexus.chat.controller;
 import com.nexus.chat.dto.LoginHistoryDTO;
 import com.nexus.chat.dto.SecuritySettingsDTO;
 import com.nexus.chat.dto.SessionDTO;
+import com.nexus.chat.dto.TwoFactorRequest;
 import com.nexus.chat.service.SecurityService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -82,22 +83,22 @@ public class SecurityController {
     @PostMapping("/security/two-factor/verify")
     public ResponseEntity<Map<String, Object>> verifyTwoFactor(
             @PathVariable Long userId,
-            @RequestBody Map<String, String> body, HttpServletRequest request) {
+            @RequestBody TwoFactorRequest body, HttpServletRequest request) {
         assertSelf(userId);
-        return ResponseEntity.ok(securityService.confirmTwoFactor(userId, body.get("code"), (String) request.getAttribute("sessionToken")));
+        return ResponseEntity.ok(securityService.confirmTwoFactor(userId, body.getCode(), (String) request.getAttribute("sessionToken")));
     }
 
-    /** PUT /api/users/{userId}/security/two-factor { "enabled": false } — disable only */
+    /** PUT /api/users/{userId}/security/two-factor — disable, with an optional one-use proof. */
     @PutMapping("/security/two-factor")
     public ResponseEntity<SecuritySettingsDTO> disableTwoFactor(
             @PathVariable Long userId,
-            @RequestBody Map<String, Boolean> body, HttpServletRequest request) {
+            @RequestBody TwoFactorRequest body, HttpServletRequest request) {
         assertSelf(userId);
-        if (Boolean.TRUE.equals(body.get("enabled"))) {
+        if (Boolean.TRUE.equals(body.getEnabled())) {
             // Enabling requires the setup + verify flow, not a bare toggle.
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use the setup/verify flow to enable 2FA");
         }
-        return ResponseEntity.ok(securityService.setTwoFactorEnabled(userId, false, (String) request.getAttribute("sessionToken")));
+        return ResponseEntity.ok(securityService.setTwoFactorEnabled(userId, false, (String) request.getAttribute("sessionToken"), body.getCode()));
     }
 
     /** Reject access to another user's security data. */

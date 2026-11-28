@@ -84,7 +84,7 @@ export const useUserStore = defineStore('user', () => {
 
             return currentUser.value
         } catch (error) {
-            throw error.response?.data?.message || error.message || 'Login failed'
+            throw error.response?.data?.messageKey || error.response?.data?.message || error.message || 'Login failed'
         } finally {
             isLoading.value = false
         }

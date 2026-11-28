@@ -71,6 +71,16 @@ async function ws(f) {
     })).default
 }
 
+test('real UserStore preserves the stable factor code from a translated backend error and keeps auth intact', async () => {
+    const f = await setup(); f.persist(future); f.user.loadUserFromStorage()
+    f.authAPI.login = async () => { throw { response: { status: 400, data: {
+        messageKey: 'error.auth.2fa.required', message: 'Translated factor challenge'
+    } } } }
+    await assert.rejects(f.user.login('fixture', 'unit-only'), value => value === 'error.auth.2fa.required')
+    assert.equal(f.user.token, future); assert.equal(f.user.currentUser.id, 1)
+    assert.equal(f.memory.get('token'), future); assert.equal(f.clearCalls, 0); assert.equal(f.resetCalls, 0)
+})
+
 test('expired startup executes real UserStore without deleting business data', async () => {
     const f = await setup(); f.persist(expired)
     f.user.loadUserFromStorage()

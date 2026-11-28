@@ -16,12 +16,13 @@ const SIGN_OUT_REASONS = Object.freeze({
 })
 export const SIGN_OUT_STORAGE_KEY = 'nexus.signOutReason'
 
-function serverMessage(error) {
-  return typeof error === 'string' ? error : error?.response?.data?.message || error?.message
+export function authErrorCode(error) {
+  return typeof error === 'string' ? error : error?.response?.data?.messageKey
+    || error?.response?.data?.message || error?.message
 }
-export const needsSecondFactor = error => FACTOR_ERRORS.has(serverMessage(error))
+export const needsSecondFactor = error => FACTOR_ERRORS.has(authErrorCode(error))
 export const loginErrorKey = error => {
-  const message = serverMessage(error)
+  const message = authErrorCode(error)
   return typeof message === 'string' && Object.hasOwn(LOGIN_ERRORS, message) ? LOGIN_ERRORS[message] : 'auth.loginFailed'
 }
 export const signOutMessageKey = reason =>

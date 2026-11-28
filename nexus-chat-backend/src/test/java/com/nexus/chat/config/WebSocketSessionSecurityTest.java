@@ -46,6 +46,7 @@ class WebSocketSessionSecurityTest {
                 call.<Long>getArgument(0).equals(active.get(call.<String>getArgument(1))));
         ReflectionTestUtils.setField(jwt, "jwtSecret", UUID.randomUUID().toString() + UUID.randomUUID());
         ReflectionTestUtils.setField(jwt, "jwtExpiration", 120_000L);
+        ReflectionTestUtils.setField(jwt, "singleSession", true);
         registry = new WebSocketSessionRegistry(cache, new AuthSessionValidator(rows, new PublicAuthPolicy(true, true)));
         inbound = new WebSocketAuthChannelInterceptor(jwt, registry, presence, rows);
         outbound = new WebSocketSessionOutboundInterceptor(registry);
@@ -117,6 +118,22 @@ class WebSocketSessionSecurityTest {
         assertThrows(MessageDeliveryException.class, () -> send(legacy));
         verifyNoInteractions(cache, presence);
         assertFalse(registry.isSessionAuthorized("legacy"));
+    }
+
+    @Test void aLegacySharedSidJwtCannotReconnectEvenWhenItsSessionRowStillExists() throws Exception {
+        var socket = transport("legacy-shared", true);
+        String sid = UUID.randomUUID().toString(); active.put(sid, 7L);
+        JwtTokenProvider legacySigner = new JwtTokenProvider();
+        ReflectionTestUtils.setField(legacySigner, "jwtSecret", ReflectionTestUtils.getField(jwt, "jwtSecret"));
+        ReflectionTestUtils.setField(legacySigner, "jwtExpiration", 120_000L);
+        String legacy = legacySigner.generateToken(7L, "synthetic", sid);
+        assertTrue(jwt.validateToken(legacy)); assertFalse(jwt.hasCurrentSessionPolicy(legacy));
+        var connect = frame("legacy-shared", StompCommand.CONNECT, null, null);
+        connect.setNativeHeader("Authorization", "Bearer " + legacy);
+        assertThrows(MessageDeliveryException.class, () -> send(connect));
+        assertFalse(registry.isSessionAuthorized("legacy-shared"));
+        verify(socket).close(argThat(status -> status.getCode() == 4001));
+        verifyNoInteractions(cache, presence);
     }
 
     @Test void jwtExpiryAndUnavailableSessionStoreFailClosedOnAlreadyOpenConnections() throws Exception {

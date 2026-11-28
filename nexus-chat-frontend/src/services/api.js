@@ -173,8 +173,10 @@ export const securityAPI = {
     verifyTwoFactor: (userId, code) =>
         apiClient.post(`/users/${userId}/security/two-factor/verify`, { code }),
 
-    disableTwoFactor: (userId) =>
-        apiClient.put(`/users/${userId}/security/two-factor`, { enabled: false })
+    disableTwoFactor: (userId, code, ctx) =>
+        apiClient.put(`/users/${userId}/security/two-factor`, { enabled: false,
+            ...(typeof code === 'string' && code.trim() ? { code: code.trim() } : {}) },
+            { _settingsOwner: ctx?.owner, _settingsSession: ctx?.session })
 }
 
 // Chat API

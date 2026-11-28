@@ -668,6 +668,8 @@
     "twoFactorInvalidCode": "Incorrect code",
     "twoFactorSetupFailed": "Couldn't start setup, please try again",
     "confirmDisable2fa": "Disable two-factor authentication? Your account protection will be reduced.",
+    "twoFactorDisableProof": "Enter an authenticator code or an unused recovery code to confirm disabling two-step verification.",
+    "verifyDisableAction": "Verify & disable",
     "backupCodesHint": "Save these one-time backup codes somewhere safe. Each can be used once.",
     "savedBackupCodes": "I've saved them",
     "copied": "Copied",

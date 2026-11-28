@@ -49,10 +49,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (jwtTokenProvider.validateToken(token)) {
                 String sessionToken = jwtTokenProvider.getSessionTokenFromToken(token);
 
-                // Session-backed tokens: if the session was revoked, reject (401).
-                // Legacy tokens without a session id are left alone for compatibility.
+                // Public tokens must have been issued under fresh-sid semantics; legacy/local stays compatible.
                 Long userId = jwtTokenProvider.getUserIdFromToken(token);
-                if (!authValidator.active(userId, sessionToken)) {
+                if ((authValidator.enforced() && !jwtTokenProvider.hasCurrentSessionPolicy(token))
+                        || !authValidator.active(userId, sessionToken)) {
                     log.debug("会话已被吊销, 拒绝请求: {}", request.getRequestURI());
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     response.setContentType("application/json;charset=UTF-8");

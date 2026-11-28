@@ -101,11 +101,13 @@ class PublicLoginSecurityTest {
     }
 
     private void configure(boolean publicMode) {
+        ReflectionTestUtils.setField(jwt, "singleSession", publicMode);
         var policy = new PublicAuthPolicy(publicMode, publicMode);
         var audit = transactional(new LoginAuditService(history));
-        security = transactional(new SecurityService(sessions, history, settings, users, passwords, relay, policy, audit));
+        var throttle = new LoginThrottle(8, 15);
+        security = transactional(new SecurityService(sessions, history, settings, users, passwords, relay, policy, audit, throttle));
         auth = transactional(new AuthService(users, passwords, jwt, mock(VerificationCodeService.class), security,
-                mock(FileAccessService.class), mock(RegistrationPolicy.class), new LoginThrottle(8, 15), policy));
+                mock(FileAccessService.class), mock(RegistrationPolicy.class), throttle, policy));
     }
 
     @SuppressWarnings("unchecked") private <T> T transactional(T target) {
@@ -150,6 +152,31 @@ class PublicLoginSecurityTest {
         filter.doFilter(request, response, chain);
         assertEquals(401, response.getStatus()); assertNull(chain.getRequest());
         assertTrue(response.getContentAsString().contains("SESSION_REVOKED"));
+    }
+
+    @Test void aLegacySharedSidJwtIsRejectedAtRestEvenWithOneLiveRowButRemainsCompatibleLocally() throws Exception {
+        AuthResponse current = login(null);
+        assertEquals(1, liveRows().size()); assertTrue(active(sid(current)));
+        assertTrue(jwt.hasCurrentSessionPolicy(current.getToken()));
+        JwtTokenProvider legacySigner = new JwtTokenProvider();
+        ReflectionTestUtils.setField(legacySigner, "jwtSecret", ReflectionTestUtils.getField(jwt, "jwtSecret"));
+        ReflectionTestUtils.setField(legacySigner, "jwtExpiration", 120_000L);
+        String legacy = legacySigner.generateToken(user.getId(), user.getUsername(), sid(current));
+        assertTrue(jwt.validateToken(legacy)); assertFalse(jwt.hasCurrentSessionPolicy(legacy));
+        var publicValidator = transactional(new AuthSessionValidator(sessions, new PublicAuthPolicy(true, true)));
+        var request = new MockHttpServletRequest("GET", "/api/users/me");
+        request.addHeader("Authorization", "Bearer " + legacy);
+        var response = new MockHttpServletResponse(); var chain = new MockFilterChain();
+        new JwtAuthenticationFilter(jwt, sessions, publicValidator).doFilter(request, response, chain);
+        assertEquals(401, response.getStatus()); assertNull(chain.getRequest());
+        assertTrue(response.getContentAsString().contains("SESSION_REVOKED"));
+        configure(false);
+        var localRequest = new MockHttpServletRequest("GET", "/api/users/me");
+        localRequest.addHeader("Authorization", "Bearer " + legacy);
+        var localResponse = new MockHttpServletResponse(); var localChain = new MockFilterChain();
+        new JwtAuthenticationFilter(jwt, sessions).doFilter(localRequest, localResponse, localChain);
+        assertEquals(200, localResponse.getStatus()); assertNotNull(localChain.getRequest());
+        assertEquals(user.getId(), SecurityContextHolder.getContext().getAuthentication().getPrincipal());
     }
 
     @Test void failedPasswordOrMissingAndWrongFactorNeverReplacesTheActiveSession() {
@@ -248,12 +275,84 @@ class PublicLoginSecurityTest {
         assertTrue(inTransaction(() -> passwords.matches("new-synthetic-password", users.findById(user.getId()).orElseThrow().getPasswordHash())));
     }
 
+    @Test void disablingAnEnabledPublicFactorNeedsARealProofAtHttpAndDoesNotLogItsDto() throws Exception {
+        AuthResponse current = login(null); enrollRecovery();
+        var messages = new org.springframework.context.support.StaticMessageSource();
+        messages.addMessage("error.auth.2fa.required", java.util.Locale.US, "Translated second-factor challenge");
+        var validator = transactional(new AuthSessionValidator(sessions, new PublicAuthPolicy(true, true)));
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
+                new com.nexus.chat.controller.SecurityController(security))
+                .setControllerAdvice(new com.nexus.chat.exception.GlobalExceptionHandler(messages))
+                .addFilter(new JwtAuthenticationFilter(jwt, sessions, validator)).build();
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        String endpoint = "/api/users/" + user.getId() + "/security/two-factor";
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {
+            var missing = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(endpoint)
+                    .locale(java.util.Locale.US).header("Authorization", "Bearer " + current.getToken())
+                    .contentType("application/json").content("{\"enabled\":false}")).andReturn().getResponse();
+            assertEquals(400, missing.getStatus());
+            var challenge = json.readTree(missing.getContentAsString());
+            assertEquals("error.auth.2fa.required", challenge.get("messageKey").asText());
+            assertEquals("Translated second-factor challenge", challenge.get("message").asText());
+            assertTrue(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getTwoFactorEnabled()));
+            assertEquals("error.auth.2fa.invalid.code", assertThrows(BusinessException.class,
+                    () -> security.setTwoFactorEnabled(user.getId(), false, sid(current), "AAAA-2222")).getMessage());
+            assertTrue(active(sid(current)));
+            var disabled = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(endpoint)
+                    .header("Authorization", "Bearer " + current.getToken()).contentType("application/json")
+                    .content(json.writeValueAsString(Map.of("enabled", false, "code", RECOVERY)))).andReturn().getResponse();
+            assertEquals(200, disabled.getStatus()); assertFalse(json.readTree(disabled.getContentAsString()).get("twoFactorEnabled").asBoolean());
+            var stored = inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow());
+            assertFalse(stored.getTwoFactorEnabled()); assertNull(stored.getTwoFactorSecret()); assertNull(stored.getBackupCodes());
+            assertTrue(active(sid(current)));
+            var dto = new com.nexus.chat.dto.TwoFactorRequest(); dto.setCode(RECOVERY);
+            assertFalse(dto.toString().contains(RECOVERY));
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @Test void aRolledBackDisableRestoresTheConsumedRecoveryAndEnabledState() {
+        String current = sid(login(null)); enrollRecovery();
+        String before = inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getBackupCodes());
+        assertThrows(IllegalStateException.class, () -> inTransaction(() -> {
+            security.setTwoFactorEnabled(user.getId(), false, current, RECOVERY);
+            throw new IllegalStateException("synthetic-action-rollback");
+        }));
+        var stored = inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow());
+        assertTrue(stored.getTwoFactorEnabled()); assertEquals(before, stored.getBackupCodes()); assertTrue(active(current));
+        security.setTwoFactorEnabled(user.getId(), false, current, RECOVERY);
+        assertFalse(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getTwoFactorEnabled()));
+    }
+
+    @Test void sensitiveFactorFailuresUseTheExistingLoginLockInsteadOfCreatingAGuessCodeBypass() {
+        String current = sid(login(null)); enrollRecovery();
+        for (int i = 0; i < 8; i++) assertEquals("error.auth.2fa.invalid.code", assertThrows(BusinessException.class,
+                () -> security.setTwoFactorEnabled(user.getId(), false, current, "AAAA-2222")).getMessage());
+        assertEquals(LoginThrottle.LOCKED, assertThrows(BusinessException.class,
+                () -> security.setTwoFactorEnabled(user.getId(), false, current, RECOVERY)).getMessage());
+        assertEquals(LoginThrottle.LOCKED, assertThrows(BusinessException.class, () -> login(RECOVERY)).getMessage());
+        assertTrue(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getTwoFactorEnabled())); assertTrue(active(current));
+    }
+
+    @Test void aSuccessfulSecurityProofDoesNotClearPreviousFailedSignIns() {
+        String current = sid(login(null)); enrollRecovery();
+        for (int i = 0; i < 7; i++) assertThrows(BusinessException.class,
+                () -> security.setTwoFactorEnabled(user.getId(), false, current, "AAAA-2222"));
+        security.setTwoFactorEnabled(user.getId(), false, current, RECOVERY);
+        assertThrows(BusinessException.class, () -> auth.login(new LoginRequest(user.getUsername(), "incorrect"), "ip", "browser"));
+        assertEquals(LoginThrottle.LOCKED, assertThrows(BusinessException.class, () -> login(null)).getMessage());
+        assertTrue(active(current));
+    }
+
     @Test void defaultLocalBehaviorStillReusesTheDeviceAndDoesNotRequireTheSavedSecondFactor() {
         configure(false); enrollRecovery();
         AuthResponse first = login(null), second = login(null);
         assertEquals(sid(first), sid(second)); assertEquals(1, liveRows().size());
+        assertFalse(jwt.hasCurrentSessionPolicy(first.getToken()));
         assertFalse(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getBackupCodes()).isEmpty());
         verify(relay, never()).revokeSessions(anyLong(), anyList(), anyString());
+        security.setTwoFactorEnabled(user.getId(), false, sid(second));
+        assertFalse(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getTwoFactorEnabled()));
     }
 
     @Test void publicTokensNeedASessionAndCannotUseAnotherOwnersSessionOrAnExpiredOne() {
@@ -276,6 +375,10 @@ class PublicLoginSecurityTest {
         assertTrue(active(sid(result))); assertEquals(1, liveRows().size());
         UserSecuritySettings stored = inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow());
         assertFalse(stored.toString().contains(secret)); assertFalse(stored.toString().contains(stored.getBackupCodes()));
+        assertEquals("error.auth.2fa.code.used", assertThrows(BusinessException.class,
+                () -> security.setTwoFactorEnabled(user.getId(), false, sid(result), code)).getMessage());
+        assertTrue(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getTwoFactorEnabled()));
+        assertTrue(active(sid(result)));
     }
 
     @Test void setupMustBeConfirmedAndAcceptedTotpCannotBeReplayedOrRecoveriesRegeneratedByVerify() throws Exception {
@@ -289,8 +392,12 @@ class PublicLoginSecurityTest {
         assertEquals(true, confirmed.get("enabled")); assertEquals(10, ((List<?>) confirmed.get("backupCodes")).size());
         assertEquals("error.auth.2fa.code.used", assertThrows(BusinessException.class, () -> login(code)).getMessage());
         assertThrows(BusinessException.class, () -> security.confirmTwoFactor(user.getId(), code, current));
+        assertThrows(BusinessException.class, () -> security.beginTwoFactorSetup(user.getId(), current));
         String recovery = (String) ((List<?>) confirmed.get("backupCodes")).get(0);
         assertTrue(active(sid(login(recovery))));
         assertThrows(BusinessException.class, () -> security.setTwoFactorEnabled(user.getId(), false, current));
+        String unused = (String) ((List<?>) confirmed.get("backupCodes")).get(1);
+        assertThrows(BusinessException.class, () -> security.setTwoFactorEnabled(user.getId(), false, current, unused));
+        assertTrue(inTransaction(() -> settings.findByUserId(user.getId()).orElseThrow().getTwoFactorEnabled()));
     }
 }

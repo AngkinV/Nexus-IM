@@ -23,6 +23,15 @@ test('only stable backend factor challenges disclose the second factor input', (
   }
 })
 
+test('real translated exception bodies use the stable messageKey instead of localized prose', () => {
+  const error = { response: { status: 400, data: { messageKey: 'error.auth.2fa.required', message: 'Translated challenge' } } }
+  assert.equal(needsSecondFactor(error), true); assert.equal(loginErrorKey(error), 'auth.twoFactorRequired')
+  error.response.data.messageKey = 'error.auth.2fa.invalid.code'
+  assert.equal(loginErrorKey(error), 'auth.twoFactorInvalid')
+  error.response.data.messageKey = 'constructor'
+  assert.equal(needsSecondFactor(error), false); assert.equal(loginErrorKey(error), 'auth.loginFailed')
+})
+
 test('trusted sign-out reasons are one-shot and never hold tokens or arbitrary server text', () => {
   for (const reason of ['new_login', 'password_changed', 'logout', 'session_revoked']) {
     rememberSignOut(reason)

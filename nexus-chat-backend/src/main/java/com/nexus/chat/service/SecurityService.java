@@ -54,6 +54,15 @@ public class SecurityService {
     private final RedisMessageRelay messageRelay;
     private final PublicAuthPolicy authPolicy;
     private final LoginAuditService loginAudit;
+    private final LoginThrottle loginThrottle;
+
+    /** Preserve direct callers; production shares the same failed-authentication counter as login. */
+    public SecurityService(UserSessionRepository sessions, LoginHistoryRepository history,
+                           UserSecuritySettingsRepository settings, UserRepository users,
+                           PasswordEncoder passwords, RedisMessageRelay relay,
+                           PublicAuthPolicy policy, LoginAuditService audit) {
+        this(sessions, history, settings, users, passwords, relay, policy, audit, new LoginThrottle(0, 15));
+    }
 
     /** Existing direct callers keep local defaults; Spring supplies the public policy. */
     public SecurityService(UserSessionRepository sessions, LoginHistoryRepository history,
@@ -345,6 +354,11 @@ public class SecurityService {
         lockSecurityUser(userId);
         UserSecuritySettings settings = securityRepository.findByUserId(userId).orElse(null);
         if (settings == null || !Boolean.TRUE.equals(settings.getTwoFactorEnabled())) return;
+        acceptSecondFactor(settings, supplied);
+    }
+
+    /** The same atomic verifier serves login and explicitly reauthenticated security changes. */
+    private void acceptSecondFactor(UserSecuritySettings settings, String supplied) {
         if (settings.getTwoFactorSecret() == null || settings.getTwoFactorSecret().isBlank()) {
             throw new BusinessException("error.auth.2fa.not.setup");
         }
@@ -387,9 +401,26 @@ public class SecurityService {
 
     @Transactional
     public SecuritySettingsDTO setTwoFactorEnabled(Long userId, boolean enabled, String currentToken) {
+        return setTwoFactorEnabled(userId, enabled, currentToken, null);
+    }
+
+    @Transactional
+    public SecuritySettingsDTO setTwoFactorEnabled(Long userId, boolean enabled, String currentToken, String code) {
         lockSecurityUser(userId);
         requireCurrentSession(userId, currentToken);
         UserSecuritySettings s = getOrCreateSettings(userId);
+        if (!enabled && authPolicy.twoFactorLoginRequired() && Boolean.TRUE.equals(s.getTwoFactorEnabled())) {
+            String key = "user:" + userId;
+            if (code != null && !code.isBlank()) loginThrottle.requireAllowed(key);
+            try {
+                acceptSecondFactor(s, code);
+            } catch (BusinessException invalid) {
+                if (!"error.auth.2fa.required".equals(invalid.getMessage())
+                        && !"error.auth.2fa.not.setup".equals(invalid.getMessage())) loginThrottle.failed(key);
+                throw invalid;
+            }
+            // Only a fully successful login may reset prior failed sign-ins, not this security action.
+        }
         if (enabled && authPolicy.twoFactorLoginRequired()
                 && (!Boolean.TRUE.equals(s.getTwoFactorEnabled())
                     || s.getTwoFactorSecret() == null || s.getTwoFactorSecret().isBlank())) {
