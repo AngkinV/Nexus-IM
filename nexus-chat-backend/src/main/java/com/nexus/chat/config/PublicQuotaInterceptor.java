@@ -43,7 +43,7 @@ public class PublicQuotaInterceptor implements HandlerInterceptor {
             "/api/agent/chats/*/summarize", "/api/agent/chats/*/todo-extract", "/api/agent/chats/*/reply-suggest",
             "/api/agent/providers/*/test", "/api/agent/mcp/servers/*/test", "/api/agent/mcp/servers/*/tools/refresh",
             "/api/companion/messages", "/api/companion/messages/stream", "/api/companion/inner-voice/*",
-            "/api/companion/model-test/*");
+            "/api/companion/model-test/*", "/api/companion/skills/*/versions/*/trial");
     private static final AntPathMatcher PATHS = new AntPathMatcher();
 
     private static final class Usage {

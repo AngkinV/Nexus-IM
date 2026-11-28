@@ -17,4 +17,14 @@ public class CompanionMemoryDTO {
     private Boolean confirmed;
     private Boolean shared;
     private LocalDateTime createdAt;
+    private Long sourceSessionId;
+    private Long sourceMessageId;
+    private LocalDateTime occurredAt;
+    private LocalDateTime sourceCreatedAt;
+    private Long correctsId;
+
+    public CompanionMemoryDTO(Long id, Long roleId, String type, String content, Boolean confirmed, Boolean shared, LocalDateTime createdAt) {
+        this.id=id; this.roleId=roleId; this.type=type; this.content=content;
+        this.confirmed=confirmed; this.shared=shared; this.createdAt=createdAt;
+    }
 }

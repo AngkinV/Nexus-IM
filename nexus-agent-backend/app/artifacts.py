@@ -226,7 +226,7 @@ def _display_name(explicit: str | None, kind: str, language: str) -> str:
         cleaned = explicit.strip().strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].strip()
         if cleaned and ".." not in cleaned and len(cleaned) <= 120 and not cleaned.startswith("."):
             return cleaned
-    extension = _GRAPH_EXTENSION.get(language) or {"json": "json", "patch": "patch", "markdown": "md"}.get(kind) or (
+    extension = _GRAPH_EXTENSION.get(language) or {"json": "json", "skill": "json", "patch": "patch", "markdown": "md"}.get(kind) or (
         _EXTENSION_ALIASES.get(language) or language if _EXTENSION.fullmatch(language or "") else "txt")
     return f"artifact.{extension}"
 
@@ -241,6 +241,14 @@ def _kind(language: str, content: str) -> str:
                 return "json"
             except ValueError:
                 return "code"
+        return "code"
+    if language in ("nexus-skill", "skill"):
+        try:
+            package = json.loads(content, parse_constant=_reject_constant)
+            if isinstance(package, dict) and isinstance(package.get("files"), dict) and isinstance(package["files"].get("SKILL.md"), str):
+                return "skill"
+        except ValueError:
+            pass
         return "code"
     if language in ("diff", "patch"):
         return "patch"

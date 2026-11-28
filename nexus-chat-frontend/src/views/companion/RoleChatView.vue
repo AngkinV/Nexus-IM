@@ -80,6 +80,7 @@
         </button>
       </div>
     </header>
+    <CompanionContextNote :receipt="contextReceipt" style="padding-inline:16px" />
 
     <ModelSettingsPanel v-model:open="modelPanelOpen" @saved="refreshModelChannel" />
 
@@ -391,6 +392,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { SERVER_BASE_URL } from '@/services/runtimeConfig'
 import { assetRequest } from '@/utils/assetRequest'
 import RoleDossier from '@/components/companion/RoleDossier.vue'
+import CompanionContextNote from '@/components/companion/CompanionContextNote.vue'
 import MindOrbit from '@/components/companion/MindOrbit.vue'
 import ModelSettingsPanel from '@/components/companion/ModelSettingsPanel.vue'
 import TavernBusy from '@/components/companion/TavernBusy.vue'
@@ -412,6 +414,7 @@ const {
   isLoadingRoleData, isSending: sending, speaking, liveState, lastContext
 } = storeToRefs(companionStore)
 
+const contextReceipt = computed(() => lastContext.value?.contextReceipt || [...messages.value].reverse().find(m => m.contextReceipt)?.contextReceipt || null)
 const draft = ref('')
 // The dossier is reference material, not something every message needs: closed
 // until asked for.

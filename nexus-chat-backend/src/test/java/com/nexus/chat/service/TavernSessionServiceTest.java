@@ -152,7 +152,7 @@ class TavernSessionServiceTest {
         verify(messages).findBySessionIdOrderByIdDesc(SESSION, PageRequest.of(0, 30));
         verify(sessions).save(session);
         verify(messages).save(any(CompanionMessage.class));
-        verify(memories).save(any(CompanionMemory.class));
+        verify(memories,never()).save(any(CompanionMemory.class));
         verify(transactionManager).getTransaction(any(TransactionDefinition.class));
         verify(transactionManager).commit(transaction);
         verifyNoMoreInteractions(transactionManager);
@@ -174,7 +174,6 @@ class TavernSessionServiceTest {
         assertEquals(CLOSING.closingLine(), result.getClosingLine());
         assertEquals(CLOSING.summary(), result.getSummary());
         var last = ArgumentCaptor.forClass(CompanionMessage.class);
-        var memory = ArgumentCaptor.forClass(CompanionMemory.class);
         verify(messages).findBySessionIdOrderByIdDesc(SESSION, PageRequest.of(0, 30));
         var order = inOrder(model, transactionManager, sessions, messages, memories);
         order.verify(model).generateClosing(role, history, resolved.binding(), resolved.credential(), SCENE);
@@ -182,7 +181,6 @@ class TavernSessionServiceTest {
         order.verify(sessions).findByIdAndUserId(SESSION, USER);
         order.verify(sessions).save(session);
         order.verify(messages).save(last.capture());
-        order.verify(memories).save(memory.capture());
         order.verify(messages).countBySessionId(SESSION);
         order.verify(transactionManager).commit(transaction);
         // No whole-conversation history lookup or other session can be added unnoticed.
@@ -195,12 +193,8 @@ class TavernSessionServiceTest {
         assertEquals(CompanionMessage.SenderType.role, last.getValue().getSenderType());
         assertEquals(CLOSING.closingLine(), last.getValue().getContent());
         assertFalse(last.getValue().getFallback());
-        assertEquals(USER, memory.getValue().getUserId());
-        assertEquals(ROLE, memory.getValue().getRoleId());
-        assertEquals(CLOSING.summary(), memory.getValue().getContent());
-        assertEquals(CompanionMemory.MemoryType.long_term, memory.getValue().getMemoryType());
-        assertFalse(memory.getValue().getConfirmed());
-        assertFalse(memory.getValue().getShared());
+        // Keep the model summary in the archive, never invent a user fact from it.
+        verifyNoInteractions(memories);
     }
 
     @ParameterizedTest
@@ -292,7 +286,7 @@ class TavernSessionServiceTest {
             verify(model).generateClosing(role, history, resolved.binding(), resolved.credential(), SCENE);
             verify(sessions).save(session);
             verify(messages).save(any(CompanionMessage.class));
-            verify(memories).save(any(CompanionMemory.class));
+            verify(memories,never()).save(any(CompanionMemory.class));
         } finally {
             finishModel.countDown();
             executor.shutdownNow();
@@ -622,4 +616,18 @@ class TavernSessionServiceTest {
             assertNotNull(lease);
         }
     }
+    @Test void closingCandidateComesFromUserSourceNotGeneratedSummary() {
+        var history=ownSessionWithHistory();history.get(0).setContent("我喜欢简短回复");var resolved=configuredModel();
+        when(model.generateClosing(role,history,resolved.binding(),resolved.credential(),SCENE)).thenReturn(CLOSING);
+        service.closeSession(USER,SESSION);
+        verify(memories).save(argThat(m -> m.getContent().equals("用户表示：我喜欢简短回复") && m.getSourceMessageId().equals(101L)
+                && m.getSourceSessionId().equals(SESSION) && !m.getConfirmed() && !m.getContent().equals(CLOSING.summary())));
+    }
+    @Test void fallbackMayKeepActualUserPreferenceButNeverItsOwnFarewellAsFact() {
+        var history=ownSessionWithHistory();history.get(0).setContent("我喜欢简短回复");
+        when(resolver.resolve(USER,ROLE)).thenReturn(new CompanionModelResolver.Resolved(null,null,false));
+        when(fallback.generateFarewell(role)).thenReturn("路上小心。");service.closeSession(USER,SESSION);
+        verify(memories).save(argThat(m -> m.getSourceMessageId().equals(101L) && m.getContent().equals("用户表示：我喜欢简短回复")));
+    }
+
 }

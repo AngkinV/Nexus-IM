@@ -568,7 +568,7 @@ export const useCompanionStore = defineStore('companion', () => {
             }
         }
         if (Array.isArray(data.memoryIds)) {
-            lastContext.value = { ...(lastContext.value || {}), sessionId: data.sessionId, memoryIds: data.memoryIds }
+            lastContext.value = { ...(lastContext.value || {}), sessionId: data.sessionId, memoryIds: data.memoryIds, contextReceipt: data.contextReceipt || data.roleMessage?.contextReceipt || null }
         }
     }
 

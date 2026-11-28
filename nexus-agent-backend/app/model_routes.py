@@ -97,3 +97,25 @@ async def stream(request: Completion, ctx: dict = Depends(verify_internal_signat
                 yield encode(name,payload)
 
     return StreamingResponse(frames(), media_type='text/event-stream', headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
+
+
+class Embedding(ModelOperation):
+    inputs: list[str] = Field(min_length=1, max_length=64)
+    timeoutSec: int = Field(default=15, ge=1, le=60)
+
+    @model_validator(mode='after')
+    def bound_embedding(self):
+        if (any(not s.strip() or len(s) > 8_000 for s in self.inputs)
+                or sum(len(s.encode('utf-8')) for s in self.inputs) > 262_144):
+            raise ValueError('Embedding input exceeds its bounds')
+        return self
+
+
+async def embed(request: Embedding, ctx: dict = Depends(verify_internal_signature)):
+    cfg = channel(request, ctx, 'embed')
+    if request.purpose != 'embedding':
+        raise HTTPException(400, 'Embedding credentials required')
+    return await model_service.embed(cfg, request.inputs, request.timeoutSec)
+
+
+router.add_api_route('/embed', embed, methods=['POST'])

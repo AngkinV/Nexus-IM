@@ -12,6 +12,10 @@ public interface CompanionMessageRepository extends JpaRepository<CompanionMessa
     List<CompanionMessage> findByConversationIdOrderByCreatedAtDesc(Long conversationId, Pageable pageable);
     List<CompanionMessage> findBySessionIdOrderByCreatedAtAsc(Long sessionId);
     Integer countBySessionId(Long sessionId);
+    @org.springframework.data.jpa.repository.Query("select m from CompanionMessage m where m.userId=:owner and m.roleId=:role and m.memoryProcessed=false and m.senderType=:sender and m.id>:after order by m.id asc")
+    List<CompanionMessage> findPendingMemory(Long owner,Long role,Long after,CompanionMessage.SenderType sender,Pageable pageable);
+    @org.springframework.data.jpa.repository.Query("select m from CompanionMessage m where m.userId=:userId and m.sessionId=:sessionId and m.id>:after and m.id<:before order by m.id asc")
+    List<CompanionMessage> findSummarySource(Long userId, Long sessionId, Long after, Long before, Pageable pageable);
 
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("delete from CompanionMessage m where m.userId = :userId and m.roleId = :roleId")

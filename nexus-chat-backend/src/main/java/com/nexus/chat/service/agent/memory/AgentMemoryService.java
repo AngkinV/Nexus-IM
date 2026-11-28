@@ -99,7 +99,11 @@ public class AgentMemoryService {
         return List.of();
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.nexus.chat.repository.agent.AgentSessionSummaryRepository summaries;
+
     public void clearShortTerm(Long userId, String sessionId) {
+        if (summaries != null) summaries.deleteByUserIdAndSessionId(userId,sessionId);
         var keys=redisTemplate.keys(sessionPrefix(userId,sessionId)+"*");
         if(keys!=null&&!keys.isEmpty()) redisTemplate.delete(keys);
         // Pre-scope keys are never read again, but their transcript must still be removed.
@@ -107,14 +111,37 @@ public class AgentMemoryService {
                 "agent:ctx:" + userId + ":" + sessionId, "agent:tool:" + userId + ":" + sessionId));
     }
 
+    public record MemoryView(Long id,String content,Boolean confirmed,String sourceRunId,String sourceSessionId,java.time.LocalDateTime createdAt) {}
+    public List<MemoryView> listSession(Long owner,String session) {
+        return longMemoryRepository.findSessionActive(owner,session,org.springframework.data.domain.PageRequest.of(0,256)).stream()
+                .map(m -> new MemoryView(m.getId(),m.getContent(),m.getConfirmed(),m.getSourceRunId(),m.getSourceSessionId(),m.getCreatedAt())).toList();
+    }
+    @org.springframework.transaction.annotation.Transactional
+    public MemoryView confirmSessionMemory(Long owner,String session,Long id) {
+        var row=longMemoryRepository.findById(id).filter(m -> owner.equals(m.getUserId()) && session.equals(m.getSourceSessionId()) && Boolean.TRUE.equals(m.getIsActive()))
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND,"Memory not found"));
+        row.setConfirmed(true); longMemoryRepository.save(row);
+        var audit=new AgentMemoryAudit();audit.setMemoryId(id);audit.setAction("CONFIRM");audit.setOperatorType("USER");audit.setOperatorId(owner);audit.setReason("explicit_confirmation");memoryAuditRepository.save(audit);
+        return new MemoryView(row.getId(),row.getContent(),row.getConfirmed(),row.getSourceRunId(),session,row.getCreatedAt());
+    }
+
     public void resetLongTerm(Long actor) {
         for(var memory:longMemoryRepository.findByUserIdAndIsActiveTrue(actor)) disableLongTerm(memory.getId(),actor,"user_reset");
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.nexus.chat.repository.agent.AgentRunRecordRepository runRecords;
+
+    @org.springframework.transaction.annotation.Transactional
     public void disableLongTerm(Long memoryId, Long operatorUserId, String reason) {
         AgentLongMemory memory = longMemoryRepository.findById(memoryId).filter(m->operatorUserId.equals(m.getUserId()))
                 .orElseThrow(()->new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN));
-        memory.setIsActive(false);
+        if (memory.getSourceSessionId()!=null) {
+            if(scopes!=null) scopes.revokeSession(operatorUserId,memory.getSourceSessionId());
+            if(summaries!=null) summaries.deleteByUserIdAndSessionId(operatorUserId,memory.getSourceSessionId());
+            if(runRecords!=null) runRecords.suppressMemorySource(operatorUserId,memory.getSourceSessionId(),memory.getSourceRunId());
+        }
+        memory.setIsActive(false); memory.setContent(""); memory.setEmbeddingVector(null); memory.setEmbeddingRevision(null);
         longMemoryRepository.save(memory);
 
         AgentMemoryAudit audit = new AgentMemoryAudit();
@@ -163,7 +190,7 @@ public class AgentMemoryService {
         try { clearShortTerm(actor,session); } catch(RuntimeException e) { failure=e; }
         try {
             for(var memory:longMemoryRepository.findByUserIdAndSourceSessionId(actor,session)) {
-                memory.setIsActive(false); memory.setContent(""); longMemoryRepository.save(memory);
+                memory.setIsActive(false); memory.setContent(""); memory.setEmbeddingVector(null); memory.setEmbeddingRevision(null); longMemoryRepository.save(memory);
             }
         } catch(RuntimeException e) { if(failure==null) failure=e; else failure.addSuppressed(e); }
         if(failure!=null) throw failure;

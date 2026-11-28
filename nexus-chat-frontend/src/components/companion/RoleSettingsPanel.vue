@@ -143,6 +143,7 @@
         <button class="role-btn" type="button" @click="modelPanelOpen = true">{{ $t('companion.modelSettings.trigger') }}</button>
         <ModelSettingsPanel v-model:open="modelPanelOpen" />
       </section>
+      <section class="role-section"><RoleSkillsPanel :role-id="activeRole.id" /></section>
     </template>
   </div>
 </template>
@@ -157,6 +158,7 @@ import { useUserStore } from '@/stores/user'
 import { useSettingsStore } from '@/stores/settings'
 import { userAPI, companionAPI } from '@/services/api'
 import ModelSettingsPanel from './ModelSettingsPanel.vue'
+import RoleSkillsPanel from './RoleSkillsPanel.vue'
 import { useRoleModelTarget } from '@/composables/useRoleModelTarget'
 
 const { t } = useI18n()

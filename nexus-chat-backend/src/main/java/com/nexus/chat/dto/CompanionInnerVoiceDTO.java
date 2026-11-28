@@ -17,4 +17,8 @@ public class CompanionInnerVoiceDTO {
     private String text;
     private boolean generated;
     private String reason;
+    private com.fasterxml.jackson.databind.JsonNode contextReceipt;
+    public CompanionInnerVoiceDTO(Long roleId, String text, boolean generated, String reason) {
+        this(roleId, text, generated, reason, null);
+    }
 }
