@@ -37,6 +37,11 @@ public class AgentRunRecord {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name="memory_processed")
+    private Boolean memoryProcessed=false;
+    @Column(name="memory_suppressed")
+    private Boolean memorySuppressed=false;
+
     @Column(name = "payload_json", nullable = false, columnDefinition = "LONGTEXT")
     private String payloadJson;
 }

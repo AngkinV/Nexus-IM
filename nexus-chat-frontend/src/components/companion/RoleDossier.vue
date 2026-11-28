@@ -107,10 +107,12 @@
         <div v-else class="memory-list">
           <div v-for="memory in memories" :key="memory.id" class="memory-card">
             <div class="memory-content">{{ memory.content }}</div>
+            <small class="memory-provenance">{{ memory.confirmed ? mt('confirmed') : mt('candidate') }}<span v-if="memory.sourceMessageId"> · {{ mt('source', {id:memory.sourceMessageId}) }}</span><span v-if="memory.sourceCreatedAt"> · {{ mt('sent', {time:dayjs(memory.sourceCreatedAt).format('YYYY-MM-DD HH:mm')}) }}</span><span v-if="memory.correctsId"> · {{ mt('corrected', {id:memory.correctsId}) }}</span></small>
             <div class="memory-foot">
               <span class="memory-type">{{ typeLabel(memory.type) }}</span>
               <span v-if="memory.confirmed" class="memory-chip">{{ $t('companion.confirmed') }}</span>
               <div class="memory-actions">
+                <el-button link size="small" :disabled="memoryBusy" @click="correctMemory(memory)">{{ mt('correct') }}</el-button>
                 <button
                   v-if="!memory.confirmed"
                   class="memory-act"
@@ -141,17 +143,22 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import api from '@/services/api'
 import { useCompanionStore } from '@/stores/companion'
 import { useUserStore } from '@/stores/user'
 import dayjs from 'dayjs'
 
 const emit = defineEmits(['close'])
 
-const { t } = useI18n()
+const { t } = useI18n({useScope:'global'})
+const {t:mt}=useI18n({useScope:'local',messages:{zh:{candidate:'未确认候选',confirmed:'已确认',source:'来源消息 {id}',sent:'发送于 {time}',corrected:'更正条目 {id}',correct:'更正',correctTitle:'确认新的记忆内容',correctHelp:'确认后替换旧事实，旧摘要退出召回，原聊天历史保留。',confirm:'确认更正',cancel:'取消',invalid:'请输入 1–4000 字的记忆'},en:{candidate:'Unconfirmed candidate',confirmed:'Confirmed',source:'Source message {id}',sent:'Sent {time}',corrected:'Corrects item {id}',correct:'Correct',correctTitle:'Confirm corrected memory',correctHelp:'Confirmation replaces the old fact and invalidates its recall summaries. Original chat stays available.',confirm:'Confirm correction',cancel:'Cancel',invalid:'Enter 1–4000 characters'}}})
+const memoryBusy=ref(false)
+let memoryEpoch=0
 const userStore = useUserStore()
 const companionStore = useCompanionStore()
 const { activeRole, activeRoleId, memories, growth, sessionHistory: sessions } = storeToRefs(companionStore)
+watch(()=>[activeRoleId.value,userStore.currentUser?.id],()=>{memoryEpoch++;memoryBusy.value=false})
 
 // The archive is fetched when the panel opens, not on app load — it is
 // reference material, and most visits never look at it.
@@ -246,6 +253,19 @@ async function confirmMemory(memory) {
   await companionStore.confirmMemory(userId(), memory.id)
 }
 
+async function correctMemory(memory) {
+  if(memoryBusy.value)return
+  const epoch=memoryEpoch, role=activeRoleId.value, owner=userStore.currentUser?.id, token=localStorage.getItem('token')
+  const current=()=>epoch===memoryEpoch&&role===activeRoleId.value&&owner===userStore.currentUser?.id&&token===localStorage.getItem('token')
+  let content
+  try {const r=await ElMessageBox.prompt(mt('correctHelp'),mt('correctTitle'),{inputValue:memory.content,confirmButtonText:mt('confirm'),cancelButtonText:mt('cancel'),inputValidator:v=>!!v?.trim()&&v.length<=4000 || mt('invalid'),customClass:'memory-correction-confirm'});content=r.value}catch{return}
+  if(!current())return
+  memoryBusy.value=true
+  try {const r=await api.put(`/companion/memories/${memory.id}`,{content},{_settingsOwner:owner,_settingsSession:token});if(current()&&r.data?.id){await companionStore.fetchMemories(owner,role);if(current())ElMessage.success(t('common.savedSuccess'))}}
+  catch(e){if(current())ElMessage.error(t('common.failed'))}
+  finally{if(current())memoryBusy.value=false}
+}
+
 async function removeMemory(memory) {
   await companionStore.deleteMemory(userId(), memory.id)
   ElMessage.success(t('common.delete') + ' ' + t('common.savedSuccess'))
@@ -253,6 +273,8 @@ async function removeMemory(memory) {
 </script>
 
 <style scoped>
+.memory-provenance{display:block;margin-top:5px;color:var(--el-text-color-secondary);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+
 .dossier {
   width: 300px;
   flex-shrink: 0;
@@ -604,4 +626,8 @@ async function removeMemory(memory) {
   color: #6f7274;
   font-size: 12px;
 }
+</style>
+
+<style>
+.memory-correction-confirm,.el-overlay:has(.memory-correction-confirm),.el-overlay-message-box:has(.memory-correction-confirm){z-index:23000 !important}
 </style>

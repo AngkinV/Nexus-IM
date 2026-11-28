@@ -24,6 +24,7 @@ public class CompanionChatResponse {
     private Boolean partial;
     /** Safe structured gateway error, separate from the role's words. */
     private JsonNode modelError;
+    private JsonNode contextReceipt;
 
     public CompanionChatResponse(CompanionMessageDTO userMessage, CompanionMessageDTO roleMessage,
                                  Boolean fallback, CompanionStatusDTO status) {

@@ -66,9 +66,17 @@ public class CompanionMessage {
     @Column(name = "client_msg_id", length = 64)
     private String clientMsgId;
 
+    /** Actual context receipt, persisted with the answer rather than inferred by the UI. */
+    @Column(name = "context_receipt", columnDefinition = "TEXT")
+    private String contextReceipt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    /** Null on legacy rows; false on newly created user messages until candidate extraction commits. */
+    @Column(name="memory_processed")
+    private Boolean memoryProcessed = false;
 
     public enum SenderType {
         user, role, system

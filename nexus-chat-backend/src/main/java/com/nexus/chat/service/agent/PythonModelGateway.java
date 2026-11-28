@@ -64,6 +64,19 @@ public class PythonModelGateway {
         return send(actor, cfg, completion(actor, "complete_stream", "chat", messages, temperature, maxTokens, timeoutSec), timeoutSec, onDelta);
     }
 
+    /** Explicit account embedding channel, signed exactly like chat requests. */
+    public JsonNode embed(long actor, AgentProviderService.ResolvedProvider cfg, List<String> inputs, int timeoutSec) {
+        if (inputs == null || inputs.isEmpty() || inputs.size() > 64
+                || inputs.stream().anyMatch(s -> s == null || s.isBlank() || s.length() > 8000)
+                || inputs.stream().mapToLong(s -> s.getBytes(StandardCharsets.UTF_8).length).sum() > 262144) {
+            throw new IllegalArgumentException("Embedding input exceeds bounds");
+        }
+        int timeout = Math.max(1, Math.min(60, timeoutSec));
+        ObjectNode body = request(actor, "embed", "embedding").put("timeoutSec", timeout);
+        body.set("inputs", mapper.valueToTree(inputs));
+        return send(actor, cfg, body, timeout, null);
+    }
+
     private ObjectNode request(long actor, String operation, String purpose) {
         return mapper.createObjectNode().put("actorUserId", actor).put("traceId", UUID.randomUUID().toString())
                 .put("operation", operation).put("purpose", purpose);

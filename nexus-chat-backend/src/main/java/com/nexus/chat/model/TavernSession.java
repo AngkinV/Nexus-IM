@@ -59,6 +59,24 @@ public class TavernSession {
     @Column(columnDefinition = "TEXT")
     private String summary;
 
+    /** Immutable persona/skill package snapshot for this visit. */
+    @Column(name = "skill_snapshot", columnDefinition = "MEDIUMTEXT")
+    private String skillSnapshot;
+
+    @Column(name = "rolling_summary", columnDefinition = "TEXT")
+    private String rollingSummary;
+
+    @Column(name = "summary_through_id")
+    private Long summaryThroughId;
+
+    /** Forget barrier: archive remains readable, but old raw turns cannot re-enter a summary. */
+    @Column(name = "summary_reset_through_id")
+    private Long summaryResetThroughId;
+
+    @Version
+    @Column(nullable=false,columnDefinition="bigint default 0")
+    private Long version=0L;
+
     public enum Status {
         active, closed
     }

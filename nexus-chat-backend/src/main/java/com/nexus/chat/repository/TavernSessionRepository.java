@@ -14,6 +14,13 @@ public interface TavernSessionRepository extends JpaRepository<TavernSession, Lo
     @org.springframework.data.jpa.repository.Query("delete from TavernSession s where s.userId = :userId and s.roleId = :roleId")
     int deleteHistory(Long userId, Long roleId);
 
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("update TavernSession s set s.rollingSummary=null, s.summary=null, s.summaryThroughId=null, s.summaryResetThroughId=:through, s.version=coalesce(s.version,0)+1 where s.userId=:userId and s.roleId=:roleId")
+    int invalidateSummaries(Long userId, Long roleId, Long through);
+
+    @org.springframework.data.jpa.repository.Query("select coalesce(max(s.summaryResetThroughId),0) from TavernSession s where s.userId=:owner and s.roleId=:role")
+    Long forgetBarrier(Long owner,Long role);
+
     /** The evening currently in progress for this role, if any. */
     Optional<TavernSession> findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(
             Long userId, Long roleId, TavernSession.Status status);

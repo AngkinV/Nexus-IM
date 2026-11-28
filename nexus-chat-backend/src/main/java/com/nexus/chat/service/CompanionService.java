@@ -50,6 +50,17 @@ public class CompanionService {
     private final CompanionModelResolver modelResolver;
     private final CompanionModelAssetCatalog modelAssetCatalog;
     private final UserAssetService userAssetService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nexus.chat.service.skills.CompanionSkillRuntime skillRuntime;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CompanionMemoryEngine memoryEngine;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private CompanionConversationGuard memoryWriteGuard;
+    private <T> T memoryWrite(Long owner,Long role,java.util.function.Supplier<T> action) {
+        if(memoryWriteGuard==null)return action.get();
+        try(var ignored=memoryWriteGuard.acquire(owner,role)){return action.get();}
+    }
 
     /** How {@link UserAssetService} addresses a model in a user's own library. */
     private static final String USER_MODEL_URL_PREFIX = UserAssetService.MODEL_URL_PREFIX;
@@ -287,6 +298,7 @@ public class CompanionService {
                             toMessageDTO(userMessage), toMessageDTO(next),
                             Boolean.TRUE.equals(next.getFallback()), currentStatus(userId, roleId));
                     replay.setSessionId(next.getSessionId());
+                    replay.setContextReceipt(com.nexus.chat.service.skills.CompanionSkillRuntime.receiptNode(next.getContextReceipt()));
                     return replay;
                 }
                 // The stored answer was cut short, so the retry is a real one:
@@ -309,15 +321,17 @@ public class CompanionService {
             session.setSceneKey(sceneKey);
             session.setStatus(TavernSession.Status.active);
             session.setStartedAt(LocalDateTime.now());
+            if (skillRuntime != null) skillRuntime.freeze(session, role);
             session = sessionRepository.save(session);
 
-            if (role.getGreeting() != null && !role.getGreeting().isBlank()) {
+            CompanionRole openingRole = skillRuntime == null ? role : skillRuntime.frame(userId, role, session, content).role();
+            if (openingRole.getGreeting() != null && !openingRole.getGreeting().isBlank()) {
                 opening = new CompanionMessage();
                 opening.setConversationId(conversation.getId());
                 opening.setUserId(userId);
                 opening.setRoleId(roleId);
                 opening.setSenderType(CompanionMessage.SenderType.role);
-                opening.setContent(role.getGreeting().trim());
+                opening.setContent(openingRole.getGreeting().trim());
                 opening.setFallback(false);
                 opening.setSessionId(session.getId());
                 messageRepository.save(opening);
@@ -350,19 +364,34 @@ public class CompanionService {
             roleRepository.save(role);
         }
 
+        if (memoryEngine != null) {
+            try { memoryEngine.recoverPending(userId,roleId); memoryEngine.capture(userMessage); }
+            catch (RuntimeException ignored) { log.warn("Memory candidate deferred; user message remains persisted"); }
+        }
+
         // ── What she is told ───────────────────────────────────────────────
         CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, roleId);
         CompanionModelBinding binding = resolved.binding();
         ModelCredential credential = resolved.credential();
-        List<CompanionMessage> history = sessionHistory(session.getId(), binding);
-        MemoryPick memories = pickMemories(userId, roleId);
+        List<CompanionMessage> history = memoryEngine == null ? sessionHistory(session.getId(), binding)
+                : memoryEngine.history(session, binding != null && binding.getContextHorizon() != null ? binding.getContextHorizon() : 128000);
+        MemoryPick memories = pickMemories(userId, roleId, resolved.usable() ? content : null);
         CompanionPromptBuilder.Context ctx = replyContext(userId, role, scene, binding, memories);
+        var skillFrame = skillRuntime == null ? null : skillRuntime.frame(userId, role, session, content);
+        if (skillFrame != null) ctx = skillFrame.decorate(ctx);
+        String receiptJson = com.nexus.chat.service.skills.CompanionSkillRuntime.encode(Map.of(
+                "skills", resolved.usable() && skillFrame != null ? skillFrame.skills() : List.of(),
+                "memoryIds", resolved.usable() ? memories.ids() : List.of(),
+                "memoryStatus", memories.status(), "memoryTotal", memories.total(), "memoryIndexed", memories.indexed(),
+                "memoryError", memories.error() == null ? "" : memories.error(), "modelRequestAttempted", resolved.usable(),
+                "summaryUsed", session.getRollingSummary() != null && !session.getRollingSummary().isBlank()));
 
         if (onEvent != null) {
             Map<String, Object> context = new java.util.LinkedHashMap<>();
             context.put("sessionId", session.getId());
             context.put("sceneKey", scene);
-            context.put("memoryIds", memories.ids());
+            context.put("memoryIds", resolved.usable() ? memories.ids() : List.of());
+            context.put("contextReceipt", com.nexus.chat.service.skills.CompanionSkillRuntime.receiptNode(receiptJson));
             context.put("historyCount", history.size());
             context.put("model", resolved.usable() ? binding.getModelName() : null);
             onEvent.accept("context", context);
@@ -445,6 +474,7 @@ public class CompanionService {
             roleMessage.setFallback(fallback);
             roleMessage.setSessionId(session.getId());
             roleMessage.setStateJson(CompanionStateTag.toJson(state, partial));
+            roleMessage.setContextReceipt(receiptJson);
             messageRepository.save(roleMessage);
         }
         if (completed && !fallback) updateGrowth(userId, roleId);
@@ -455,7 +485,8 @@ public class CompanionService {
         response.setOpeningMessage(opening == null ? null : toMessageDTO(opening));
         response.setSessionId(session.getId());
         response.setSceneKey(scene);
-        response.setMemoryIds(fallback ? List.of() : memories.ids());
+        response.setMemoryIds(resolved.usable() ? memories.ids() : List.of());
+        response.setContextReceipt(com.nexus.chat.service.skills.CompanionSkillRuntime.receiptNode(receiptJson));
         response.setPartial(partial);
         response.setModelError(modelError);
         return response;
@@ -481,7 +512,9 @@ public class CompanionService {
     }
 
     /** Which memories go in front of the model, and the ids to report back. */
-    private record MemoryPick(List<Long> ids, List<String> lines) {}
+    private record MemoryPick(List<Long> ids, List<String> lines, String status, long total, int indexed, String error) {
+        MemoryPick(List<Long> ids, List<String> lines) { this(ids, lines, "keyword", ids.size(), 0, null); }
+    }
 
     private static final int MEMORY_CONFIRMED_MAX = 8;
     private static final int MEMORY_RECENT_MAX = 4;
@@ -492,7 +525,12 @@ public class CompanionService {
      * they always go in (newest first, up to a cap); of the rest only the most
      * recent few do. Deleting a memory is therefore enough to make her forget it.
      */
-    private MemoryPick pickMemories(Long userId, Long roleId) {
+    private MemoryPick pickMemories(Long userId, Long roleId) { return pickMemories(userId, roleId, null); }
+    private MemoryPick pickMemories(Long userId, Long roleId, String query) {
+        if (memoryEngine != null) {
+            var r = memoryEngine.recall(userId, roleId, query);
+            return new MemoryPick(r.ids(), r.lines(), r.status(), r.total(), r.indexed(), r.error());
+        }
         List<CompanionMemory> all = memoryRepository.findByUserIdAndRoleIdOrderByCreatedAtDesc(userId, roleId);
         List<CompanionMemory> chosen = new ArrayList<>();
         int confirmed = 0;
@@ -536,8 +574,8 @@ public class CompanionService {
         CompanionModelBinding binding = resolved.binding();
         ModelCredential credential = resolved.credential();
         // Tonight's conversation if there is one; otherwise the tail of the last.
-        List<CompanionMessage> history = sessionRepository
-                .findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.active)
+        var voiceSession = sessionRepository.findFirstByUserIdAndRoleIdAndStatusOrderByStartedAtDesc(userId, roleId, TavernSession.Status.active);
+        List<CompanionMessage> history = voiceSession
                 .map(active -> sessionHistory(active.getId(), binding))
                 .orElseGet(() -> {
                     List<CompanionMessage> tail = new ArrayList<>(messageRepository
@@ -558,17 +596,25 @@ public class CompanionService {
                     resolved.configured() ? resolved.missing() : "no_model_configured");
         }
 
-        ModelReply reply = modelService.generateInnerVoice(
-                role, history, binding, credential, statusSummary, intimacy);
-
-        if (reply.success()) {
-            return new CompanionInnerVoiceDTO(roleId, reply.content(), true, null);
-        }
-        return new CompanionInnerVoiceDTO(roleId, null, false, reply.error().path("summary").asText());
+        var voiceFrame = skillRuntime == null ? null : skillRuntime.frame(userId, role, voiceSession.orElse(null),
+                history.stream().filter(m -> m.getSenderType() == CompanionMessage.SenderType.user).reduce((a,b) -> b).map(CompanionMessage::getContent).orElse(""));
+        var voiceContext = voiceFrame == null ? null : voiceFrame.decorate(replyContext(userId, role,
+                voiceSession.map(TavernSession::getSceneKey).orElse(null), binding, pickMemories(userId, roleId)));
+        // Do not teach a new scene persona the old scene's raw reply style.
+        if (voiceFrame != null && voiceSession.isEmpty()) history = List.of();
+        ModelReply reply = voiceContext == null ? modelService.generateInnerVoice(role, history, binding, credential, statusSummary, intimacy)
+                : modelService.generateInnerVoiceWithContext(voiceContext, history, binding, credential, statusSummary, intimacy);
+        var out = new CompanionInnerVoiceDTO(roleId, reply.success() ? reply.content() : null, reply.success(),
+                reply.success() ? null : reply.error().path("summary").asText());
+        if (voiceFrame != null) out.setContextReceipt(com.nexus.chat.service.skills.CompanionSkillRuntime.receiptNode(
+                com.nexus.chat.service.skills.CompanionSkillRuntime.encode(Map.of("skills", voiceFrame.skills(), "modelRequestAttempted", true))));
+        return out;
     }
 
     public List<CompanionMemoryDTO> getMemories(Long userId, Long roleId) {
-        List<CompanionMemory> memories = memoryRepository.findByUserIdAndRoleIdOrderByCreatedAtDesc(userId, roleId);
+        requireModelRole(userId, roleId);
+        List<CompanionMemory> memories = memoryEngine == null ? memoryRepository.findByUserIdAndRoleIdOrderByCreatedAtDesc(userId, roleId)
+                : memoryRepository.findActive(userId, roleId, PageRequest.of(0, 256));
         List<CompanionMemoryDTO> result = new ArrayList<>();
         for (CompanionMemory memory : memories) {
             result.add(toMemoryDTO(memory));
@@ -577,6 +623,9 @@ public class CompanionService {
     }
 
     public CompanionMemoryDTO createMemory(Long userId, Long roleId, String type, String content) {
+        requireModelRole(userId, roleId);
+        if (content == null || content.isBlank() || content.length() > 4000 || CompanionMemorySafety.containsCredential(content))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid or secret-bearing memory");
         CompanionMemory memory = new CompanionMemory();
         memory.setUserId(userId);
         memory.setRoleId(roleId);
@@ -590,20 +639,38 @@ public class CompanionService {
 
     public CompanionMemoryDTO confirmMemory(Long userId, Long memoryId) {
         CompanionMemory memory = memoryRepository.findByIdAndUserId(memoryId, userId)
+                .filter(m -> !Boolean.TRUE.equals(m.getDeleted()))
                 .orElseThrow(() -> new RuntimeException("memory not found"));
         memory.setConfirmed(true);
         memoryRepository.save(memory);
         return toMemoryDTO(memory);
     }
 
+    public CompanionMemoryDTO correctMemory(Long userId,Long memoryId,String content) {
+        if(memoryEngine==null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Memory engine unavailable");
+        var row=memoryRepository.findByIdAndUserId(memoryId,userId).filter(m -> !Boolean.TRUE.equals(m.getDeleted()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,"Memory not found"));
+        return memoryWrite(userId,row.getRoleId(),() -> toMemoryDTO(memoryEngine.correct(userId,memoryId,content)));
+    }
+
     public void deleteMemory(Long userId, Long memoryId) {
         CompanionMemory memory = memoryRepository.findByIdAndUserId(memoryId, userId)
+                .filter(m -> !Boolean.TRUE.equals(m.getDeleted()))
                 .orElseThrow(() -> new RuntimeException("memory not found"));
-        memoryRepository.delete(memory);
+        memoryWrite(userId,memory.getRoleId(),() -> {
+            if (memoryEngine != null) memoryEngine.forget(userId, memory);
+            else memoryRepository.delete(memory);
+            return null;
+        });
     }
 
     public void clearMemories(Long userId, Long roleId) {
-        memoryRepository.deleteByUserIdAndRoleId(userId, roleId);
+        requireModelRole(userId, roleId);
+        memoryWrite(userId,roleId,() -> {
+            if (memoryEngine != null) memoryEngine.forgetAll(userId, roleId);
+            else memoryRepository.deleteByUserIdAndRoleId(userId, roleId);
+            return null;
+        });
     }
 
     public CompanionGrowthDTO getGrowth(Long userId, Long roleId) {
@@ -745,6 +812,10 @@ public class CompanionService {
      * messages and drops the oldest until the estimate fits; the newest survives.
      */
     private List<CompanionMessage> sessionHistory(Long sessionId, CompanionModelBinding binding) {
+        if (memoryEngine != null) {
+            var persisted=sessionRepository.findById(sessionId);
+            if (persisted.isPresent()) return memoryEngine.history(persisted.get(),binding!=null&&binding.getContextHorizon()!=null?binding.getContextHorizon():128000);
+        }
         int horizon = binding != null && binding.getContextHorizon() != null && binding.getContextHorizon() > 0
                 ? binding.getContextHorizon() : 128_000;
         List<CompanionMessage> history = new ArrayList<>(messageRepository
@@ -982,12 +1053,13 @@ public class CompanionService {
                 msg.getSessionId(),
                 stateMap(msg.getStateJson()),
                 msg.getClientMsgId(),
-                CompanionStateTag.isPartial(msg.getStateJson()) ? Boolean.TRUE : null
+                CompanionStateTag.isPartial(msg.getStateJson()) ? Boolean.TRUE : null,
+                com.nexus.chat.service.skills.CompanionSkillRuntime.receiptNode(msg.getContextReceipt())
         );
     }
 
     private CompanionMemoryDTO toMemoryDTO(CompanionMemory memory) {
-        return new CompanionMemoryDTO(
+        CompanionMemoryDTO dto = new CompanionMemoryDTO(
                 memory.getId(),
                 memory.getRoleId(),
                 memory.getMemoryType().name(),
@@ -996,6 +1068,9 @@ public class CompanionService {
                 memory.getShared(),
                 memory.getCreatedAt()
         );
+        dto.setSourceSessionId(memory.getSourceSessionId()); dto.setSourceMessageId(memory.getSourceMessageId());
+        dto.setOccurredAt(memory.getOccurredAt()); dto.setSourceCreatedAt(memory.getSourceCreatedAt()); dto.setCorrectsId(memory.getCorrectsId());
+        return dto;
     }
 
     private CompanionGrowthDTO toGrowthDTO(CompanionGrowth growth) {

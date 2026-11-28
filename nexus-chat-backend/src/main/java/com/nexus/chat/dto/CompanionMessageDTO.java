@@ -31,4 +31,10 @@ public class CompanionMessageDTO {
      * offer a retry — which regenerates the reply under the same clientMsgId.
      */
     private Boolean partial;
+    private com.fasterxml.jackson.databind.JsonNode contextReceipt;
+
+    public CompanionMessageDTO(Long id, Long roleId, String senderType, String content, Boolean fallback,
+            LocalDateTime createdAt, Long sessionId, java.util.Map<String,String> state, String clientMsgId, Boolean partial) {
+        this(id, roleId, senderType, content, fallback, createdAt, sessionId, state, clientMsgId, partial, null);
+    }
 }

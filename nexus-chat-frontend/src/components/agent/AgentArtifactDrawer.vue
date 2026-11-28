@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onUnmounted, ref, shallowRef, useI
 import { useI18n } from 'vue-i18n'
 import { useAgentWorkspaceStore } from '@/stores/agentWorkspace'
 import { artifactFileName, artifactTabs, artifactText } from './artifactView.js'
+import RoleSkillsPanel from '../companion/RoleSkillsPanel.vue'
+import { isSkillArtifact } from '../companion/skillPackage'
 
 const props = defineProps({
   visible: Boolean,
@@ -26,7 +28,8 @@ const { t } = useI18n({ useScope: 'local', messages: {
     create: 'Create session tasks', checklist: 'Session tasks', export: 'Export tasks (JSON)', taskSaved: 'Task status saved.', taskCount: 'Stored tasks: {n}.',
     save: 'Save to session', saveGraph: 'Save graph to session', saved: 'Saved session attachment: {file}.',
     failed: 'The operation failed.', unconfirmed: 'The workspace did not return a saved record.', noSession: 'Select a session to save changes.',
-    loading: 'Loading workspace…', working: 'Working…', loadFailed: 'Could not load the workspace', retry: 'Retry'
+    loading: 'Loading workspace…', working: 'Working…', loadFailed: 'Could not load the workspace', retry: 'Retry',
+    skill: 'Save as role skill', skillFlow: 'Save draft, try the real model, then confirm publication.'
   },
   zh: {
     title: '产物预览', empty: '暂无产物', choose: '选择产物', switcher: '切换产物',
@@ -41,7 +44,8 @@ const { t } = useI18n({ useScope: 'local', messages: {
     create: '创建会话任务', checklist: '会话任务', export: '导出任务 (JSON)', taskSaved: '任务状态已保存。', taskCount: '已保存的任务：{n} 项。',
     save: '保存为会话附件', saveGraph: '保存拓扑为会话附件', saved: '已保存为会话附件：{file}。',
     failed: '操作失败。', unconfirmed: '工作区未返回已保存的记录。', noSession: '请选择会话后再保存。',
-    loading: '正在加载工作区…', working: '正在处理…', loadFailed: '无法加载工作区', retry: '重试'
+    loading: '正在加载工作区…', working: '正在处理…', loadFailed: '无法加载工作区', retry: '重试',
+    skill: '保存为角色技能', skillFlow: '先保存草稿、真实模型试聊，再确认发布。'
   }
 } })
 
@@ -102,6 +106,8 @@ const isTaskList = computed(() => {
   return Array.isArray(items) && items.length > 0 && items.every(item => nonblank(item) || nonblank(item?.title) || nonblank(item?.task))
 })
 
+const skillDialogOpen = ref(false)
+const skillArtifact = computed(() => isSkillArtifact(props.artifact))
 const loaded = ref(false), loading = ref(false), loadError = ref('')
 const patchOpen = ref(false), baseId = ref(''), reviewed = shallowRef(null)
 const busy = ref(''), notice = ref(''), error = ref('')
@@ -117,6 +123,7 @@ let scope = 0, loadSequence = 0, opener = null, closing = false
 // Every pending operation owns a generation. Changing away and back to the same
 // IDs must still invalidate the old continuation (including its catch/finally).
 function invalidate() {
+  skillDialogOpen.value = false
   scope++; reviewed.value = null; busy.value = ''; notice.value = ''; error.value = ''
 }
 function resetSelection() { invalidate(); patchOpen.value = false; baseId.value = '' }
@@ -361,6 +368,7 @@ function toggleTask(task, event) {
             <button type="button" class="secondary" :disabled="busy === 'apply'" @click="cancelPatch">{{ t('cancel') }}</button>
           </template>
           <template v-else>
+            <el-button v-if="skillArtifact" :disabled="!canWrite" :title="t('skillFlow')" @click="skillDialogOpen=true">{{ t('skill') }}</el-button>
             <button v-if="artifact.kind === 'patch'" ref="patchButton" type="button" class="primary" :disabled="!canWrite" @click="openPatch"><span class="material-symbols-outlined" aria-hidden="true">bolt</span>{{ t('apply') }}</button>
             <button v-else-if="isTaskList" type="button" class="primary" :disabled="!canWrite" @click="createTasks"><span class="material-symbols-outlined" aria-hidden="true">checklist</span>{{ t('create') }}</button>
             <button v-else type="button" class="primary" :disabled="!canWrite" @click="saveArtifact"><span class="material-symbols-outlined" aria-hidden="true">attach_file</span>{{ t(artifact.kind === 'graph' ? 'saveGraph' : 'save') }}</button>
@@ -371,6 +379,9 @@ function toggleTask(task, event) {
       </div>
     </template>
   </el-drawer>
+  <el-dialog v-model="skillDialogOpen" :title="t('skill')" width="min(720px,94vw)" :z-index="18000" append-to-body destroy-on-close>
+    <RoleSkillsPanel v-if="skillDialogOpen" :key="`${sessionId}:${artifact?.id}`" :seed-text="raw" :artifact-id="artifact?.id" :session-id="sessionId" />
+  </el-dialog>
 </template>
 
 <style scoped>

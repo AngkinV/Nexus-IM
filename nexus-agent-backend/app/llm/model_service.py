@@ -224,3 +224,55 @@ async def test_embedding(provider: dict | None, timeout: int) -> dict:
     except (httpx.RequestError, OSError):
         error = LLMError('NETWORK','Could not reach the embedding endpoint')
     return {'ok':False, 'message':error.summary,'error':diagnostic(error,provider,'test')}
+
+
+async def embed(provider: dict | None, inputs: list[str], timeout: int = 15) -> dict:
+    """Account-scoped inference. Never falls back to a server/chat credential."""
+    try:
+        if (not isinstance(inputs, list) or not 1 <= len(inputs) <= 64
+                or any(not isinstance(s, str) or not s.strip() or len(s) > 8_000 for s in inputs)
+                or sum(len(s.encode('utf-8')) for s in inputs) > 262_144):
+            raise ValueError('Embedding input exceeds its bounds')
+        cfg = explicit_channel(provider, needs_model=True)
+        if is_anthropic(cfg.name):
+            raise _RemoteFailure(LLMError('UNSUPPORTED', 'This channel does not expose embedding inference'))
+        gemini = is_gemini(cfg.name)
+        if gemini:
+            model = 'models/' + cfg.model.removeprefix('models/')
+            url = cfg.base_url + '/v1/' + quote(model, safe='/') + ':batchEmbedContents'
+            payload = {'requests': [{'model': model, 'content': {'parts': [{'text': s}]}} for s in inputs]}
+        else:
+            url = cfg.base_url + '/embeddings'
+            payload = {'model': cfg.model, 'input': inputs, 'encoding_format': 'float'}
+        async with asyncio.timeout(max(1, min(60, timeout))), httpx.AsyncClient(
+                transport=ModelTransport(), follow_redirects=False, trust_env=False) as client:
+            data = await _json(client, 'POST', url, headers=_headers(cfg), json=payload)
+        rows = data.get('embeddings' if gemini else 'data')
+        if not isinstance(rows, list) or len(rows) != len(inputs):
+            raise _RemoteFailure(LLMError('INVALID_RESPONSE', 'Embedding result count does not match the input'))
+        vectors = [None] * len(inputs)
+        dimension = None
+        for position, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise _RemoteFailure(LLMError('INVALID_RESPONSE', 'Malformed embedding entry'))
+            index = position if gemini else row.get('index', 0 if len(inputs) == 1 else None)
+            vector = row.get('values' if gemini else 'embedding')
+            if (type(index) is not int or not 0 <= index < len(inputs) or vectors[index] is not None
+                    or not isinstance(vector, list) or not 1 <= len(vector) <= 8192
+                    or not all(type(n) in (int, float) and math.isfinite(n) for n in vector)
+                    or dimension is not None and len(vector) != dimension):
+                raise _RemoteFailure(LLMError('INVALID_RESPONSE', 'Provider returned an invalid embedding vector'))
+            dimension = len(vector)
+            vectors[index] = vector
+        return {'ok': True, 'status': 'ready', 'vectors': vectors, 'dimension': dimension, 'error': None}
+    except _RemoteFailure as exc:
+        error = exc.error
+    except (UnsafeEndpoint, ValueError):
+        error = LLMError('CONFIG', 'Embedding channel or input is invalid')
+    except (httpx.TimeoutException, TimeoutError):
+        error = LLMError('TIMEOUT', 'Embedding request timed out')
+    except (httpx.RequestError, OSError):
+        error = LLMError('NETWORK', 'Could not reach the embedding endpoint')
+    except Exception:
+        error = LLMError('INVALID_RESPONSE', 'Embedding inference failed')
+    return {'ok': False, 'status': 'failed', 'vectors': [], 'error': diagnostic(error, provider, 'embed')}

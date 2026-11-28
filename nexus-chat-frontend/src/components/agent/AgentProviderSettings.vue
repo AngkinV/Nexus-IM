@@ -192,7 +192,7 @@ import {
 import { useAgentStore } from '@/stores/agent'
 import ProviderModelPicker from './ProviderModelPicker.vue'
 
-const props = defineProps({ visible: Boolean })
+const props = defineProps({ visible: Boolean, initialPurpose: { type:String, default:"chat", validator:v => ["chat","embedding"].includes(v) } })
 const emit = defineEmits(['update:visible'])
 const visibleModel = computed({
   get: () => props.visible,
@@ -203,7 +203,8 @@ const { t } = useI18n()
 const store = useAgentProvidersStore()
 const agentStore = useAgentStore()
 
-const activeTab = ref('chat') // 'chat' | 'embedding'
+const activeTab = ref(props.initialPurpose) // 'chat' | 'embedding'
+watch(() => props.visible, open => { if(open) activeTab.value=props.initialPurpose })
 const formDialog = ref(false)
 const saving = ref(false)
 const form = ref(emptyForm())

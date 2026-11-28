@@ -4,7 +4,7 @@ See `agent开发文档/Java 网关与 Python Agent 接口契约.md` §6.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 from .scope import AuthorizedScope
 
@@ -31,7 +31,27 @@ class AttachmentRef(BaseModel):
     sha256: str | None = None
 
 
+class ContextMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=6000)
+
+
+class ContextMemory(BaseModel):
+    scopeKey: str = Field(pattern=r"^[a-f0-9]{64}$")
+    sessionGeneration: int = Field(ge=1)
+    messages: list[ContextMessage] = Field(default_factory=list, max_length=40)
+    summary: str = Field(default="", max_length=3200)
+    summaryThrough: int = Field(default=0, ge=0)
+    source: Literal["mysql"]
+    recalled: list[str] = Field(default_factory=list,max_length=8)
+    memoryIds: list[int] = Field(default_factory=list,max_length=8)
+    memoryStatus: Literal["unconfigured","configured","ready","failed","rebuilding"] = "unconfigured"
+    memoryIndexed: int = Field(default=0,ge=0)
+    memoryError: str = Field(default="",max_length=160)
+
+
 class InputPayload(BaseModel):
+    contextMemory: ContextMemory | None = None
     text: str
     chatId: int | None = None
     # Resolved by Java; the model sees the text, and the source list cites it as A1, A2…
