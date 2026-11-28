@@ -52,6 +52,8 @@ public class TavernSessionService {
     private final CompanionMessageRepository messageRepository;
     private final CompanionMemoryRepository memoryRepository;
     private final CompanionModelResolver modelResolver;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CompanionMemoryEngine memoryEngine;
     private final CompanionModelService modelService;
     private final CompanionFallbackService fallbackService;
     private final CompanionConversationRepository conversationRepository;
@@ -60,6 +62,8 @@ public class TavernSessionService {
     private final CompanionConversationGuard conversationGuard;
     private final CompanionModelAssetCatalog modelAssetCatalog;
     private final UserAssetService userAssetService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.nexus.chat.service.skills.CompanionSkillRuntime skillRuntime;
     /** Accounts with an invite in flight. */
     private final Set<Long> inviting = ConcurrentHashMap.newKeySet();
 
@@ -105,7 +109,7 @@ public class TavernSessionService {
     }
 
     private TavernSessionDTO openSessionLocked(Long userId, Long roleId, String sceneKey) {
-        roleRepository.findByIdAndUserId(roleId, userId)
+        CompanionRole card = roleRepository.findByIdAndUserId(roleId, userId)
                 .orElseThrow(() -> new RuntimeException("role not found"));
 
         return tx.execute(status -> {
@@ -118,6 +122,7 @@ public class TavernSessionService {
                         fresh.setSceneKey(sceneKey);
                         fresh.setStatus(TavernSession.Status.active);
                         fresh.setStartedAt(LocalDateTime.now());
+                        if (skillRuntime != null) skillRuntime.freeze(fresh, card);
                         return sessionRepository.save(fresh);
                     });
 
@@ -165,6 +170,7 @@ public class TavernSessionService {
         List<CompanionMessage> history = new ArrayList<>(messageRepository
                 .findBySessionIdOrderByIdDesc(sessionId, PageRequest.of(0, CLOSING_HISTORY)));
         Collections.reverse(history);
+        if (session.getSummaryResetThroughId() != null) history.removeIf(m -> m.getId() != null && m.getId() <= session.getSummaryResetThroughId());
 
         // An evening in which nothing was said has nothing to close over: no
         // model call, no farewell to an empty room.
@@ -178,14 +184,21 @@ public class TavernSessionService {
         }
 
         CompanionModelResolver.Resolved resolved = modelResolver.resolve(userId, session.getRoleId());
+        var closingFrame = skillRuntime == null || role == null ? null : skillRuntime.frame(userId, role, session,
+                history.stream().filter(m -> m.getSenderType() == CompanionMessage.SenderType.user).reduce((a,b) -> b).map(CompanionMessage::getContent).orElse(""));
+        var closingContext = closingFrame == null ? null : closingFrame.decorate(new CompanionPromptBuilder.Context(role, session.getSceneKey(),
+                resolved.binding() == null ? null : resolved.binding().getPersonaLock(), null, null, List.of(), false));
         CompanionModelService.ClosingReply closing = resolved.usable()
-                ? modelService.generateClosing(role, history, resolved.binding(), resolved.credential(), session.getSceneKey())
-                : null;
+                ? (closingContext == null ? modelService.generateClosing(role, history, resolved.binding(), resolved.credential(), session.getSceneKey())
+                : modelService.generateClosing(closingContext, history, resolved.binding(), resolved.credential())) : null;
 
         boolean written = closing != null;
         String closingLine = written ? closing.closingLine() : fallbackService.generateFarewell(role);
         String summary = written ? closing.summary() : null;
         Long conversationId = history.get(0).getConversationId();
+        CompanionMessage source = history.stream().filter(m -> m.getSenderType() == CompanionMessage.SenderType.user
+                && CompanionMemorySafety.candidate(m.getContent()) != null).reduce((a,b) -> b).orElse(null);
+        String memoryText = source == null ? null : CompanionMemorySafety.candidate(source.getContent());
 
         return tx.execute(status -> {
             // Re-read inside the transaction: a second close that raced this one
@@ -209,17 +222,22 @@ public class TavernSessionService {
             last.setSenderType(CompanionMessage.SenderType.role);
             last.setContent(closingLine);
             last.setFallback(!written);
+            if (written && closingFrame != null) last.setContextReceipt(com.nexus.chat.service.skills.CompanionSkillRuntime.encode(
+                    Map.of("skills", closingFrame.skills(), "modelRequestAttempted", true, "memoryStatus", "not_requested")));
             last.setSessionId(current.getId());
             messageRepository.save(last);
 
-            // The sentence becomes a memory the user can see and delete —
-            // unconfirmed, because they may not want this evening to stick.
-            if (summary != null && !summary.isBlank()) {
+            // Only an actual low-sensitivity user source becomes an unconfirmed candidate.
+            // A model-written archive summary is never promoted to a user fact.
+            if (memoryText != null && !memoryText.isBlank() && !CompanionMemorySafety.containsCredential(memoryText)
+                    && !memoryRepository.existsByUserIdAndRoleIdAndSourceHash(userId, current.getRoleId(), CompanionMemorySafety.hash("message:"+source.getId()+":"+memoryText))) {
                 CompanionMemory memory = new CompanionMemory();
                 memory.setUserId(userId);
                 memory.setRoleId(current.getRoleId());
                 memory.setMemoryType(CompanionMemory.MemoryType.long_term);
-                memory.setContent(summary);
+                memory.setContent(memoryText);
+                memory.setSourceSessionId(current.getId()); memory.setSourceHash(CompanionMemorySafety.hash("message:"+source.getId()+":"+memoryText));
+                if (source != null) { memory.setSourceMessageId(source.getId()); memory.setSourceCreatedAt(source.getCreatedAt()); }
                 memory.setConfirmed(false);
                 memory.setShared(false);
                 memoryRepository.save(memory);

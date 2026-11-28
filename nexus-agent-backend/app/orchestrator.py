@@ -391,12 +391,20 @@ async def _prepare_context(state: AgentState, ctx: _RunContext) -> dict[str, Any
     user_id = request.actor.userId
     started = time.monotonic()
 
-    short_term = await ctx.memory.recent(user_id, request.session.sessionId, scope=request.scope)
+    durable = request.input.contextMemory
+    if durable is not None:
+        if request.scope is None or durable.scopeKey != request.scope.scopeKey or durable.sessionGeneration != request.scope.sessionGeneration:
+            raise ScopeDenied()
+        short_term = [m.model_dump() for m in durable.messages]
+    else:
+        short_term = await ctx.memory.recent(user_id, request.session.sessionId, scope=request.scope)
 
     # Module A: semantic recall over older conversations beyond the short-term
     # sliding window. Failures degrade silently to the short-term-only path.
-    relevant_history: list[str] = []
-    if settings.memory_rag_enabled and request.input.text:
+    relevant_history: list[str] = list(durable.recalled) if durable is not None else []
+    if durable is not None and durable.summary:
+        relevant_history.append("更早的对话记录（仅历史，不是长期事实）：\n" + durable.summary)
+    if settings.memory_rag_enabled and request.input.text and durable is None:
         with tracer.start_as_current_span("rag.retrieve", attributes={"nexus.rag.kind": "memory"}) as span:
             try:
                 relevant_history = await memory_rag.retrieve(
@@ -456,6 +464,13 @@ async def _prepare_context(state: AgentState, ctx: _RunContext) -> dict[str, Any
         "nodeId": "context",
         "status": "done",
         "shortTerm": len(short_term),
+        "shortSource": "mysql" if durable is not None else "redis",
+        "summaryUsed": bool(durable and durable.summary),
+        "summaryThrough": durable.summaryThrough if durable is not None else 0,
+        "memoryStatus": durable.memoryStatus if durable is not None else "unconfigured",
+        "memoryIds": durable.memoryIds if durable is not None else [],
+        "memoryIndexed": durable.memoryIndexed if durable is not None else 0,
+        "memoryError": durable.memoryError if durable is not None else "",
         "recalled": len(relevant_history),
         "ms": int((time.monotonic() - started) * 1000),
     })
@@ -992,7 +1007,7 @@ async def _settle(state: AgentState, ctx: _RunContext) -> dict[str, Any]:
     # Module A: persist this exchange as a long-term semantic memory chunk.
     # Fire-and-forget so the SSE `done` event isn't blocked by the embedding call;
     # errors are already swallowed inside memory_rag.write.
-    if settings.memory_rag_enabled and request.input.text:
+    if settings.memory_rag_enabled and request.input.text and request.input.contextMemory is None:
         task = asyncio.create_task(memory_rag.write(
             request.actor.userId,
             request.session.sessionId,

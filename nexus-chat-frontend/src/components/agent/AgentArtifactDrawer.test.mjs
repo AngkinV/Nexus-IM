@@ -25,7 +25,7 @@ before(async () => {
     server: { middlewareMode: true, hmr: false, watch: null, ws: false },
     optimizeDeps: { noDiscovery: true, include: [] }, logLevel: 'silent',
     plugins: [{ name: 'drawer-test-host', transform(source, id) {
-      if (id === file) return compileScript(parse(source, { filename: file }).descriptor, { id: 'drawer', inlineTemplate: true }).content
+      if (id.endsWith('.vue')) return compileScript(parse(source, { filename: id }).descriptor, { id: 'drawer', inlineTemplate: true }).content
     } }]
   })
   Drawer = (await server.ssrLoadModule('/src/components/agent/AgentArtifactDrawer.vue')).default

@@ -191,6 +191,7 @@ public class CompanionController {
         Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.getMemories(userId, roleId));
+        } catch (org.springframework.web.server.ResponseStatusException e) { throw e;
         } catch (Exception e) {
             log.error("Get memories failed", e);
             return ResponseEntity.badRequest().build();
@@ -207,6 +208,7 @@ public class CompanionController {
             String type = request.get("type") != null ? request.get("type").toString() : "mid";
             String content = request.get("content") != null ? request.get("content").toString() : "";
             return ResponseEntity.ok(companionService.createMemory(userId, roleId, type, content));
+        } catch (org.springframework.web.server.ResponseStatusException e) { throw e;
         } catch (Exception e) {
             log.error("Create memory failed", e);
             return ResponseEntity.badRequest().build();
@@ -220,10 +222,16 @@ public class CompanionController {
         Long userId = CurrentUser.require(claimedUserId);
         try {
             return ResponseEntity.ok(companionService.confirmMemory(userId, id));
+        } catch (org.springframework.web.server.ResponseStatusException e) { throw e;
         } catch (Exception e) {
             log.error("Confirm memory failed", e);
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    @PutMapping("/memories/{id}")
+    public CompanionMemoryDTO correctMemory(@PathVariable Long id,@RequestBody Map<String,String> body) {
+        return companionService.correctMemory(CurrentUser.require(null),id,body.get("content"));
     }
 
     @DeleteMapping("/memories/{id}")
@@ -234,6 +242,7 @@ public class CompanionController {
         try {
             companionService.deleteMemory(userId, id);
             return ResponseEntity.ok().build();
+        } catch (org.springframework.web.server.ResponseStatusException e) { throw e;
         } catch (Exception e) {
             log.error("Delete memory failed", e);
             return ResponseEntity.badRequest().build();
@@ -248,6 +257,7 @@ public class CompanionController {
         try {
             companionService.clearMemories(userId, roleId);
             return ResponseEntity.ok().build();
+        } catch (org.springframework.web.server.ResponseStatusException e) { throw e;
         } catch (Exception e) {
             log.error("Clear memories failed", e);
             return ResponseEntity.badRequest().build();

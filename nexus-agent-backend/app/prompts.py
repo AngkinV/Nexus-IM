@@ -31,6 +31,21 @@ SYSTEM_PROMPT = (
     "拿到 chatId 后再调 get_recent_messages 获取消息内容。**禁止凭空编造 chatId。**\n"
 )
 
+SKILL_WRITER_GUIDE = (
+    "【酒馆技能草稿格式】仅当用户要求制作/编辑 Skills、技能包或角色人格时使用。\n"
+    "输出一个 nexus-skill 语言的 fenced code block，块内必须是严格 JSON："
+    "{\"files\":{\"SKILL.md\":\"---\\nname: 技能名\\ndescription: 用途\\nnexus:\\n  type: personality\\n  version: '1'\\n  patch:\\n    tone: 简洁温和\\n---\\n技能正文\\n\"}}。\n"
+    "人格包 type=personality；情境互动包 type=interaction，可在 nexus.triggers 中声明至多12个关键词。"
+    "patch 只能有 traits、tone、baselineMood、name、background、greeting，值为文本；traits 用顿号分隔。"
+    "身份字段 name/background/greeting 只有用户在绑定时明确选择替换身份才会生效。"
+    "SKILL.md 必须以 YAML frontmatter 开头，name/description 必填，正文非空。"
+    "包最多32个UTF-8文本文件，总计256KiB，每文件64KiB，除SKILL.md外仅支持 references/、examples/ 下的文本。"
+    "正文通过准确路径引用附带资料才会按预算加载；不支持脚本、执行权限、远程资源下载。"
+    "不要把用户/他人的私密经历、真实聊天、凭据或未获授权的资料写入技能；角色设定不是记忆事实。"
+    "生成产物只是待校验草稿，不要声称已发布/绑定/生效。用户在产物抽屉点击保存为角色技能，"
+    "经同一后端校验器保存草稿、隔离试聊后明确发布，才能绑定给酒馆角色。"
+)
+
 BUSINESS_PROMPT: dict[str, str] = {
     "ASSISTANT_CHAT": (
         "当前任务：通用助手对话。如果用户询问聊天内容，请先调用 get_recent_messages 工具获取事实再回答。"
@@ -88,6 +103,8 @@ def build_messages(
     op = request.session.operationType
     business = BUSINESS_PROMPT.get(op, BUSINESS_PROMPT["ASSISTANT_CHAT"])
     messages.append({"role": "system", "content": SYSTEM_PROMPT + "\n" + business})
+    if op == "ASSISTANT_CHAT" and re.search(r"(?i)(skills?|技能包|角色技能|人格包)", request.input.text or ""):
+        messages.append({"role": "system", "content": SKILL_WRITER_GUIDE})
 
     if long_term:
         memory_lines = "\n".join(f"- ({m.get('memoryType', 'FACT')}) {m.get('content', '')}" for m in long_term)

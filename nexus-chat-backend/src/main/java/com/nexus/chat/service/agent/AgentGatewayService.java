@@ -46,6 +46,9 @@ public class AgentGatewayService {
     @lombok.Setter
     private com.nexus.chat.service.agent.memory.AgentMemoryService memoryService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.nexus.chat.service.agent.memory.AgentContextMemoryService contextMemory;
+
     @Value("${agent.python.base-url:http://localhost:8100}")
     private String pythonBaseUrl;
 
@@ -357,6 +360,7 @@ public class AgentGatewayService {
         body.put("session", session);
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("text", request.getInput());
+        if (contextMemory != null) input.put("contextMemory", contextMemory.context(request.getAuthorizedScope(),request.getInput()));
         input.put("chatId", request.getChatContext() != null ? request.getChatContext().getChatId() : null);
         if (request.getResolvedAttachments() != null && !request.getResolvedAttachments().isEmpty()) {
             // Only what the workspace resolved; a client cannot put its own text here.

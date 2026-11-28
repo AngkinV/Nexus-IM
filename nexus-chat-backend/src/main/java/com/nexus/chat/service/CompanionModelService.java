@@ -73,6 +73,12 @@ public class CompanionModelService {
                                          ModelCredential credential,
                                          String statusSummary,
                                          Integer intimacy) {
+        return generateInnerVoiceWithContext(CompanionPromptBuilder.Context.bare(role, null), history, binding, credential, statusSummary, intimacy);
+    }
+
+    public ModelReply generateInnerVoiceWithContext(CompanionPromptBuilder.Context ctx, List<CompanionMessage> history,
+                                        CompanionModelBinding binding, ModelCredential credential,
+                                        String statusSummary, Integer intimacy) {
         StringBuilder context = new StringBuilder();
         String transcript = CompanionPromptBuilder.transcript(history);
         if (!transcript.isBlank()) context.append("最近的对话：\n").append(transcript);
@@ -83,7 +89,7 @@ public class CompanionModelService {
             context.append("你们的亲密程度：").append(intimacy).append("%\n");
         }
 
-        String systemPrompt = "你是" + nameOf(role) + "。"
+        String systemPrompt = CompanionPromptBuilder.system(ctx.withoutState()) + "\n"
                 + "现在写下你此刻的内心独白：第一人称、现在时、写在括号里的心理活动。"
                 + "不要复述对话，不要写成旁白，不要替对方说话。"
                 + "两到三句，不超过一百二十字。只输出独白本身，不要加任何说明。";
@@ -102,8 +108,12 @@ public class CompanionModelService {
                                         CompanionModelBinding binding,
                                         ModelCredential credential,
                                         String sceneKey) {
-        String systemPrompt = "你是" + nameOf(role) + "。"
-                + CompanionPromptBuilder.scene(sceneKey)
+        return generateClosing(CompanionPromptBuilder.Context.bare(role, sceneKey), history, binding, credential);
+    }
+
+    public ClosingReply generateClosing(CompanionPromptBuilder.Context ctx, List<CompanionMessage> history,
+                                        CompanionModelBinding binding, ModelCredential credential) {
+        String systemPrompt = CompanionPromptBuilder.system(ctx.withoutState()) + "\n"
                 + "现在这场相遇要结束了。请分两部分回答，用 === 分隔：\n"
                 + "第一部分：你对对方说的最后一句话，一到两句，第一人称，动作写在全角括号（）里，不要总结这段对话。\n"
                 + "第二部分：用第三人称写一句不超过四十字的记录，只写这段相处里真正发生的事，供你以后回忆。\n"

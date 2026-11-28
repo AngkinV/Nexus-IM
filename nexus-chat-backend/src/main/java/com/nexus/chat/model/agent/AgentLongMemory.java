@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "agent_long_memory")
+@Table(name = "agent_long_memory", uniqueConstraints=@UniqueConstraint(name="uk_agent_memory_source",columnNames={"user_id","scope_key","source_hash"}))
 @Data
 public class AgentLongMemory {
 
@@ -43,6 +43,23 @@ public class AgentLongMemory {
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
+
+    @Column(name="source_created_at")
+    private java.time.Instant sourceCreatedAt;
+
+    @Column(name="source_run_id", length=64)
+    private String sourceRunId;
+    @Column(name="source_hash", length=64)
+    private String sourceHash;
+    @Column(columnDefinition="boolean default false")
+    private Boolean confirmed=false;
+    @Column(name="embedding_revision",length=64)
+    private String embeddingRevision;
+    @Column(name="embedding_vector",columnDefinition="MEDIUMTEXT")
+    private String embeddingVector;
+    @Version
+    @Column(nullable=false,columnDefinition="bigint default 0")
+    private Long version=0L;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

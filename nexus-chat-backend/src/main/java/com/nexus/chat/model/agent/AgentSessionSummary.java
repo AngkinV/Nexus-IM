@@ -35,6 +35,11 @@ public class AgentSessionSummary {
     @Column(name = "summary_text", nullable = false, columnDefinition = "TEXT")
     private String summaryText;
 
+    @Column(name="scope_key", length=64)
+    private String scopeKey;
+    @Column(name="session_generation")
+    private Long sessionGeneration;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

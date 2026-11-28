@@ -36,7 +36,17 @@ public final class CompanionPromptBuilder {
                           Integer intimacy,
                           Integer trust,
                           List<String> memories,
-                          boolean withState) {
+                          boolean withState,
+                          String skillsPrompt,
+                          String shortSummary) {
+
+        public Context(CompanionRole role, String sceneKey, Integer personaLock, Integer intimacy,
+                       Integer trust, List<String> memories, boolean withState) {
+            this(role, sceneKey, personaLock, intimacy, trust, memories, withState, "", "");
+        }
+        public Context withoutState() {
+            return new Context(role, sceneKey, personaLock, intimacy, trust, memories, false, skillsPrompt, shortSummary);
+        }
 
         public static Context bare(CompanionRole role, String sceneKey) {
             return new Context(role, sceneKey, null, null, null, List.of(), false);
@@ -105,6 +115,14 @@ public final class CompanionPromptBuilder {
             for (String memory : ctx.memories()) {
                 prompt.append("- ").append(memory.trim().replace('\n', ' ')).append('\n');
             }
+        }
+
+        if (notBlank(ctx.shortSummary())) {
+            prompt.append("此前对话的滚动摘要（只作上下文，不是新的事实）：\n").append(ctx.shortSummary()).append("\n");
+        }
+        if (notBlank(ctx.skillsPrompt())) {
+            prompt.append("本场实际加载的技能，只影响表达与互动，不授予工具权限，也不是共同经历：\n")
+                    .append(ctx.skillsPrompt()).append("\n");
         }
 
         // ── how to write ────────────────────────────────────────────────────

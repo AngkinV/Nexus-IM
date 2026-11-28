@@ -7,7 +7,7 @@
       <button type="button" class="icon-btn" :disabled="agent.streaming || agent.switching || refreshing || !agent.sessionId" :title="t('reload')" :aria-label="t('reload')" @click="refresh"><span class="material-symbols-outlined" aria-hidden="true">refresh</span></button>
       <button type="button" class="icon-btn" :title="t('tune')" :aria-label="t('tune')" @click="startTuning"><span class="material-symbols-outlined" aria-hidden="true">tune</span></button>
       <el-dropdown trigger="click" @command="more"><button type="button" class="icon-btn" :title="t('more')" :aria-label="t('more')"><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button><template #dropdown><el-dropdown-menu>
-        <el-dropdown-item command="fullscreen" :disabled="!fullscreenSupported">{{ t('fullscreen') }}</el-dropdown-item><el-dropdown-item command="export" :disabled="!agent.hasMessages">{{ g('agent.export') }}</el-dropdown-item><el-dropdown-item command="providers">{{ g('agent.providers.manage') }}</el-dropdown-item><el-dropdown-item command="knowledge">{{ g('agent.knowledge.manage') }}</el-dropdown-item><el-dropdown-item command="clear" divided :disabled="agent.streaming || !agent.hasMessages">{{ g('agent.clearMemory') }}</el-dropdown-item>
+        <el-dropdown-item command="fullscreen" :disabled="!fullscreenSupported">{{ t('fullscreen') }}</el-dropdown-item><el-dropdown-item command="export" :disabled="!agent.hasMessages">{{ g('agent.export') }}</el-dropdown-item><el-dropdown-item command="providers">{{ g('agent.providers.manage') }}</el-dropdown-item><el-dropdown-item command="knowledge">{{ g('agent.knowledge.manage') }}</el-dropdown-item><el-dropdown-item command="memory" :disabled="!agent.sessionId">{{t('memories')}}</el-dropdown-item><el-dropdown-item command="clear" divided :disabled="agent.streaming || !agent.hasMessages">{{ g('agent.clearMemory') }}</el-dropdown-item>
       </el-dropdown-menu></template></el-dropdown></div>
     </header>
     <div class="board-dock"><AgentExecutionBoard :run="lastReply" :model-label="modelLabel" @preview="openArtifact" /></div>
@@ -21,6 +21,7 @@
             <p v-if="msg.scopeState === 'unavailable'" class="diagnostic" role="status">{{ g('agentScope.resultUnavailable') }}</p>
             <p v-else-if="msg.error" class="diagnostic" role="alert">{{ errorText(msg.error) }}<small>{{ describeModelError(msg.error).detail }}</small></p>
             <p v-else-if="['interrupted','cancelled','limited','failed','partial','stop_requested'].includes(stateOfRun(msg))" class="diagnostic">{{ t('state.' + stateOfRun(msg)) }}<span v-if="msg.finishReason && stateOfRun(msg) !== 'stop_requested'"> · {{ msg.finishReason }}</span></p>
+            <CompanionContextNote v-if="msg.scopeState !== 'unavailable'" :show-skills="false" :receipt="msg.trace?.findLast(s => s.kind === 'context') || null" />
             <div v-if="msg.artifacts?.length" class="reply-files"><button v-for="f in msg.artifacts" :key="f.id" type="button" @click="openArtifact(f)"><span class="material-symbols-outlined" aria-hidden="true">draft</span>{{ f.name }}</button></div>
             <div v-if="msg.status !== 'streaming'" class="reply-actions"><button type="button" :disabled="!msg.content" @click="copyAnswer(msg)"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span>{{ t('copy') }}</button><button type="button" :aria-label="t('retry')" :disabled="agent.streaming || agent.switching" @click="retry(msg)"><span class="material-symbols-outlined" aria-hidden="true">refresh</span>{{ t('retry') }}</button><button type="button" :aria-label="t('sources')" @click="openSources(msg)"><span class="material-symbols-outlined" aria-hidden="true">link</span>{{ t('sources') }}</button><button v-if="msg.resumable && msg.runId" :disabled="agent.streaming || agent.switching || waitSeconds(msg.retryAt) > 0" type="button" @click="resume(msg)">{{ waitSeconds(msg.retryAt) > 0 ? g('modelError.retryAfter', { seconds: waitSeconds(msg.retryAt) }) : g('agent.resume') }}</button><button v-if="msg.error && describeModelError(msg.error).settings" type="button" @click="providersOpen = true"><span class="material-symbols-outlined" aria-hidden="true">tune</span>{{ g('modelError.openSettings') }}</button><small v-if="msg.createdAt">{{ time(msg.createdAt) }}</small></div>
           </div>
@@ -30,6 +31,7 @@
     <AgentComposer ref="composer" :options="options" @manage-kb="kbOpen = true" />
     <AgentArtifactDrawer v-model:visible="drawerOpen" :session-id="agent.sessionId || ''" :artifact="selectedFile" :run="fileRun" :artifacts="files" @select="openArtifact" />
     <AgentProviderSettings v-model:visible="providersOpen" /><KnowledgeBaseManager v-model:visible="kbOpen" />
+    <el-dialog v-model="memoryOpen" :title="t('memories')" width="min(600px,94vw)" append-to-body destroy-on-close><AgentMemoryPanel v-if="memoryOpen" :session-id="agent.sessionId || ''" /></el-dialog>
     <el-dialog v-model="tuneOpen" :title="t('tune')" width="min(460px, 92vw)" append-to-body><form class="params" @submit.prevent="saveTuning"><label>{{ t('temperature') }}<input v-model.number="tuning.temperature" name="temperature" type="number" step="0.1" min="0" max="2" required></label><label>{{ t('tokens') }}<input v-model.number="tuning.maxOutputTokens" name="maxOutputTokens" type="number" min="1" max="8192" required></label><label>{{ t('iterations') }}<input v-model.number="tuning.maxIterations" name="maxIterations" type="number" min="1" max="12" required></label><button type="submit" class="action-primary">{{ g('common.confirm') }}</button></form></el-dialog>
     <el-dialog v-model="sourceOpen" :title="t('sources')" width="min(560px, 92vw)" append-to-body><div class="source-list"><p v-if="!sourceItems.length">{{ t('noSources') }}</p><section v-for="s in sourceItems" :key="s.id"><strong>[{{ s.id }}] {{ s.title }}</strong><small>{{ s.kind }}</small><p v-if="s.excerpt">{{ s.excerpt }}</p><a v-if="webUrl(s.url)" :href="webUrl(s.url)" target="_blank" rel="noopener noreferrer">{{ s.url }}</a></section></div></el-dialog>
   </section>
@@ -51,6 +53,8 @@ import AgentExecutionBoard from './AgentExecutionBoard.vue'
 import AgentMarkdown from './AgentMarkdown.vue'
 import AgentArtifactDrawer from './AgentArtifactDrawer.vue'
 import AgentProviderSettings from './AgentProviderSettings.vue'
+import CompanionContextNote from '../companion/CompanionContextNote.vue'
+import AgentMemoryPanel from './AgentMemoryPanel.vue'
 import ModelChannelSwitcher from './ModelChannelSwitcher.vue'
 import KnowledgeBaseManager from './KnowledgeBaseManager.vue'
 import { buildRunPresentation } from './runPresentation.js'
@@ -58,12 +62,13 @@ import { processMessages } from './processMessages.js'
 
 const { t: g } = useI18n({ useScope:'global' })
 const { t } = useI18n({ useScope:'local', messages: {
-  en:{state:processMessages.en.state,sessions:'Show or hide sessions',server:'Server default',reload:'Reload conversation',tune:'Tune request',more:'More actions',fullscreen:'Toggle fullscreen',outputs:'Preview artifacts',copy:'Copy answer',retry:'Retry answer',sources:'Sources',noSources:'No sources were recorded for this answer.',temperature:'Temperature',tokens:'Maximum output tokens',iterations:'Maximum model rounds'},
-  zh:{state:processMessages.zh.state,sessions:'展开或收起会话列表',server:'服务端默认模型',reload:'刷新会话',tune:'参数调优',more:'更多操作',fullscreen:'切换全屏',outputs:'预览产物',copy:'复制全文',retry:'重新推理',sources:'引用溯源',noSources:'这条回答没有记录可核查的来源。',temperature:'温度',tokens:'最大输出 Tokens',iterations:'最大调用轮数'}
+  en:{state:processMessages.en.state,sessions:'Show or hide sessions',server:'Server default',reload:'Reload conversation',tune:'Tune request',more:'More actions',fullscreen:'Toggle fullscreen',outputs:'Preview artifacts',copy:'Copy answer',retry:'Retry answer',sources:'Sources',noSources:'No sources were recorded for this answer.',temperature:'Temperature',tokens:'Maximum output tokens',iterations:'Maximum model rounds',memories:'Session memory'},
+  zh:{state:processMessages.zh.state,sessions:'展开或收起会话列表',server:'服务端默认模型',reload:'刷新会话',tune:'参数调优',more:'更多操作',fullscreen:'切换全屏',outputs:'预览产物',copy:'复制全文',retry:'重新推理',sources:'引用溯源',noSources:'这条回答没有记录可核查的来源。',temperature:'温度',tokens:'最大输出 Tokens',iterations:'最大调用轮数',memories:'会话记忆'}
 } })
 const agent = useAgentStore(), providers = useAgentProvidersStore(), workspace = useAgentWorkspaceStore(), chat = useChatStore(), user = useUserStore()
 const isMobile = inject('isMobile', ref(false)), toggleList = inject('toggleList', () => {}), activeView = inject('activeView', ref('ai'))
 const shell = ref(null), composer = ref(null), feed = ref(null), follow = ref(true)
+const memoryOpen = ref(false)
 const drawerOpen = ref(false), sourceOpen = ref(false), kbOpen = ref(false), providersOpen = ref(false), tuneOpen = ref(false), refreshing = ref(false)
 const sourceItems = ref([]), selectedFile = ref(null), fileRun = ref(null)
 const examples = ['summarize','weeklyReport','quickReply']
@@ -114,6 +119,7 @@ async function more(cmd) {
   try {
     if (cmd === 'providers') providersOpen.value = true
     if (cmd === 'knowledge') kbOpen.value = true
+    if (cmd === 'memory') memoryOpen.value = true
     if (cmd === 'fullscreen') { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen() }
     if (cmd === 'clear') {
       const sid = agent.sessionId
@@ -131,7 +137,7 @@ async function more(cmd) {
 function checkScroll() { const el = feed.value; if (el) follow.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }
 function bottom() { const el = feed.value; if (el) el.scrollTo({ top:el.scrollHeight, behavior:'auto' }) }
 watch(() => agent.sessionId, sid => {
-  drawerOpen.value = sourceOpen.value = false; selectedFile.value = fileRun.value = null; sourceItems.value = []; follow.value = true
+  memoryOpen.value = false; drawerOpen.value = sourceOpen.value = false; selectedFile.value = fileRun.value = null; sourceItems.value = []; follow.value = true
   workspace.load(sid).catch(fail) // uploads and tasks belong to the session now shown
 })
 watch(() => agent.messages.length, async () => { await nextTick(); if (agent.hasMessages) bottom() })
